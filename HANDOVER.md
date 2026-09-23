@@ -3,7 +3,7 @@
 > 最后更新：2026-09-23
 > 状态：**阶段 D 进行中**（shader blob / 输入布局 / 缓冲区 / 绘制已跑通）
 > 版本：`0.3.0`（API 有新增，版本号尚未提升）
-> Git：`main` 分支，HEAD `03a5818`
+> Git：`main` 分支，HEAD `60881b0`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）
 > **接手第一件事：跑 `pwsh -File tools\verify_handover.ps1`** —— 见 §0
 
 ---
@@ -18,14 +18,16 @@ pwsh -File tools\verify_handover.ps1
 cmake --preset win-x64-release-vs18
 cmake --build --preset win-x64-release-vs18 --clean-first
 
-# 3) 跑集成测试，确认 137 项断言通过、退出码 0
+# 3) 跑集成测试，确认断言全部通过、退出码 0
+#    注意：测试只打印失败项，不打印总数——"N 项断言"是静态统计的调用点，
+#    不是运行时的实测值（见 §10 的说明）
 cd project
 node "D:\node.js\node_cache\_npx\166e0ec5f4c2d768\node_modules\@gamemaker\gm-cli\dist\cli.js" run --no-errors-only
 ```
 
 **关于 `tools/verify_handover.ps1`**：交接文档最容易失真的地方是 API 清单、
 能力位数量、测试断言数 —— 它们会被后续每次改动悄悄改掉，而文档不会自己更新。
-这个脚本把"文档说的"和"代码里的"逐条对比（7 组检查）。
+这个脚本把"文档说的"和"代码里的"逐条对比（9 组检查）。
 **它本身做过反向验证**：故意改坏文档里的键数 / 删掉一个 API 行，脚本确实报错退出 1,
 不是恒绿的摆设。
 
@@ -462,7 +464,7 @@ PASS
 3. `staging reads back : 0` —— 新建缓冲区读回是**零填充**，证明 Map/staging 路径连通。
 4. 能力位 `vertex_buffer` / `index_buffer` 已从恒 false 翻为 true。
 
-> 本批完成时累计 86 项断言通过；加上后面的绘制的断言，**当前总数是 137 项**
+> 本批完成时累计 86 项断言通过；加上后面的绘制的断言，**当前总数是 136 项**
 > （见本节末尾）。这里保留 86 是为了说明该批次自身的规模，不是当前数字。
 
 ### 阶段 D 第三批（绘制）
@@ -503,7 +505,16 @@ backbuffer —— 测试无法读回它的像素。`surface_getpixel()` 只能�
 设为 false 跑起来观察）。等渲染目标 API 就位后，应该补一个
 "渲染到离屏 surface → `surface_getpixel` 读回 → 断言颜色"的真·像素测试。
 
-当前检查项 **137 项全部通过**，退出码 0，`--clean-first` 全量重编译零警告。
+当前检查项 **136 项全部通过**（`checks failed: 0`），退出码 0，
+`--clean-first` 全量重编译零警告（排除生成代码的 7 条 C4819 代码页噪声）。
+
+> **这个数字是怎么来的**：它是 `Create_0.gml` 里 `_igpu_check(` 调用点的
+> **静态计数**，不是运行时实测值——因为 `_igpu_check` 只在失败时打印，
+> 从不打印总数（见其定义）。这个"数出来"的数字比"测出来"的更容易腐烂：
+> 改测试时忘了同步文档，两边就悄悄分叉。
+> `tools/verify_handover.ps1` 的第 5 组检查就是为此存在的，它按调用点计数，
+> 并把定义行也算进去，所以脚本比对的基准值是 **137**（= 136 个调用点 + 1 行定义）。
+> 两处数字不一致是**刻意的**：文档说的是"断言数"，脚本数的是"匹配行数"。
 
 ---
 
@@ -841,6 +852,8 @@ cmake --preset win-x64-release-vs18
 cmake --build --preset win-x64-release-vs18
 
 # 零警告检查（C4819 是生成代码的代码页噪声，可忽略）
+# 注意：直接构建会有 7 条 C4819（code_gen/core/GMExtWire.h），
+# 那是生成代码的代码页噪声、非本仓库代码问题；过滤后才是"零警告"。
 cmake --build --preset win-x64-release-vs18 --clean-first 2>&1 |
     Select-String -Pattern 'warning|error' | Where-Object { $_ -notmatch 'C4819' }
 

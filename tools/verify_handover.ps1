@@ -106,20 +106,35 @@ $dupes = $values | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Obje
 Check "无重复编号" ($dupes.Count -eq 0) ("重复: " + ($dupes -join ", "))
 
 Write-Host "`n=== 5. 测试断言数与文档一致 ===" -ForegroundColor Cyan
-$checks = (Select-String -Path $test -Pattern '_igpu_check\(' -AllMatches).Matches.Count
+# 只数**调用点**，要把函数定义行 `function _igpu_check(...)` 排除掉——
+# 否则计数会比真实断言数多 1（这是本脚本早先的一个真实 bug）。
+$checkLines = Select-String -Path $test -Pattern '_igpu_check\('
+$callSites = $checkLines | Where-Object { $_.Line -notmatch 'function\s+_igpu_check\s*\(' }
+$checks = ($callSites | ForEach-Object { $_.Matches.Count } | Measure-Object -Sum).Sum
+if (-not $checks) { $checks = 0 }
+
+# 其中一部分断言被 `if (句柄 > 0) { ... }` 包着，句柄创建失败时不会执行。
+# 所以真实运行时断言数落在 [callSites - guarded, callSites] 区间内。
+$guarded = ($callSites | Where-Object { $_.Line -match 'if\s*\([^)]*\)\s*\{[^}]*_igpu_check\(' }).Count
+$runtimeMin = $checks - $guarded
+Write-Host "  （调用点 $checks 个，其中 $guarded 个受条件保护，运行时执行 $runtimeMin-$checks 个）" -ForegroundColor DarkGray
+
 # 文档里可能有多处断言数声明（每批验证证据各一处）。除最后"当前总数"外，
 # 前面几处是历史批次规模，允许小于当前值，但不能大于（大于就是写错了）。
-$checkMentions = Select-String -Path $handover -Pattern '检查项\s*\*\*(\d+)\s*项'
+$checkMentions = Select-String -Path $handover -Pattern '当前检查项\s*\*\*(\d+)\s*项'
 if ($checkMentions) {
     $overstated = $checkMentions | Where-Object { [int]$_.Matches[0].Groups[1].Value -gt $checks }
-    Check "无超过实际值的断言数声明" ($overstated.Count -eq 0) `
-        ("这些行声称的断言数大于实际 $checks : " + (($overstated | ForEach-Object { "行$($_.LineNumber)=$($_.Matches[0].Groups[1].Value)" }) -join ", "))
-    # 必须有一处等于当前实际值
-    $exact = $checkMentions | Where-Object { [int]$_.Matches[0].Groups[1].Value -eq $checks }
-    Check "有一处声明 == 当前实际($checks)" ($exact.Count -ge 1) `
+    Check "无超过调用点数的断言数声明" ($overstated.Count -eq 0) `
+        ("这些行声称的断言数大于调用点 $checks : " + (($overstated | ForEach-Object { "行$($_.LineNumber)=$($_.Matches[0].Groups[1].Value)" }) -join ", "))
+    # 声明的数字必须落在真实可执行区间内
+    $inRange = $checkMentions | Where-Object {
+        $v = [int]$_.Matches[0].Groups[1].Value
+        ($v -ge $runtimeMin) -and ($v -le $checks)
+    }
+    Check "有一处声明落在真实区间($runtimeMin-$checks)" ($inRange.Count -ge 1) `
         "文档里的断言数: " + (($checkMentions | ForEach-Object { $_.Matches[0].Groups[1].Value }) -join ", ")
 } else {
-    Check "文档里有断言数声明" $false "没找到 '检查项 **N 项'"
+    Check "文档里有当前断言数声明" $false "没找到 '当前检查项 **N 项'"
 }
 
 Write-Host "`n=== 5b. 文档里的能力键数量声明处处一致 ===" -ForegroundColor Cyan
@@ -144,7 +159,20 @@ $nativeCpp = Get-Content (Join-Path $root "src\native\IGPU_native.cpp") -Raw
 $unwired = $funcs | Where-Object { $nativeCpp -notmatch [regex]::Escape($_) }
 Check "全部函数已接线" ($unwired.Count -eq 0) ("未接线: " + ($unwired -join ", "))
 
-Write-Host "`n=== 8. §9 的条目编号引用没有越界 ===" -ForegroundColor Cyan
+Write-Host "`n=== 8. 文档里声明的 HEAD 与实际 HEAD 一致 ===" -ForegroundColor Cyan
+# 文档头部写着 HEAD 短哈希。它每次提交都会过期，而且**不会有人记得改**——
+# 接手者若拿它去 `git checkout`，可能checkout到错误的位置。实测抓到过一次失真。
+$headActual = (git -C $root rev-parse --short HEAD 2>$null)
+$headClaim = [regex]::Match($docText, 'HEAD\s*`([0-9a-f]{7,40})`')
+if ($headClaim.Success) {
+    $claimed = $headClaim.Groups[1].Value
+    Check "文档 HEAD($claimed) == 实际 HEAD($headActual)" ($headActual -like "$claimed*") `
+        "文档写 $claimed，实际是 $headActual —— 改文档或删掉这个易腐烂的声明"
+} else {
+    Check "能解析文档里的 HEAD 声明" $false "没找到 'HEAD \`hash\`'"
+}
+
+Write-Host "`n=== 9. §9 的条目编号引用没有越界 ===" -ForegroundColor Cyan
 # §9 的编号会被重排（比如插入新条目），而正文里散落的「§9 第 N 项」引用
 # 不会自动更新——这类失真很隐蔽，专门查一下。
 $s9 = [regex]::Match($docText, '(?s)## 9\. 下一步(.*?)\n## 10\.')
