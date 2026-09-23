@@ -3,7 +3,7 @@
 > 最后更新：2026-09-23
 > 状态：**阶段 D 进行中**（shader blob / 输入布局 / 缓冲区 / 绘制已跑通）
 > 版本：`0.3.0`（API 有新增，版本号尚未提升）
-> Git：`main` 分支，HEAD `60881b0`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）
+> Git：`main` 分支，HEAD `e9cfe32`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）
 > **接手第一件事：跑 `pwsh -File tools\verify_handover.ps1`** —— 见 §0
 
 ---

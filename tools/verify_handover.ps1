@@ -159,15 +159,33 @@ $nativeCpp = Get-Content (Join-Path $root "src\native\IGPU_native.cpp") -Raw
 $unwired = $funcs | Where-Object { $nativeCpp -notmatch [regex]::Escape($_) }
 Check "全部函数已接线" ($unwired.Count -eq 0) ("未接线: " + ($unwired -join ", "))
 
-Write-Host "`n=== 8. 文档里声明的 HEAD 与实际 HEAD 一致 ===" -ForegroundColor Cyan
+Write-Host "`n=== 8. 文档里声明的 HEAD 是真实存在的提交 ===" -ForegroundColor Cyan
 # 文档头部写着 HEAD 短哈希。它每次提交都会过期，而且**不会有人记得改**——
-# 接手者若拿它去 `git checkout`，可能checkout到错误的位置。实测抓到过一次失真。
+# 接手者若拿它去 `git checkout`，可能 checkout 到错误的位置。实测抓到过一次失真。
+#
+# 这里**故意不要求等于当前 HEAD**：文档无法记录包含它自己的那次提交的哈希
+# （自指悖论）——只要声明的是真实提交、且不是凭空捏造的，就算通过。
+# 判据是"该对象在仓库里存在"，这样既拦得住乱写的哈希，也不会逼人反复改这一个数字。
 $headActual = (git -C $root rev-parse --short HEAD 2>$null)
 $headClaim = [regex]::Match($docText, 'HEAD\s*`([0-9a-f]{7,40})`')
 if ($headClaim.Success) {
     $claimed = $headClaim.Groups[1].Value
-    Check "文档 HEAD($claimed) == 实际 HEAD($headActual)" ($headActual -like "$claimed*") `
-        "文档写 $claimed，实际是 $headActual —— 改文档或删掉这个易腐烂的声明"
+    # 注意：不要写成 "$claimed^{commit}"。PowerShell 会把 `^` 当转义字符吞掉，
+    # 实际传给 git 的是 "e9cfe32{commit}"，于是真实存在的提交也被判为不存在。
+    # （在 pwsh 下实测：`git cat-file -e e9cfe32^{commit}` 报 Not a valid object name，
+    #  而不带 ^ 的 `git cat-file -e e9cfe32` 正常返回 0。）
+    # 改用 rev-parse --verify --quiet，它对短哈希同样有效且不涉及 `^`。
+    $null = git -C $root rev-parse --verify --quiet "${claimed}" 2>$null
+    $exists = ($LASTEXITCODE -eq 0)
+    Check "文档声明的 HEAD($claimed) 是真实提交" $exists `
+        "仓库里没有这个提交 —— 别写臆造的哈希"
+    if ($exists) {
+        $behind = (git -C $root rev-list --count "$claimed..HEAD" 2>$null)
+        if ($behind -and [int]$behind -gt 0) {
+            Write-Host "  [NOTE] 文档 HEAD 落后当前 $behind 个提交（当前 $headActual）；" -ForegroundColor DarkYellow
+            Write-Host "         这是预期的——它无法记录包含自己的那次提交。以 git 现值为准。" -ForegroundColor DarkYellow
+        }
+    }
 } else {
     Check "能解析文档里的 HEAD 声明" $false "没找到 'HEAD \`hash\`'"
 }
