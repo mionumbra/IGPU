@@ -1,10 +1,78 @@
 # IGPU — 交接文档
 
 > 最后更新：2026-09-23
-> 状态：**阶段 D 进行中**（shader blob / 输入布局 / 缓冲区 / 绘制已跑通）
+> 状态：**阶段 D 进行中**（shader blob / 输入布局 / 缓冲区 / 绘制 / **着色器绑定**已跑通）
 > 版本：`0.3.0`（API 有新增，版本号尚未提升）
-> Git：`main` 分支，HEAD `e9cfe32`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）
+> Git：`main` 分支，HEAD `c148506`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）
 > **接手第一件事：跑 `pwsh -File tools\verify_handover.ps1`** —— 见 §0
+>
+> 🔴 **本次会话（2026-09-23）用真实引擎源码做了审计，发现并修复了若干问题。
+> 请先读 `tools/engine_audit.md`，再读本文档。**
+
+---
+
+## 0.0 本次会话交接摘要（2026-09-23）
+
+### 背景
+
+用户提供了 GMS2 引擎的**去混淆源码**（`D:\Users\User\Documents\gml_ext\OpenGM\`，
+16,431 文件，引擎 C++ 在 `runtime\GMS2-Runner-Main\VC_Runner\Files\`），
+要求"根据源码重新认真审视我们的扩展"。审计方法：把 `spec.gmidl` /
+`src/native/*` 的**每一条设计主张**拿去和引擎真源码对质。
+
+### 审计结论：细节全对，方向有三处偏差
+
+**✅ 验证为正确的**（作者功课扎实，这些**不要动**）：
+- `os_get_info()` 确实给出 `GR_D3D_Device` / `GR_D3D_Context` / `g_SwapChain`
+- `pr_*` 1–6 与引擎 `ePrimType` 完全一致
+- `vertex_usage_*` 1–9 / `vertex_type_*` 1–6 与 `yyVU*` / `yyVT*` 完全一致
+- 语义名拼写与引擎 `g_VertexUsageStrings[]` 一致
+- `Static` → `D3D11_USAGE_DEFAULT` 与引擎自己的 `VertexBuffer::Init` 同构
+- 引擎**从不调用 `D3DCompile`**（全仓库零匹配），故 IGPU 的运行时编译是**增量能力**
+
+**❌ 已修复**：
+1. **11 个能力虚报 true 却无对应 API**（Instancing / Queries / Fence /
+   Texture3D …）。调用方看到 `igpu_supports(Instancing) == true`，
+   就会去调一个**并不存在**的 instanced draw 函数。
+   这违反 spec 自己的核心约束。
+   已全部改为 `false`，并加 `verify_handover.ps1` 第 3b 组强制检查。
+2. **`igpu_draw` 根本无法绑着色器** —— 最严重的一项。已新增
+   `igpu_shader_bind()` / `igpu_get_bound_shader()`，补 13 项断言。
+
+**⚠️ 仍待解决**（**下一个人的第一优先级**）：
+- **像素级验证仍然缺失** —— 绑定修好只是让"画得出东西"成为**可能**。
+  证明它需要 §9 第 5 项（渲染目标 API）配合 `surface_getpixel` 读回。
+- **设备丢失无恢复路径** —— `HandleDeviceLost()` 会释放并重建
+  device/context，IGPU 仍持旧指针，有 use-after-free 风险。
+- **`IaStateGuard` 的文档理由不成立**（实现本身正确，无害）——
+  引擎每次绘制都**无条件重设** IA 状态且**不缓存**，所以"防止污染 GM 绘制"
+  这个说法是错的。建议改措辞，不要改实现。
+
+### 一个重要副产品：extgen 必须手动跑
+
+**改了 `spec.gmidl` 之后，必须跑 `extgen` 才会生成绑定代码。**
+cmake **不会**自动生成 —— `code_gen/` 是**输入**（被 GLOB），不是构建产物。
+
+```pwsh
+extgen --config config.json     # D:\GM-ExtensionGenerator\extgen.exe
+```
+
+**漏跑的症状极具迷惑性**：`cmake --build` **照样成功**（因为没人引用新函数），
+但新函数根本不存在。**必须验证生成代码里真的有它**：
+```pwsh
+Select-String -Path code_gen\native\IGPUInternal_native.h -Pattern 'igpu_shader_bind'
+```
+
+### 本次会话的教训（写给接手者）
+
+我自己在写第 3b 组检查时**犯了两个错，而且脚本照样打印"全部一致"**：
+1. `$capsCpp` 是**路径**不是文本 → 喂给 `[regex]::Matches` 得 0 匹配 →
+   检查**恒过**
+2. 循环变量取名 `$root`，**覆盖了脚本的仓库根路径** → 后面 4 组检查静默失效
+
+**教训**：写完一个检查，**必须做金丝雀验证**（故意改坏，确认它真的会红）。
+本次所有新增断言/检查都做了金丝雀，结果记录在各自章节里。
+**一个不会失败的检查器比没有更糟 —— 它制造虚假的信心。**
 
 ---
 
@@ -23,6 +91,9 @@ cmake --build --preset win-x64-release-vs18 --clean-first
 #    不是运行时的实测值（见 §10 的说明）
 cd project
 node "D:\node.js\node_cache\_npx\166e0ec5f4c2d768\node_modules\@gamemaker\gm-cli\dist\cli.js" run --no-errors-only
+
+# 4) 如果改了 spec.gmidl，必须重新生成绑定（见 §0.0）
+extgen --config config.json
 ```
 
 **关于 `tools/verify_handover.ps1`**：交接文档最容易失真的地方是 API 清单、
@@ -35,25 +106,32 @@ node "D:\node.js\node_cache\_npx\166e0ec5f4c2d768\node_modules\@gamemaker\gm-cli
 
 ### 当前进度一句话总结
 
-**能编译着色器、建输入布局、建缓冲区、真正发出绘制调用，并且绘制后
-自动把 GameMaker 的输入装配状态恢复原样。**
+**能编译着色器、把着色器绑到管线上、建输入布局、建缓冲区、发出绘制调用，
+并且绘制后自动把 GameMaker 的输入装配状态恢复原样。**
 
-> ⚠️ **2026-09-23 用引擎源码审计后，上面这句话需要打折**：
-> "真正发出绘制调用"是真的，但**画不出东西**——见 `tools/engine_audit.md`。
-> 核心问题：spec 里**没有 `igpu_shader_bind`**，IGPU 编译出的着色器
-> 根本无法绑到管线上；而 §3 的 `igpu_draw` 注释说"调用方负责设置着色器"，
-> 那是一个**不存在的能力**。测试从未调用 `shader_set`，所以
-> "draw 返回 true" 只证明调用发出去了。
-> **接手第一件事请先读 `tools/engine_audit.md`。**
+> ⚠️ **2026-09-23 用引擎源码审计后，这句话的边界要说清楚**：
+> "发出绘制调用"是真的，但**仍未证明画面上出现了东西**（§6）。
+> 审计发现当时**连着色器都绑不上**（没有 `igpu_shader_bind`），
+> 所以早期的 "draw 返回 true" 只证明调用发出去了 —— 测试从未调用 `shader_set`。
+> **绑定缺口已补**，但这只让"画得出东西"成为**可能**；
+> 证明它需要 §9 第 5 项。详见 `tools/engine_audit.md`。
 
 **下一步是「渲染目标绑定」**（§9 第 5 项）。它有一个额外的重要性：
 **它是补上像素级验证的前提** —— 现在没有它，我们无法证明"画面上真的出现东西了"
 （详见 §6「这批输出不能证明什么」）。
 
 **引擎源码审计的结论**（`OpenGM`，见 `tools/engine_audit.md`）：
-渲染目标链路**已逐环验证可行**，且 `surface_set_target_ext` 已是 GML 内置函数
-、`MAX_MRTS = 4` —— §9 第 7 项（MRT）可能**不需要新 API**。
-优先建议改为：先补 `igpu_shader_bind`，再做像素级验证。
+渲染目标链路**已逐环验证可行**（`Graphics_Surface.cpp:687,712` 引擎自己就是这么做的），
+且 `surface_set_target_ext` 已是 GML 内置函数、`MAX_MRTS = 4`
+—— §9 第 7 项（MRT）可能**不需要新 API**。
+
+~~优先建议改为：先补 `igpu_shader_bind`，再做像素级验证。~~
+**✅ `igpu_shader_bind` 已于本次会话补上。** 当前的优先级是：
+
+1. **像素级验证**（§9 第 5 项）—— 绑定的缺口已补，现在**可以**做真正的
+   "渲染到离屏 surface → `surface_getpixel` 读回 → 断言颜色"测试了
+2. **设备丢失恢复**（见 `tools/engine_audit.md` §5）—— 目前有 use-after-free 风险
+3. 修正 `IaStateGuard` 的文档措辞（实现不动）
 
 ---
 
