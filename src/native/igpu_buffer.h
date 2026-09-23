@@ -26,7 +26,11 @@ namespace igpu
         Storage = 8
     };
 
-    std::int64_t buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind);
+    // `stride` is bytes per vertex and is required (non-zero) for a buffer that
+    // claims BufferBind::Vertex, because a draw call must derive the vertex
+    // count from it. It must be 0 for every other kind of buffer.
+    std::int64_t buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind,
+                               std::int32_t stride);
 
     // Copies the contents of a GameMaker buffer into the GPU buffer.
     // GMBuffer carries its own length, so no separate size is needed and the

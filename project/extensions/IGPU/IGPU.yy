@@ -480,6 +480,90 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__igpu_draw",
+          "argCount": 2,
+          "args": [
+            1,
+            2
+          ],
+          "documentation": "@param {Pointer} _arg_buffer\r\n@param {Real} _arg_buffer_length\r\n@returns {Real}",
+          "externalName": "__EXT_NATIVE__igpu_draw",
+          "help": "",
+          "hidden": true,
+          "kind": 4,
+          "name": "__igpu_draw",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__igpu_draw_indexed",
+          "argCount": 2,
+          "args": [
+            1,
+            2
+          ],
+          "documentation": "@param {Pointer} _arg_buffer\r\n@param {Real} _arg_buffer_length\r\n@returns {Real}",
+          "externalName": "__EXT_NATIVE__igpu_draw_indexed",
+          "help": "",
+          "hidden": true,
+          "kind": 4,
+          "name": "__igpu_draw_indexed",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "igpu_get_draw_count",
+          "argCount": 0,
+          "args": [],
+          "documentation": "@returns {Real}",
+          "externalName": "__EXT_NATIVE__igpu_get_draw_count",
+          "help": "",
+          "hidden": false,
+          "kind": 4,
+          "name": "igpu_get_draw_count",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "igpu_get_draw_restore_failures",
+          "argCount": 0,
+          "args": [],
+          "documentation": "@returns {Real}",
+          "externalName": "__EXT_NATIVE__igpu_get_draw_restore_failures",
+          "help": "",
+          "hidden": false,
+          "kind": 4,
+          "name": "igpu_get_draw_restore_failures",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__igpu_is_vertex_buffer_bound",
+          "argCount": 2,
+          "args": [
+            1,
+            2
+          ],
+          "documentation": "@param {Pointer} _arg_buffer\r\n@param {Real} _arg_buffer_length\r\n@returns {Real}",
+          "externalName": "__EXT_NATIVE__igpu_is_vertex_buffer_bound",
+          "help": "",
+          "hidden": true,
+          "kind": 4,
+          "name": "__igpu_is_vertex_buffer_bound",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "__IGPU_queue_buffer",
           "argCount": 2,
           "args": [

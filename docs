@@ -146,6 +146,7 @@
  * @param {Real} size
  * @param {Real} usage
  * @param {Real} bind
+ * @param {Real} stride
  * @returns {Real}
  * @function_end
  */
@@ -185,6 +186,48 @@
 
 /**
  * @function_partial igpu_buffer_release
+ * @param {Real} buffer
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_draw
+ * @param {Real} vertex_buffer
+ * @param {Real} layout
+ * @param {Real} primitive
+ * @param {Real} first_vertex
+ * @param {Real} vertex_count
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_draw_indexed
+ * @param {Real} vertex_buffer
+ * @param {Real} layout
+ * @param {Real} index_buffer
+ * @param {Real} primitive
+ * @param {Real} first_index
+ * @param {Real} index_count
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_get_draw_count
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_get_draw_restore_failures
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_is_vertex_buffer_bound
  * @param {Real} buffer
  * @returns {Bool}
  * @function_end
@@ -232,6 +275,17 @@
  */
 
 /**
+ * @enum_partial IgpuPrimitive
+ * @member PointList
+ * @member LineList
+ * @member LineStrip
+ * @member TriangleList
+ * @member TriangleStrip
+ * @member TriangleFan
+ * @enum_end
+ */
+
+/**
  * @enum_partial IgpuCapability
  * @member None
  * @member ShaderCompileRuntime
@@ -260,6 +314,9 @@
  * @member UniformBuffer
  * @member BufferResize
  * @member BufferReadback
+ * @member Draw
+ * @member DrawIndexed
+ * @member DrawStateRestore
  * @member AdapterInfo
  * @member VideoMemory
  * @member BackbufferSize

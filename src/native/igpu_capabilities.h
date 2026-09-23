@@ -69,6 +69,10 @@ namespace igpu
         BufferResize = 51,
         BufferReadback = 52,
 
+        Draw = 53,
+        DrawIndexed = 54,
+        DrawStateRestore = 55,
+
         AdapterInfo = 60,
         VideoMemory = 61,
         BackbufferSize = 62

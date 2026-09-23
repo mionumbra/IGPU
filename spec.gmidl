@@ -192,8 +192,14 @@ function igpu_input_layout_release([type_hint = `uint64`] layout) : bool;
 //     IgpuBufferBind.Storage              a structured / raw shader resource
 //
 // Returns a buffer handle, or 0 on failure (see igpu_get_last_error()).
+//
+// `stride` is the size in bytes of ONE VERTEX and is only meaningful when
+// `bind` includes IgpuBufferBind.Vertex; the backend needs it to work out how
+// many vertices the buffer holds, which a draw call must know. Pass 0 (the
+// default) for non-vertex buffers. It is not the same thing as the stride
+// accepted by igpu_input_layout_create, which only validates its own elements.
 [global, bind = typed_gml]
-function igpu_buffer_create(size : int64, usage : int32, bind : int32) : int64;
+function igpu_buffer_create(size : int64, usage : int32, bind : int32, [type_hint = `int32`] stride) : int64;
 
 // Uploads bytes from a GameMaker buffer into `buffer`, starting `offset` bytes
 // into it.
@@ -230,6 +236,73 @@ function igpu_buffer_size([type_hint = `uint64`] buffer) : int64;
 
 [global, bind = typed_gml]
 function igpu_buffer_release([type_hint = `uint64`] buffer) : bool;
+
+// ---------------------------------------------------------------------------
+// Drawing
+// ---------------------------------------------------------------------------
+
+// Binds a vertex buffer and its input layout, then issues a draw call.
+//
+// This is deliberately ONE function rather than the bind-then-draw pair the
+// backend uses. IGPU has to save and restore the input-assembler state around
+// the draw, because GameMaker exposes NO way for extensions to read or write
+// it - gpu_get_state()/gpu_set_state() cover blend, depth, stencil, cull,
+// scissor, alphatest and samplers, but nothing about vertex buffers, input
+// layouts or primitive topology. A bind/draw pair would therefore leak IGPU's
+// state into GameMaker's own drawing, and no GML-level call could undo it.
+// Doing both in one call keeps that contract enforceable.
+//
+// `primitive` is a GameMaker pr_* constant (pr_pointlist / pr_linelist /
+// pr_linestrip / pr_trianglelist / pr_trianglestrip). pr_trianglefan is
+// accepted but rejected with an error, because the backend has no equivalent
+// topology and silently drawing something else would be worse.
+//
+// `first_vertex` and `vertex_count` select a range of the bound buffer.
+// Pass vertex_count = -1 to draw to the end of the buffer.
+//
+// The caller is responsible for having set a shader and any render target.
+// Returns true if the draw was issued.
+[global, bind = typed_gml]
+function igpu_draw(
+    [type_hint = `uint64`] vertex_buffer,
+    [type_hint = `uint64`] layout,
+    primitive : int32,
+    [type_hint = `int64`] first_vertex,
+    [type_hint = `int64`] vertex_count) : bool;
+
+// Draws using an index buffer as well. `index_count` is the number of indices,
+// not the number of triangles.
+[global, bind = typed_gml]
+function igpu_draw_indexed(
+    [type_hint = `uint64`] vertex_buffer,
+    [type_hint = `uint64`] layout,
+    [type_hint = `uint64`] index_buffer,
+    primitive : int32,
+    [type_hint = `int64`] first_index,
+    [type_hint = `int64`] index_count) : bool;
+
+// Reports how many times IGPU has issued a draw, and how many of those left
+// the input-assembler state restored successfully. Both are diagnostics for
+// confirming the save/restore contract holds in a real game loop.
+[global, bind = typed_gml]
+function igpu_get_draw_count() : int32;
+
+[global, bind = typed_gml]
+function igpu_get_draw_restore_failures() : int32;
+
+// Diagnostic: reports whether a given handle is CURRENTLY bound to the input
+// assembler, read back from the device rather than from IGPU's own bookkeeping.
+//
+// This exists because "the draw function returned true" does not prove the
+// state was really restored - it only proves the call was made. Querying the
+// device shows what is actually bound right now. Returns true if `buffer` is
+// the vertex buffer in slot 0, false otherwise (including for a released or
+// unknown handle).
+//
+// Intended for tests and for diagnosing interference with GameMaker's own
+// drawing; not needed in normal use, because igpu_draw restores state itself.
+[global, bind = typed_gml]
+function igpu_is_vertex_buffer_bound([type_hint = `uint64`] buffer) : bool;
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -308,6 +381,24 @@ enum IgpuBufferBind
     Storage = 8
 }
 
+// How a vertex range is assembled into primitives. These values mirror
+// GameMaker's pr_* constants so a caller can pass the GML constant straight
+// through; they were read back from the runtime rather than assumed to follow
+// the documented alphabetical order.
+//
+//   PrTriangleFan has no backend equivalent and is rejected by igpu_draw()
+//   rather than silently drawn as something else.
+[global, bind = typed_gml]
+enum IgpuPrimitive
+{
+    PointList = 1,
+    LineList = 2,
+    LineStrip = 3,
+    TriangleList = 4,
+    TriangleStrip = 5,
+    TriangleFan = 6
+}
+
 // Backend-neutral feature flags for igpu_supports(). Values are stable and
 // must not be renumbered once shipped.
 [global, bind = typed_gml]
@@ -349,6 +440,13 @@ enum IgpuCapability
     // Buffer update strategies, queried so callers can pick one that works
     BufferResize = 51,
     BufferReadback = 52,
+
+    // Drawing
+    Draw = 53,
+    DrawIndexed = 54,
+    // Whether IGPU can restore GameMaker's input-assembler state after a draw.
+    // False would mean drawing is unsafe to interleave with GM's own.
+    DrawStateRestore = 55,
 
     // Platform info availability
     AdapterInfo = 60,

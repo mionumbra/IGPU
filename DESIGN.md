@@ -414,12 +414,22 @@ backbuffer 会变，但那里永远返回旧值。
 10. ✅ **shader 句柄保留 `ID3DBlob`** ← 见下方说明
 11. ✅ **输入布局**（`ID3D11InputLayout`）+ 顶点格式
 12. ✅ 缓冲区（`ID3D11Buffer`）+ 上传 / 读回
-13. ⬜ 绘制调用 + 实例化
-14. ⬜ 状态对象（depth-stencil / rasterizer / blend / sampler）
-15. ⬜ MRT
-16. ⬜ 纹理 / SRV / RTV / UAV
-17. ⬜ 查询 / 时间戳 / fence
-18. ⬜ 常量缓冲区反射（`D3DReflect`），自动打包 `cbuffer` 布局
+13. ✅ 绘制调用（`Draw` / `DrawIndexed`）+ **IA 状态自动保存恢复**
+14. ⬜ 渲染目标绑定（`OMSetRenderTargets`）← 像素级验证的前提
+15. ⬜ 状态对象（depth-stencil / rasterizer / blend / sampler）
+16. ⬜ MRT
+17. ⬜ 纹理 / SRV / RTV / UAV
+18. ⬜ 查询 / 时间戳 / fence
+19. ⬜ 常量缓冲区反射（`D3DReflect`），自动打包 `cbuffer` 布局
+
+> **关于第 13 步（已完成）——设计约束第 5 条需要升级**：
+> 本文档 §设计约束写的是"改完用 `gpu_get_state`/`gpu_set_state` 恢复"。
+> **实测证明这条对绘制行不通**：GM 的状态函数只覆盖 blend/depth/stencil/
+> cull/scissor/alphatest/sampler，**完全不包含 IA 阶段**（顶点缓冲区、输入布局、
+> 拓扑），而且既不能读也不能写。
+>
+> 所以正确的做法是：IGPU 用 `ID3D11DeviceContext` 的 `IAGet*` **从设备读回真实状态**，
+> 绘制后 `IASet*` 设回去。见 `igpu_draw.cpp` 的 `IaStateGuard` 与 HANDOVER §7.15。
 
 > **关于第 10 步（已完成）**：`DeviceState::shaders` 原先只存 `ID3D11DeviceChild*`，
 > **丢弃了 `ID3DBlob`**。而 `CreateInputLayout` 必须用编译产物里的 signature，
@@ -436,7 +446,11 @@ backbuffer 会变，但那里永远返回旧值。
 2. **接口零 D3D 术语** —— 审查任何新 API，GML 层面不得出现 `d3d`/`dxgi`/`_5_0`/`ID3D` 等字样。
 3. **复用 GM 词汇表** —— 格式、usage、比较函数等，用 GM 已有的中立常量名。
 4. **能力可查，降级优雅** —— 任何非 Windows 平台调用 IGPU 必须返回失败而非 crash。
-5. **不与 GM 状态机打架** —— 改变全局管线状态后应恢复（GM 有 `gpu_get_state`/`gpu_set_state`）。
+5. **不与 GM 状态机打架** —— 改变全局管线状态后应恢复。
+   ⚠️ **但 `gpu_get_state`/`gpu_set_state` 只覆盖 blend/depth/stencil/cull/scissor/
+   alphatest/sampler，不包含 IA 阶段**（顶点缓冲区、输入布局、拓扑），实测确认
+   那些状态 GM 既不暴露读也不暴露写。改 IA 状态时必须用 `ID3D11DeviceContext`
+   的 `IAGet*`/`IASet*` 自己保存恢复，见 `igpu_draw.cpp` 与 HANDOVER §7.15。
 6. **句柄模式统一** —— 延续 `unordered_map<uint64, 资源*>` + 自增 ID。
 
 ---

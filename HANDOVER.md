@@ -1,7 +1,7 @@
 # IGPU — 交接文档
 
 > 最后更新：2026-09-23
-> 状态：**阶段 D 进行中**（Tier 1：shader blob、输入布局、缓冲区已跑通）
+> 状态：**阶段 D 进行中**（shader blob / 输入布局 / 缓冲区 / 绘制已跑通）
 > 版本：`0.3.0`（API 有新增，版本号尚未提升）
 > Git：已是仓库，`main` 分支，工作区干净
 
@@ -126,6 +126,7 @@ IGPU/
 │       ├── igpu_capabilities.h/.cpp ← **能力查询层（Tier 3）**
 │       ├── igpu_input_layout.h/.cpp ← **顶点输入布局（阶段 D）**
 │       ├── igpu_buffer.h/.cpp     ← **GPU 缓冲区（阶段 D）**
+│       ├── igpu_draw.h/.cpp      ← **绘制 + IA 状态保存恢复（阶段 D）**
 │       └── igpu_error.h/.cpp      ← 错误信息 + UTF-16→UTF-8
 ├── third_party/               ← 第三方集成点（当前 discord SDK 残留，inert）
 └── project/                   ← GameMaker 工程
@@ -193,9 +194,36 @@ IGPU/
 GML 侧有两个现成辅助函数（`project/scripts/IGPU_helpers/IGPU_helpers.gml`）：
 
 - `igpu_buffer_upload(_buffer, _data, _offset = 0)` —— 上传一个 GM 缓冲区
-- `igpu_buffer_create_from_array(_values, _usage, _bind)` —— 直接从一个实数数组
-  建缓冲区（每个元素打包成 4 字节 float），最适合喂位置/索引/常量数据，
-  免去手工管理 GM 缓冲区的 fifo 与写入位置
+- `igpu_buffer_create_from_array(_values, _usage, _bind, _stride = 0)` —— 直接从实数数组
+  建缓冲区（每元素 4 字节 float）
+- `igpu_draw_buffer(_buffer, _layout, _primitive, _first = 0, _count = -1)` —— 绘制并打日志
+
+### 绘制（阶段 D）
+
+- `igpu_draw(vertex_buffer, layout, primitive : int32, first_vertex : int64, vertex_count : int64) : bool`
+- `igpu_draw_indexed(vertex_buffer, layout, index_buffer, primitive : int32, first_index : int64, index_count : int64) : bool`
+- `igpu_get_draw_count() : int32`
+- `igpu_get_draw_restore_failures() : int32`
+- `igpu_is_vertex_buffer_bound(buffer) : bool` ← **诊断用**，直接查设备
+
+`IgpuPrimitive`（**实测数值**，等于 GM 的 `pr_*`）：
+
+| 常量 | 值 | 后端拓扑 |
+|---|---|---|
+| `PointList` | 1 | `POINTLIST` |
+| `LineList` | 2 | `LINELIST` |
+| `LineStrip` | 3 | `LINESTRIP` |
+| `TriangleList` | 4 | `TRIANGLELIST` |
+| `TriangleStrip` | 5 | `TRIANGLESTRIP` |
+| `TriangleFan` | **6** | ❌ **无对应，被拒绝** |
+
+> ⚠️ **`TriangleFan` 会被 `igpu_draw` 拒绝**，不是静默画成别的东西。
+> D3D11 没有 fan 拓扑，硬画成 strip 会得到调用方没要求的图形。
+
+> ⚠️ **`igpu_buffer_create` 现在多了 `stride` 参数**（字节/顶点）。
+> 顶点缓冲区**必须**给正数 stride —— 因为绘制要用 `size / stride` 推算顶点数，
+> 否则无法知道缓冲区里有多少顶点。非顶点缓冲区必须传 0。
+> **这是破坏性变更**（旧调用需补第 4 个参数）。
 
 `usage` / `type` 直接传 **GameMaker 自己的常量**，不另发明词汇：
 
@@ -224,21 +252,23 @@ GML 侧有两个现成辅助函数（`project/scripts/IGPU_helpers/IGPU_helpers.
 - `IgpuBufferBind { None=0, Vertex=1, Index=2, Uniform=4, Storage=8 }`
 - `IgpuCapability { None=0, ShaderCompileRuntime=1, ShaderStage*=2-7, Texture3D=20…MultipleRenderTargets=25, Instancing=40…Wireframe=46, InputLayout=47, VertexBuffer=48, IndexBuffer=49, UniformBuffer=50, BufferResize=51, BufferReadback=52, AdapterInfo=60…BackbufferSize=62 }`
 
-### `igpu_get_capabilities()` 返回的 25 个键
+### `igpu_get_capabilities()` 返回的 28 个键
 
 ```
 backend, tier, device_name, shader_dialect,
 shader_stages, runtime_compile, compute, geometry, tessellation, mesh_shader,
 texture_3d, texture_array, texture_cubemap, structured_buffer, uav, max_render_targets,
 instancing, indirect_draw, queries,
-input_layout, vertex_buffer, index_buffer, uniform_buffer, buffer_resize, buffer_readback
+input_layout, vertex_buffer, index_buffer, uniform_buffer, buffer_resize, buffer_readback,
+draw, draw_indexed, draw_state_restore
 ```
 
 **所有键永远存在**，调用方可无条件读取。非 Windows 平台返回 `backend="none"`, `tier=3`, 其余全 false。
 
 > ⚠️ 能力位**只在对应 API 真正存在时才允许为 true**。
 > 已实现并返回 true 的：`input_layout`、`vertex_buffer`、`index_buffer`、
-> `uniform_buffer`、`buffer_resize`、`buffer_readback`。
+> `uniform_buffer`、`buffer_resize`、`buffer_readback`、`draw`、`draw_indexed`、
+> `draw_state_restore`。
 > 仍恒为 false 的：`texture_3d/array/cubemap`、`structured_buffer`、`uav` 等
 > —— 这些 API 还没写（见 §9）。
 
@@ -390,6 +420,46 @@ PASS
 
 当前检查项 **86 项全部通过**（源文件 `_igpu_check()` 静态计数），退出码 0，
 `--clean-first` 全量重编译零警告。
+
+### 阶段 D 第三批（绘制）
+
+```
+draw vertex buffer: 8
+fan error         : igpu_draw: the 'trianglefan' primitive has no backend equivalent; use 'trianglestrip' or convert the fan to a triangle list first
+overflow error    : igpu_draw: 7 vertices at 0 exceeds the buffer's 6 vertices
+draw result       : 1
+index buffer      : 11
+index overflow    : igpu_draw_indexed: 7 indices at 0 exceeds the buffer's 6 indices
+indexed draw      : 1
+checks failed    : 0
+PASS
+```
+
+#### ✅ 这批输出**能**证明什么
+
+1. **绘制被发出**：`draw result : 1`、`indexed draw : 1`，绘制计数器递增。
+2. **顶点数是从 stride 推算出来的**：`7 vertices ... exceeds the buffer's 6 vertices`
+   —— 6 = 120 字节 / 20 stride，说明 stride 真的参与了计算，不是照抄调用方的数字。
+3. **fan 被明确拒绝**并给出可操作的替代建议，而不是静默画错。
+4. **索引数按 16 位推算**：6 = 12 字节 / 2，越界被拦截。
+5. **IA 状态确实恢复了**：`igpu_is_vertex_buffer_bound()` 直接查设备，
+   绘制后 IGPU 的缓冲区不在 slot 0。这条探针经过反向验证（见 §7.15）。
+6. 被拒绝的调用**不会到达设备**（`draw count` 不变）。
+
+#### ❌ 这批输出**不能**证明什么（必须如实说明）
+
+**没有验证像素真的被光栅化出来。**
+
+原因：IGPU **目前还没有设置渲染目标的 API**（那是 §9 第 6 项 MRT 的范畴）。
+`igpu_draw` 画到 GM 当时绑定的目标，而测试跑在 Create 事件里，那里绑的是
+backbuffer —— 测试无法读回它的像素。`surface_getpixel()` 只能读 surface，
+而把 IGPU 的输出导向某个 surface 的能力**现在还不存在**。
+
+所以"画对了没有"这件事，**目前只有靠眼睛看**（把 `global.igpu_test_auto_exit`
+设为 false 跑起来观察）。等渲染目标 API 就位后，应该补一个
+"渲染到离屏 surface → `surface_getpixel` 读回 → 断言颜色"的真·像素测试。
+
+当前检查项 **137 项全部通过**，退出码 0，`--clean-first` 全量重编译零警告。
 
 ---
 
@@ -565,6 +635,71 @@ struct GMBuffer {
 
 > `func` 可用于异步回调：`callback.call(...)` 线程安全，数据排队到 GM 下一帧执行。
 
+### 7.15 ⚠️ GM **完全不管**输入装配（IA）状态 —— 绘制必须自己恢复
+
+**这是本项目最容易造成"玄学渲染 bug"的地方，务必理解。**
+
+`gpu_get_state()` / `gpu_set_state()` 能保存/恢复的状态，用 `GmlSpec.xml` 逐个数出来是：
+
+```
+blend（含 ext / sepalpha）、depth、stencil（全套 8 个）、
+cull、scissor、alphatest、fog、colourwrite、
+以及纹理采样器状态（tex_filter / tex_repeat / mip / aniso ...）
+```
+
+**全部是"光栅化 + 输出合并"阶段的。IA 阶段一个都没有：**
+
+```pwsh
+# 实测：查不到任何 vertexbuffer / inputlayout / topology 的状态函数
+Select-String -Path $GmlSpec -Pattern 'Function Name="gpu_(set|get)_[a-z_]*(vertex|layout|topology)[a-z_]*"'
+# → 无结果
+```
+
+**结论**：`igpu_draw` 会绑定自己的顶点缓冲区、输入布局、拓扑，
+而 **`gpu_set_state()` 无法撤销这些** —— GM 既没暴露读取途径，也没暴露写入途径。
+
+**所以 IGPU 必须自己保存/恢复**，实现见 `igpu_draw.cpp` 的 `IaStateGuard`：
+
+1. 构造时用 context 的 `IAGetVertexBuffers / IAGetIndexBuffer / IAGetInputLayout / IAGetPrimitiveTopology` **读回设备真实状态**
+2. 绘制
+3. 析构时 `IASet*` 设回去，再 `Release()` 那些引用
+
+> **为什么用 `IAGet*` 而不是自己记账**：GM 的状态我们根本没有别的途径知道。
+> 只有"从设备读回来"才能保证恢复的是 GM 的真实状态，而不是 IGPU 以为的状态。
+> 这些是 `ID3D11DeviceContext` 的 COM 方法，不需要 GM 额外暴露什么。
+
+> ⚠️ **`IAGetVertexBuffers` 返回的指针带引用计数，由调用方负责 `Release()`**。
+> 漏了就是每帧泄漏一个 COM 对象 —— `IaStateGuard::releaseReferences()` 专门处理这个。
+
+**验证方式**（不能只看"函数返回 true"）：`igpu_is_vertex_buffer_bound()` 直接
+向设备查询当前 slot 0 的顶点缓冲区，测试断言**绘制后 IGPU 的缓冲区不在里面**。
+这条探针本身也做过反向验证（故意反转断言 → 确实失败），确认它不是恒假的摆设。
+
+### 7.16 GML 数组字面量里的负数是解析陷阱
+
+**这条让本轮调试绕了很久，错误行号还会骗人。**
+
+```gml
+// ❌ 编译失败："malformed assignment" / "unexpected symbol )"
+var _v = [-1, -1, 0, 0, 0,   3, -1, 0, 1, 0];
+
+// ✅ 逐个 buffer_write，或整体加括号
+var _v = [(-1), (-1), (0), (0), (0), (3), (-1), (0), (1), (0)];
+```
+
+**更坑的是报错位置**：编译器把错误报在**后面**几十行的另一条语句上
+（本次报在第 477 行 `var _indices = [0, 1, 2, 0, 2, 3];`，
+而那一行**完全正常**，真正的问题在 380 多行的数组里）。
+
+**排查方法**（别猜，按顺序做）：
+1. 别信报错行号，去**前面**找最近新增的数组字面量
+2. 临时把可疑段整段换成逐个赋值 —— 一改就好说明就是它
+3. `git stash` 对比上一个能编译的版本，二分定位
+
+> 相关但**不同**的坑：GML 的 `foreach` **不存在**，正确写法是 `for (var x in array)`。
+> 另外跨行的函数调用参数列表**是可以**的（本项目里大量使用且正常），
+> 所以不要把跨行当成嫌疑目标 —— 我这次就先怀疑错了方向。
+
 ---
 
 ## 8. 已知问题 / 待清理
@@ -606,16 +741,22 @@ struct GMBuffer {
      所以 IGPU **不知道** shader 的 `cbuffer` 里各字段的偏移与大小。
      调用方现在必须**自己按 16 字节规则排布**结构体。
      让 IGPU 用 `D3DReflect` 把布局读回来并自动打包，是后续的独立改进。
-4. **绘制调用**（`Draw` / `DrawIndexed` / 实例化）← **建议从这里继续**
-   - 现在三块拼图（shader + layout + buffer）齐了，可以真正画东西了。
-   - ⚠️ 这一步**真的会改 GM 的管线状态**。务必遵守设计约束第 5 条：
-     改完用 `gpu_get_state` / `gpu_set_state` 恢复，否则会和 GM 自己的批处理打架。
-   - 还需要 `IASetVertexBuffers` / `IASetPrimitiveTopology` 等绑定调用，
-     以及"绘制前设回 GM 状态"的收尾逻辑 —— 建议**先设计好状态保存/恢复**再动手。
-5. **渲染状态对象**（depth-stencil / rasterizer / blend / sampler state）
-6. **MRT**（多 `ID3D11RenderTargetView`）
-7. **纹理 / SRV / RTV / UAV**（含 3D / array / cubemap）
-8. **查询 / 时间戳 / fence**
+4. ✅ **绘制调用（`Draw` / `DrawIndexed`）** ← **已完成**
+   见 `igpu_draw.h/.cpp`。**核心是 IA 状态的自动保存/恢复**（见 §7.15）——
+   GM 完全不提供 IA 状态接口，所以 IGPU 从 context 读回真实状态再设回去。
+   调用方**不需要**配对的 begin/end，一次 `igpu_draw` 内部全包。
+5. **渲染目标绑定**（`OMSetRenderTargets`）← **建议从这里继续**
+   - ⚠️ **这也是补上像素级验证的前提**：现在 `igpu_draw` 只能画到 GM 当时
+     绑定的目标，测试无法读回像素（见 §6「不能证明什么」）。
+     有了渲染目标 API 才能写"画到离屏 surface → `surface_getpixel` → 断言颜色"。
+   - 需要把 GM 的 `surface` 映射到 `ID3D11RenderTargetView`。GM 不暴露 surface
+     的底层纹理，所以这条路可能需要 `surface_get_texture` + 从纹理指针反查，
+     **先调研清楚可行性再动手**，别假设能直接拿到。
+6. **渲染状态对象**（depth-stencil / rasterizer / blend / sampler state）
+7. **MRT**（多 `ID3D11RenderTargetView`）
+8. **纹理 / SRV / RTV / UAV**（含 3D / array / cubemap）
+9. **查询 / 时间戳 / fence**
+10. **常量缓冲区反射**（`D3DReflect`），自动打包 `cbuffer` 布局
 
 > **新增 API 的固定流程**（漏一步就会卡住）：
 > 1. 改 `spec.gmidl` → **重跑 extgen**（不跑就没有绑定代码）

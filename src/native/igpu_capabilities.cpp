@@ -127,6 +127,17 @@ namespace igpu
         case Capability::BufferResize:  return native;
         case Capability::BufferReadback: return native;
 
+        // ---- drawing ----
+        // DrawStateRestore reports whether IGPU can put GameMaker's input
+        // assembler state back after a draw. It is true here because the
+        // backend reads that state back through the context's IAGet* methods
+        // rather than assuming it. A backend that could not read it would have
+        // to report false, which tells callers not to interleave IGPU draws
+        // with GameMaker's own.
+        case Capability::Draw:             return native;
+        case Capability::DrawIndexed:      return native;
+        case Capability::DrawStateRestore: return native;
+
         case Capability::None:
         default:
             return false;
@@ -199,6 +210,11 @@ namespace igpu
         caps.add("uniform_buffer", supports(Capability::UniformBuffer));
         caps.add("buffer_resize", supports(Capability::BufferResize));
         caps.add("buffer_readback", supports(Capability::BufferReadback));
+
+        // ---- drawing ----
+        caps.add("draw", supports(Capability::Draw));
+        caps.add("draw_indexed", supports(Capability::DrawIndexed));
+        caps.add("draw_state_restore", supports(Capability::DrawStateRestore));
 
         // Serialise through StructStream::writeTo(), which is the only thing
         // that knows both the entry count and the raw-header encoding, then

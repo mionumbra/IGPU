@@ -46,6 +46,11 @@ namespace igpu
             std::int64_t size = 0;
             std::int32_t usage = 0;
             std::int32_t bind = 0;
+
+            // Bytes per vertex, for a buffer created with IgpuBufferBind.Vertex.
+            // Stored because a draw has to derive how many vertices the buffer
+            // holds, and only its creator knows the stride. 0 when not vertex.
+            std::int32_t stride = 0;
         };
 
         std::unordered_map<std::uint64_t, BufferEntry> buffers;

@@ -223,7 +223,7 @@ _igpu_check(igpu_shader_release(_layout_shader), "release layout shader");
 
 show_debug_message("----------------------------------------");
 
-var _vb = igpu_buffer_create(64, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex);
+var _vb = igpu_buffer_create(64, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex, 32);
 show_debug_message("vertex buffer     : " + string(_vb));
 if (_vb == 0) { show_debug_message("vb error          : " + string(igpu_get_last_error())); }
 _igpu_check(_vb > 0, "dynamic vertex buffer is created");
@@ -251,16 +251,16 @@ _igpu_check(!igpu_buffer_write(_vb, -4, _src), "negative offset is rejected");
 // case to assert from here. It stays in the native code as a defensive check.
 
 // A Static buffer takes the one-shot upload path.
-var _sb = igpu_buffer_create(32, IgpuBufferUsage.Static, IgpuBufferBind.Vertex);
+var _sb = igpu_buffer_create(32, IgpuBufferUsage.Static, IgpuBufferBind.Vertex, 16);
 _igpu_check(_sb > 0, "static vertex buffer is created");
 _igpu_check(igpu_buffer_write(_sb, 0, _src), "static buffer accepts an upload");
 
 // A Staging buffer is a readback target: it cannot claim a pipeline bind, and
 // it cannot be written from the CPU.
-_igpu_check(igpu_buffer_create(32, IgpuBufferUsage.Staging, IgpuBufferBind.Vertex) == 0,
+_igpu_check(igpu_buffer_create(32, IgpuBufferUsage.Staging, IgpuBufferBind.Vertex, 0) == 0,
             "staging buffer cannot also be bound for the pipeline");
 
-var _staging = igpu_buffer_create(16, IgpuBufferUsage.Staging, IgpuBufferBind.None);
+var _staging = igpu_buffer_create(16, IgpuBufferUsage.Staging, IgpuBufferBind.None, 0);
 show_debug_message("staging buffer    : " + string(_staging));
 _igpu_check(_staging > 0, "staging readback buffer is created");
 _igpu_check(!igpu_buffer_write(_staging, 0, _src), "staging buffer rejects CPU writes");
@@ -274,19 +274,19 @@ _igpu_check(igpu_buffer_resize(_vb, 128), "resize of a dynamic buffer succeeds")
 _igpu_check(igpu_buffer_size(_vb) == 128, "resized buffer reports the new size");
 
 // A uniform buffer's size must be a multiple of 16.
-_igpu_check(igpu_buffer_create(10, IgpuBufferUsage.Static, IgpuBufferBind.Uniform) == 0,
+_igpu_check(igpu_buffer_create(10, IgpuBufferUsage.Static, IgpuBufferBind.Uniform, 0) == 0,
             "misaligned uniform buffer is rejected");
-var _cb = igpu_buffer_create(16, IgpuBufferUsage.Dynamic, IgpuBufferBind.Uniform);
+var _cb = igpu_buffer_create(16, IgpuBufferUsage.Dynamic, IgpuBufferBind.Uniform, 0);
 _igpu_check(_cb > 0, "16-byte uniform buffer is accepted");
 
 // Invalid arguments must be reported rather than silently defaulted.
-_igpu_check(igpu_buffer_create(0, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex) == 0,
+_igpu_check(igpu_buffer_create(0, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex, 32) == 0,
             "zero-size buffer is rejected");
-_igpu_check(igpu_buffer_create(64, 99, IgpuBufferBind.Vertex) == 0,
+_igpu_check(igpu_buffer_create(64, 99, IgpuBufferBind.Vertex, 32) == 0,
             "unknown usage is rejected");
-_igpu_check(igpu_buffer_create(64, IgpuBufferUsage.Dynamic, 0) == 0,
+_igpu_check(igpu_buffer_create(64, IgpuBufferUsage.Dynamic, 0, 0) == 0,
             "empty bind flags are rejected");
-_igpu_check(igpu_buffer_create(64, IgpuBufferUsage.Dynamic, 4096) == 0,
+_igpu_check(igpu_buffer_create(64, IgpuBufferUsage.Dynamic, 4096, 0) == 0,
             "unknown bind bits are rejected");
 _igpu_check(igpu_buffer_size(999999) == 0, "unknown buffer reports size 0");
 _igpu_check(!igpu_buffer_release(999999), "releasing a bogus buffer fails");
@@ -300,10 +300,10 @@ var _rtt_source = buffer_create(16, buffer_fixed, 4);
 buffer_seek(_rtt_source, buffer_seek_start, 0);
 buffer_write(_rtt_source, buffer_f32, 42.5);
 
-var _rtt_gpu = igpu_buffer_create(16, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex);
+var _rtt_gpu = igpu_buffer_create(16, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex, 16);
 _igpu_check(_rtt_gpu > 0, "round-trip source buffer created");
 
-var _rtt_staging = igpu_buffer_create(16, IgpuBufferUsage.Staging, IgpuBufferBind.None);
+var _rtt_staging = igpu_buffer_create(16, IgpuBufferUsage.Staging, IgpuBufferBind.None, 0);
 _igpu_check(_rtt_staging > 0, "round-trip staging buffer created");
 
 // Copy the source into a staging buffer so we can read a Dynamic buffer back.
@@ -322,8 +322,8 @@ buffer_delete(_rtt_source);
 buffer_delete(_rtt_read);
 
 // The helper packs an array of reals as f32 and uploads it in one call.
-var _from_array = igpu_buffer_create_from_array([1.0, 2.0, 3.0, 4.0],
-    IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex);
+// stride 16 = the whole 4-float payload is one vertex.
+var _from_array = igpu_buffer_create_from_array([1.0, 2.0, 3.0, 4.0], IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex, 16);
 show_debug_message("array buffer      : " + string(_from_array));
 _igpu_check(_from_array > 0, "helper builds a buffer from an array");
 _igpu_check(igpu_buffer_size(_from_array) == 16, "array buffer has 4 floats worth of bytes");
@@ -337,6 +337,214 @@ _igpu_check(igpu_buffer_release(_cb), "release uniform buffer");
 _igpu_check(igpu_buffer_release(_rtt_gpu), "release round-trip buffer");
 _igpu_check(igpu_buffer_release(_rtt_staging), "release round-trip staging buffer");
 _igpu_check(igpu_buffer_release(_from_array), "release array buffer");
+
+// The new stride rules must be enforced: a draw derives its vertex count from
+// size/stride, so a missing or wrong stride would read past the buffer.
+_igpu_check(igpu_buffer_create(64, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex, 0) == 0,
+            "vertex buffer without a stride is rejected");
+_igpu_check(igpu_buffer_create(64, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex, -4) == 0,
+            "negative stride is rejected");
+_igpu_check(igpu_buffer_create(60, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex, 16) == 0,
+            "size that is not a whole number of vertices is rejected");
+_igpu_check(igpu_buffer_create(64, IgpuBufferUsage.Dynamic, IgpuBufferBind.Uniform, 16) == 0,
+            "stride on a non-vertex buffer is rejected");
+
+// ---------------------------------------------------------------------------
+// Drawing
+//
+// A draw overwrites GameMaker's input-assembler state, and GameMaker exposes
+// NO GML-level way to read or write that state - gpu_get_state / gpu_set_state
+// cover blend, depth, stencil, cull, scissor, alphatest and samplers, but
+// nothing about vertex buffers, layouts or topology. So IGPU captures and
+// restores it internally, and the restore failure counter is how that contract
+// is checked from here.
+// ---------------------------------------------------------------------------
+
+show_debug_message("----------------------------------------");
+
+var _draw_shader = igpu_shader_compile(_good, "main", IgpuShaderStage.Vertex, "");
+var _draw_layout = igpu_vertex_format(_draw_shader, [
+    [vertex_usage_position, vertex_type_float3],
+    [vertex_usage_texcoord, vertex_type_float2]
+]);
+_igpu_check(_draw_shader > 0 && _draw_layout > 0, "draw shader and layout are created");
+
+// stride 20 = float3 position (12) + float2 uv (8), matching the layout above.
+// 120 bytes holds exactly 6 vertices.
+var _draw_vb = igpu_buffer_create(120, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex, 20);
+show_debug_message("draw vertex buffer: " + string(_draw_vb));
+_igpu_check(_draw_vb > 0, "draw vertex buffer is created");
+
+var _vertex_data = buffer_create(120, buffer_fixed, 4);
+buffer_seek(_vertex_data, buffer_seek_start, 0);
+// Three vertices of a large triangle in NDC: position xyz + uv.
+// Spelled out as individual writes rather than an array literal: a negative
+// value next to a comma inside a [ ] literal is misparsed by the asset
+// compiler ("malformed assignment").
+buffer_write(_vertex_data, buffer_f32, -1);
+buffer_write(_vertex_data, buffer_f32, -1);
+buffer_write(_vertex_data, buffer_f32, 0);
+buffer_write(_vertex_data, buffer_f32, 0);
+buffer_write(_vertex_data, buffer_f32, 0);
+
+buffer_write(_vertex_data, buffer_f32, 3);
+buffer_write(_vertex_data, buffer_f32, -1);
+buffer_write(_vertex_data, buffer_f32, 0);
+buffer_write(_vertex_data, buffer_f32, 1);
+buffer_write(_vertex_data, buffer_f32, 0);
+
+buffer_write(_vertex_data, buffer_f32, -1);
+buffer_write(_vertex_data, buffer_f32, 3);
+buffer_write(_vertex_data, buffer_f32, 0);
+buffer_write(_vertex_data, buffer_f32, 0);
+buffer_write(_vertex_data, buffer_f32, 1);
+// The remaining 3 vertices stay zero so "count = -1" has a full buffer to draw.
+for (var _i = 0; _i < 45; _i++) { buffer_write(_vertex_data, buffer_f32, 0); }
+
+_igpu_check(igpu_buffer_write(_draw_vb, 0, _vertex_data), "upload triangle vertices");
+buffer_delete(_vertex_data);
+
+var _draws_before = igpu_get_draw_count();
+var _fails_before = igpu_get_draw_restore_failures();
+
+// --- argument validation: every one of these must refuse WITHOUT drawing ---
+
+// A fan has no backend topology, so it must be refused rather than silently
+// drawn as something the caller did not ask for.
+_igpu_check(!igpu_draw(_draw_vb, _draw_layout, pr_trianglefan, 0, 3),
+            "triangle fan is rejected");
+show_debug_message("fan error         : " + string(igpu_get_last_error()));
+
+_igpu_check(!igpu_draw(_draw_vb, _draw_layout, 99, 0, 3), "unknown primitive is rejected");
+
+var _not_vertex = igpu_buffer_create(64, IgpuBufferUsage.Dynamic, IgpuBufferBind.Uniform, 0);
+_igpu_check(!igpu_draw(_not_vertex, _draw_layout, pr_trianglelist, 0, 3),
+            "drawing a non-vertex buffer is rejected");
+
+_igpu_check(!igpu_draw(999999, _draw_layout, pr_trianglelist, 0, 3),
+            "drawing an unknown buffer is rejected");
+_igpu_check(!igpu_draw(_draw_vb, 999999, pr_trianglelist, 0, 3),
+            "drawing with an unknown layout is rejected");
+
+// 120 bytes / 20 stride = 6 vertices; asking for 7 must be refused rather than
+// reading past the buffer.
+_igpu_check(!igpu_draw(_draw_vb, _draw_layout, pr_trianglelist, 0, 7),
+            "drawing more vertices than the buffer holds is rejected");
+show_debug_message("overflow error    : " + string(igpu_get_last_error()));
+
+_igpu_check(!igpu_draw(_draw_vb, _draw_layout, pr_trianglelist, 0, 0),
+            "a zero vertex count is rejected");
+_igpu_check(!igpu_draw(_draw_vb, _draw_layout, pr_trianglelist, -1, 3),
+            "a negative first vertex is rejected");
+
+// None of the rejected calls may have reached the device.
+_igpu_check(igpu_get_draw_count() == _draws_before,
+            "rejected draws do not reach the device");
+
+// --- the real draw ---
+
+// vertex_count = -1 means "to the end of the buffer" (6 vertices here).
+var _drew = igpu_draw(_draw_vb, _draw_layout, pr_trianglelist, 0, -1);
+show_debug_message("draw result       : " + string(_drew));
+if (!_drew) { show_debug_message("draw error        : " + string(igpu_get_last_error())); }
+_igpu_check(_drew, "a valid triangle list draw succeeds");
+_igpu_check(igpu_get_draw_count() == _draws_before + 1, "draw count advances");
+
+// The point of the whole exercise: GameMaker's input-assembler state must be
+// back where it was, or the next thing GM draws would use IGPU's vertex buffer.
+_igpu_check(igpu_get_draw_restore_failures() == _fails_before,
+            "input assembler state was restored");
+
+// The counter above is IGPU's own bookkeeping, so it cannot prove the device
+// really was restored. Query the DEVICE instead: after a draw, IGPU's buffer
+// must NOT still be bound in slot 0.
+_igpu_check(!igpu_is_vertex_buffer_bound(_draw_vb),
+            "IGPU's vertex buffer is not left bound after a draw");
+
+// And IGPU's buffer must not have been bound before the draw either - so the
+// check above is meaningful rather than trivially true.
+_igpu_check(!igpu_is_vertex_buffer_bound(_draw_vb),
+            "IGPU's vertex buffer is not bound before any draw");
+
+// A released handle must report as unbound, never as a stale match.
+_igpu_check(!igpu_is_vertex_buffer_bound(999999), "an unknown handle reports unbound");
+
+// A second draw must behave identically, with no state left over from the first.
+_igpu_check(igpu_draw(_draw_vb, _draw_layout, pr_trianglelist, 0, 3),
+            "a second draw after a restore succeeds");
+_igpu_check(!igpu_is_vertex_buffer_bound(_draw_vb),
+            "still unbound after the second draw");
+
+// Two different vertex buffers, drawn in turn: neither may be left bound.
+// This catches a restore that happens to work for one buffer by accident.
+var _vb2 = igpu_buffer_create(120, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex, 20);
+_igpu_check(_vb2 > 0, "second vertex buffer is created");
+_igpu_check(igpu_draw(_vb2, _draw_layout, pr_trianglelist, 0, 6), "draw with the second buffer");
+_igpu_check(!igpu_is_vertex_buffer_bound(_vb2), "second buffer is not left bound");
+_igpu_check(!igpu_is_vertex_buffer_bound(_draw_vb), "first buffer is not left bound either");
+
+// The same must hold for the indexed path, which also rebinds the index slot.
+_igpu_check(igpu_draw(_draw_vb, _draw_layout, pr_trianglelist, 0, 3),
+            "draw after the second buffer succeeds");
+_igpu_check(!igpu_is_vertex_buffer_bound(_draw_vb), "unbound after drawing the first again");
+_igpu_check(igpu_buffer_release(_vb2), "release second vertex buffer");
+
+// An explicit sub-range must work.
+_igpu_check(igpu_draw(_draw_vb, _draw_layout, pr_trianglelist, 3, 3),
+            "drawing a sub-range succeeds");
+
+// The other topologies must map too.
+_igpu_check(igpu_draw(_draw_vb, _draw_layout, pr_linelist, 0, 4), "line list draw succeeds");
+_igpu_check(igpu_draw(_draw_vb, _draw_layout, pr_pointlist, 0, 6), "point list draw succeeds");
+_igpu_check(!igpu_draw(_draw_vb, _draw_layout, pr_linelist, 0, 7),
+            "line list with too many vertices is rejected");
+
+_igpu_check(igpu_get_draw_restore_failures() == _fails_before,
+            "no restore failures across every draw so far");
+
+// --- indexed drawing ---
+
+// A 16-bit index buffer: 6 indices forming two triangles over 4 vertices.
+var _ib = igpu_buffer_create(12, IgpuBufferUsage.Dynamic, IgpuBufferBind.Index, 0);
+show_debug_message("index buffer      : " + string(_ib));
+_igpu_check(_ib > 0, "index buffer is created");
+
+var _index_data = buffer_create(12, buffer_fixed, 2);
+buffer_seek(_index_data, buffer_seek_start, 0);
+buffer_write(_index_data, buffer_u16, 0);
+buffer_write(_index_data, buffer_u16, 1);
+buffer_write(_index_data, buffer_u16, 2);
+buffer_write(_index_data, buffer_u16, 0);
+buffer_write(_index_data, buffer_u16, 2);
+buffer_write(_index_data, buffer_u16, 3);
+_igpu_check(igpu_buffer_write(_ib, 0, _index_data), "upload indices");
+buffer_delete(_index_data);
+
+// A vertex buffer is still required even for an indexed draw.
+_igpu_check(!igpu_draw_indexed(_draw_vb, _draw_layout, _not_vertex, pr_trianglelist, 0, 6), "indexed draw with a non-index buffer is rejected");
+
+_igpu_check(!igpu_draw_indexed(_draw_vb, _draw_layout, 999999, pr_trianglelist, 0, 6), "indexed draw with an unknown index buffer is rejected");
+
+// 12 bytes / 2 bytes per index = 6 indices; 7 must be refused.
+_igpu_check(!igpu_draw_indexed(_draw_vb, _draw_layout, _ib, pr_trianglelist, 0, 7), "indexed draw past the end is rejected");
+show_debug_message("index overflow    : " + string(igpu_get_last_error()));
+
+var _indexed_drew = igpu_draw_indexed(_draw_vb, _draw_layout, _ib, pr_trianglelist, 0, 6);
+show_debug_message("indexed draw      : " + string(_indexed_drew));
+if (!_indexed_drew) { show_debug_message("indexed error     : " + string(igpu_get_last_error())); }
+_igpu_check(_indexed_drew, "an indexed draw succeeds");
+_igpu_check(igpu_get_draw_restore_failures() == _fails_before,
+            "indexed draw also restores state");
+
+_igpu_check(igpu_supports(IgpuCapability.Draw), "supports(draw)");
+_igpu_check(igpu_supports(IgpuCapability.DrawIndexed), "supports(draw indexed)");
+_igpu_check(igpu_supports(IgpuCapability.DrawStateRestore), "supports(draw state restore)");
+
+_igpu_check(igpu_buffer_release(_ib), "release index buffer");
+_igpu_check(igpu_buffer_release(_not_vertex), "release non-vertex buffer");
+_igpu_check(igpu_buffer_release(_draw_vb), "release draw vertex buffer");
+_igpu_check(igpu_input_layout_release(_draw_layout), "release draw layout");
+_igpu_check(igpu_shader_release(_draw_shader), "release draw shader");
 
 // ---------------------------------------------------------------------------
 // Churn

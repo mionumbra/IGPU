@@ -267,7 +267,10 @@ GMEXPORT double __EXT_NATIVE__igpu_buffer_create(char* __arg_buffer, double __ar
     // field: bind, type: Int32
     std::int32_t bind = gm::wire::codec::readValue<std::int32_t>(__br);
 
-    auto&& __result = igpu_buffer_create(size, usage, bind);
+    // field: stride, type: Int32
+    std::int32_t stride = gm::wire::codec::readValue<std::int32_t>(__br);
+
+    auto&& __result = igpu_buffer_create(size, usage, bind, stride);
     gm::byteio::BufferWriter __bw{__ret_buffer, static_cast<size_t>(__ret_buffer_length)};
 
     // return: __result, type: Int64
@@ -348,6 +351,78 @@ GMEXPORT double __EXT_NATIVE__igpu_buffer_release(char* __arg_buffer, double __a
     std::uint64_t buffer = gm::wire::codec::readValue<std::uint64_t>(__br);
 
     auto&& __result = igpu_buffer_release(buffer);
+    return static_cast<double>(__result);
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_draw(char* __arg_buffer, double __arg_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: vertex_buffer, type: UInt64
+    std::uint64_t vertex_buffer = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    // field: layout, type: UInt64
+    std::uint64_t layout = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    // field: primitive, type: Int32
+    std::int32_t primitive = gm::wire::codec::readValue<std::int32_t>(__br);
+
+    // field: first_vertex, type: Int64
+    std::int64_t first_vertex = gm::wire::codec::readValue<std::int64_t>(__br);
+
+    // field: vertex_count, type: Int64
+    std::int64_t vertex_count = gm::wire::codec::readValue<std::int64_t>(__br);
+
+    auto&& __result = igpu_draw(vertex_buffer, layout, primitive, first_vertex, vertex_count);
+    return static_cast<double>(__result);
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_draw_indexed(char* __arg_buffer, double __arg_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: vertex_buffer, type: UInt64
+    std::uint64_t vertex_buffer = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    // field: layout, type: UInt64
+    std::uint64_t layout = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    // field: index_buffer, type: UInt64
+    std::uint64_t index_buffer = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    // field: primitive, type: Int32
+    std::int32_t primitive = gm::wire::codec::readValue<std::int32_t>(__br);
+
+    // field: first_index, type: Int64
+    std::int64_t first_index = gm::wire::codec::readValue<std::int64_t>(__br);
+
+    // field: index_count, type: Int64
+    std::int64_t index_count = gm::wire::codec::readValue<std::int64_t>(__br);
+
+    auto&& __result = igpu_draw_indexed(vertex_buffer, layout, index_buffer, primitive, first_index, index_count);
+    return static_cast<double>(__result);
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_get_draw_count()
+{
+    auto&& __result = igpu_get_draw_count();
+    return static_cast<double>(__result);
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_get_draw_restore_failures()
+{
+    auto&& __result = igpu_get_draw_restore_failures();
+    return static_cast<double>(__result);
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_is_vertex_buffer_bound(char* __arg_buffer, double __arg_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: buffer, type: UInt64
+    std::uint64_t buffer = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    auto&& __result = igpu_is_vertex_buffer_bound(buffer);
     return static_cast<double>(__result);
 }
 

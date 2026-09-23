@@ -45,6 +45,16 @@ enum IgpuBufferBind
     Storage = 8
 }
 
+enum IgpuPrimitive
+{
+    PointList = 1,
+    LineList = 2,
+    LineStrip = 3,
+    TriangleList = 4,
+    TriangleStrip = 5,
+    TriangleFan = 6
+}
+
 enum IgpuCapability
 {
     None = 0,
@@ -74,6 +84,9 @@ enum IgpuCapability
     UniformBuffer = 50,
     BufferResize = 51,
     BufferReadback = 52,
+    Draw = 53,
+    DrawIndexed = 54,
+    DrawStateRestore = 55,
     AdapterInfo = 60,
     VideoMemory = 61,
     BackbufferSize = 62
@@ -428,9 +441,10 @@ function igpu_input_layout_release(_layout)
  * @param {Real} _size
  * @param {Real} _usage
  * @param {Real} _bind
+ * @param {Real} _stride
  * @returns {Real}
  */
-function igpu_buffer_create(_size, _usage, _bind)
+function igpu_buffer_create(_size, _usage, _bind, _stride)
 {
     var __available__ = __IGPU_is_available();
     if (!__available__) return;
@@ -448,6 +462,10 @@ function igpu_buffer_create(_size, _usage, _bind)
     // param: _bind, type: Int32
     if (!is_numeric(_bind)) show_error($"{_GMFUNCTION_} :: _bind expected number", true);
     buffer_write(__args_buffer__, buffer_s32, _bind);
+
+    // param: _stride, type: Int32
+    if (!is_numeric(_stride)) show_error($"{_GMFUNCTION_} :: _stride expected number", true);
+    buffer_write(__args_buffer__, buffer_s32, _stride);
 
     var __ret_buffer__ = __ext_core_get_ret_buffer();
 
@@ -583,6 +601,117 @@ function igpu_buffer_release(_buffer)
     buffer_write(__args_buffer__, buffer_u64, _buffer);
 
     var __return_value__ = __igpu_buffer_release(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__));
+
+    return __return_value__;
+}
+
+/**
+ * @param {Real} _vertex_buffer
+ * @param {Real} _layout
+ * @param {Real} _primitive
+ * @param {Real} _first_vertex
+ * @param {Real} _vertex_count
+ * @returns {Bool}
+ */
+function igpu_draw(_vertex_buffer, _layout, _primitive, _first_vertex, _vertex_count)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _vertex_buffer, type: UInt64
+    if (!is_numeric(_vertex_buffer)) show_error($"{_GMFUNCTION_} :: _vertex_buffer expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _vertex_buffer);
+
+    // param: _layout, type: UInt64
+    if (!is_numeric(_layout)) show_error($"{_GMFUNCTION_} :: _layout expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _layout);
+
+    // param: _primitive, type: Int32
+    if (!is_numeric(_primitive)) show_error($"{_GMFUNCTION_} :: _primitive expected number", true);
+    buffer_write(__args_buffer__, buffer_s32, _primitive);
+
+    // param: _first_vertex, type: Int64
+    if (!is_numeric(_first_vertex)) show_error($"{_GMFUNCTION_} :: _first_vertex expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _first_vertex);
+
+    // param: _vertex_count, type: Int64
+    if (!is_numeric(_vertex_count)) show_error($"{_GMFUNCTION_} :: _vertex_count expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _vertex_count);
+
+    var __return_value__ = __igpu_draw(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__));
+
+    return __return_value__;
+}
+
+/**
+ * @param {Real} _vertex_buffer
+ * @param {Real} _layout
+ * @param {Real} _index_buffer
+ * @param {Real} _primitive
+ * @param {Real} _first_index
+ * @param {Real} _index_count
+ * @returns {Bool}
+ */
+function igpu_draw_indexed(_vertex_buffer, _layout, _index_buffer, _primitive, _first_index, _index_count)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _vertex_buffer, type: UInt64
+    if (!is_numeric(_vertex_buffer)) show_error($"{_GMFUNCTION_} :: _vertex_buffer expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _vertex_buffer);
+
+    // param: _layout, type: UInt64
+    if (!is_numeric(_layout)) show_error($"{_GMFUNCTION_} :: _layout expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _layout);
+
+    // param: _index_buffer, type: UInt64
+    if (!is_numeric(_index_buffer)) show_error($"{_GMFUNCTION_} :: _index_buffer expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _index_buffer);
+
+    // param: _primitive, type: Int32
+    if (!is_numeric(_primitive)) show_error($"{_GMFUNCTION_} :: _primitive expected number", true);
+    buffer_write(__args_buffer__, buffer_s32, _primitive);
+
+    // param: _first_index, type: Int64
+    if (!is_numeric(_first_index)) show_error($"{_GMFUNCTION_} :: _first_index expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _first_index);
+
+    // param: _index_count, type: Int64
+    if (!is_numeric(_index_count)) show_error($"{_GMFUNCTION_} :: _index_count expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _index_count);
+
+    var __return_value__ = __igpu_draw_indexed(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__));
+
+    return __return_value__;
+}
+
+// Skipping function igpu_get_draw_count (no wrapper is required)
+
+
+// Skipping function igpu_get_draw_restore_failures (no wrapper is required)
+
+
+/**
+ * @param {Real} _buffer
+ * @returns {Bool}
+ */
+function igpu_is_vertex_buffer_bound(_buffer)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _buffer, type: UInt64
+    if (!is_numeric(_buffer)) show_error($"{_GMFUNCTION_} :: _buffer expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _buffer);
+
+    var __return_value__ = __igpu_is_vertex_buffer_bound(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__));
 
     return __return_value__;
 }

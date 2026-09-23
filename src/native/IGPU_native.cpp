@@ -11,6 +11,7 @@
 #include "igpu_buffer.h"
 #include "igpu_device.h"
 #include "igpu_capabilities.h"
+#include "igpu_draw.h"
 #include "igpu_error.h"
 #include "igpu_input_layout.h"
 
@@ -550,9 +551,10 @@ bool igpu_input_layout_release(std::uint64_t layout)
 // Buffers
 // ---------------------------------------------------------------------------
 
-std::int64_t igpu_buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind)
+std::int64_t igpu_buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind,
+                               std::int32_t stride)
 {
-    return igpu::buffer_create(size, usage, bind);
+    return igpu::buffer_create(size, usage, bind, stride);
 }
 
 bool igpu_buffer_write(std::uint64_t buffer, std::int64_t offset, gm::wire::GMBuffer data)
@@ -578,4 +580,45 @@ std::int64_t igpu_buffer_size(std::uint64_t buffer)
 bool igpu_buffer_release(std::uint64_t buffer)
 {
     return igpu::buffer_release(buffer);
+}
+
+// ---------------------------------------------------------------------------
+// Drawing
+// ---------------------------------------------------------------------------
+
+bool igpu_draw(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::int32_t primitive,
+    std::int64_t first_vertex,
+    std::int64_t vertex_count)
+{
+    return igpu::draw(vertex_buffer, layout, primitive, first_vertex, vertex_count);
+}
+
+bool igpu_draw_indexed(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::uint64_t index_buffer,
+    std::int32_t primitive,
+    std::int64_t first_index,
+    std::int64_t index_count)
+{
+    return igpu::draw_indexed(
+        vertex_buffer, layout, index_buffer, primitive, first_index, index_count);
+}
+
+std::int32_t igpu_get_draw_count()
+{
+    return igpu::draw_count();
+}
+
+std::int32_t igpu_get_draw_restore_failures()
+{
+    return igpu::draw_restore_failures();
+}
+
+bool igpu_is_vertex_buffer_bound(std::uint64_t buffer)
+{
+    return igpu::is_vertex_buffer_bound(buffer);
 }

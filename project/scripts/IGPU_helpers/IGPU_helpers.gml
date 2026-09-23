@@ -168,8 +168,11 @@ function igpu_buffer_upload(_buffer, _data, _offset = 0)
 /// @param {Array} _values  Array of reals.
 /// @param {Real}  _usage   IgpuBufferUsage constant.
 /// @param {Real}  _bind    IgpuBufferBind constant (or OR of several).
+/// @param {Real}  _stride  Bytes per vertex; only for a Vertex buffer, where
+///                         it must be a positive multiple of 4 (this helper
+///                         packs each value as one float). 0 otherwise.
 /// @returns {Real} Buffer handle, or 0 on failure.
-function igpu_buffer_create_from_array(_values, _usage, _bind)
+function igpu_buffer_create_from_array(_values, _usage, _bind, _stride = 0)
 {
     var _count = array_length(_values);
     if (_count <= 0)
@@ -178,7 +181,7 @@ function igpu_buffer_create_from_array(_values, _usage, _bind)
         return 0;
     }
 
-    var _handle = igpu_buffer_create(_count * 4, _usage, _bind);
+    var _handle = igpu_buffer_create(_count * 4, _usage, _bind, _stride);
     if (_handle == 0)
     {
         show_debug_message($"igpu_buffer_create_from_array :: {igpu_get_last_error()}");
@@ -206,4 +209,25 @@ function igpu_buffer_create_from_array(_values, _usage, _bind)
     }
 
     return _handle;
+}
+
+/// @func igpu_draw_buffer(_buffer, _layout, _primitive, _first, _count)
+/// @desc Draws a vertex buffer, logging the reason if the draw is refused.
+///       A thin wrapper over igpu_draw() that makes failures visible; the
+///       state save/restore happens inside the native call and needs no
+///       matching begin/end from the caller.
+/// @param {Real} _buffer     Vertex buffer handle (with IgpuBufferBind.Vertex).
+/// @param {Real} _layout     Input layout handle.
+/// @param {Real} _primitive  pr_* constant.
+/// @param {Real} _first      First vertex; 0 by default.
+/// @param {Real} _count      Vertex count; -1 (default) means to the end.
+/// @returns {Bool} True if the draw was issued.
+function igpu_draw_buffer(_buffer, _layout, _primitive, _first = 0, _count = -1)
+{
+    var _ok = igpu_draw(_buffer, _layout, _primitive, _first, _count);
+    if (!_ok)
+    {
+        show_debug_message($"igpu_draw_buffer :: {igpu_get_last_error()}");
+    }
+    return _ok;
 }

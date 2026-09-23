@@ -80,7 +80,8 @@ namespace igpu
         }
     }
 
-    std::int64_t buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind)
+    std::int64_t buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind,
+                               std::int32_t stride)
     {
         clear_last_error();
 
@@ -139,6 +140,35 @@ namespace igpu
             return 0;
         }
 
+        // A vertex buffer must declare its stride, because a draw call derives
+        // the vertex count from size/stride. Without it a draw cannot know how
+        // many vertices exist and would have to trust the caller's count.
+        const bool is_vertex =
+            (bind & static_cast<std::int32_t>(BufferBind::Vertex)) != 0;
+
+        if (is_vertex && stride <= 0)
+        {
+            set_last_error(
+                "igpu_buffer_create: a vertex buffer needs a positive stride "
+                "(bytes per vertex) so draws can derive the vertex count");
+            return 0;
+        }
+        if (!is_vertex && stride != 0)
+        {
+            set_last_error(
+                "igpu_buffer_create: stride is only meaningful for a vertex "
+                "buffer; pass 0 for this one");
+            return 0;
+        }
+        if (is_vertex && (size % stride) != 0)
+        {
+            set_last_error(
+                "igpu_buffer_create: size " + std::to_string(size) +
+                " is not a whole number of " + std::to_string(stride) +
+                "-byte vertices");
+            return 0;
+        }
+
         // Constant buffers must be a multiple of 16 bytes; D3D11 rejects
         // anything else. Reported here so the caller learns the real rule.
         if ((d3d_bind & D3D11_BIND_CONSTANT_BUFFER) != 0 && (size % 16) != 0)
@@ -192,6 +222,7 @@ namespace igpu
         entry.size = size;
         entry.usage = usage;
         entry.bind = bind;
+        entry.stride = stride;
         s.buffers.emplace(id, entry);
 
         return static_cast<std::int64_t>(id);
