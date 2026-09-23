@@ -135,7 +135,7 @@ function igpu_vertex_format(_shader, _elements, _stride = -1)
     return igpu_input_layout_create(_shader, _usage, _type, _count, _stride);
 }
 
-/// @func igpu_buffer_upload(_buffer, _data[_buffer], _offset)
+/// @func igpu_buffer_upload(_buffer, _data, _offset)
 /// @desc Uploads a GameMaker buffer into a GPU buffer.
 ///       This is a thin wrapper over igpu_buffer_write() that exists to make
 ///       the argument order read naturally; the native function is what

@@ -190,6 +190,13 @@ IGPU/
 > 所以**没有单独的 size 参数** —— 拷贝长度由源缓冲区真实长度决定，天然不会错位。
 > 详见 §7.14。
 
+GML 侧有两个现成辅助函数（`project/scripts/IGPU_helpers/IGPU_helpers.gml`）：
+
+- `igpu_buffer_upload(_buffer, _data, _offset = 0)` —— 上传一个 GM 缓冲区
+- `igpu_buffer_create_from_array(_values, _usage, _bind)` —— 直接从一个实数数组
+  建缓冲区（每个元素打包成 4 字节 float），最适合喂位置/索引/常量数据，
+  免去手工管理 GM 缓冲区的 fifo 与写入位置
+
 `usage` / `type` 直接传 **GameMaker 自己的常量**，不另发明词汇：
 
 | 用途 | 常量 | 实测数值 |
