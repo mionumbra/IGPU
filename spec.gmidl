@@ -7,6 +7,38 @@ module IGPU;
 // GameMaker owns the D3D11 device. IGPU borrows it: GML reads the device,
 // immediate context and swapchain pointers from os_get_info() and hands them
 // to igpu_init(). Everything else in IGPU operates on those borrowed handles.
+//
+// ---------------------------------------------------------------------------
+// CROSS-PLATFORM CONTRACT (read before adding APIs)
+// ---------------------------------------------------------------------------
+// Only Windows and Xbox expose real device pointers; every other platform
+// gives us driver strings at best, and HTML5/Switch return -1 outright.
+// IGPU is therefore layered:
+//
+//   Tier 1  real GPU backend        Windows (D3D11), Xbox (D3D12, interface
+//                                   reserved but not implemented)
+//   Tier 2  query / reflection      adapter info, format support
+//   Tier 3  capability abstraction  pure GML, works on EVERY platform
+//
+// Two rules keep this honest:
+//
+//   1. NO BACKEND TERMINOLOGY IN THIS FILE. No "d3d", "dxgi", "hlsl", "glsl",
+//      "_5_0", "ID3D". If a caller has to know which API is underneath, the
+//      abstraction has failed. The one deliberate exception is the optional
+//      `dialect` hint on igpu_shader_compile, which exists precisely so that
+//      callers who DO want to be specific can be, without forcing everyone.
+//
+//   2. REUSE GAMEMAKER'S OWN VOCABULARY. GameMaker already exposes a
+//      platform-neutral GPU vocabulary (surface_rgba8unorm, vertex_usage_*,
+//      cmpfunc_*, cull_*) that works on every backend it supports - those
+//      names are DXGI-flavoured but the *semantics* are universal, because
+//      GameMaker translates them per backend. Mirror that precedent instead
+//      of inventing parallel names.
+//
+// Every capability that is not universally available must be queryable via
+// igpu_get_capabilities() / igpu_supports(), so callers can degrade instead
+// of crashing. APIs on unsupported platforms must FAIL CLEANLY (return 0 /
+// false and set an error), never fault.
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -29,12 +61,18 @@ function igpu_is_available() : bool;
 // Device info
 // ---------------------------------------------------------------------------
 
+// NOTE: returns an IgpuFeatureLevel. Direct3D-specific today; on backends that
+// have no equivalent concept this reports Unknown rather than lying. Callers
+// that need a cross-platform answer should prefer igpu_get_capabilities().
 [global, bind = typed_gml]
 function igpu_get_feature_level() : int32;
 
+// Empty string when the platform does not report an adapter description
+// (Xbox, for one, returns "" by design).
 [global, bind = typed_gml]
 function igpu_get_adapter_description() : string;
 
+// 0 when the platform does not expose video memory (Xbox returns 0).
 [global, bind = typed_gml]
 function igpu_get_video_memory() : int64;
 
@@ -45,17 +83,46 @@ function igpu_get_backbuffer_width() : int32;
 function igpu_get_backbuffer_height() : int32;
 
 // ---------------------------------------------------------------------------
+// Capability query (Tier 3) - the mechanism that makes cross-platform viable
+// ---------------------------------------------------------------------------
+
+// Returns a struct describing what this backend can actually do. Never fails:
+// on a platform with no native backend it returns an all-false structure, so
+// callers degrade instead of crashing.
+[global, bind = typed_gml]
+function igpu_get_capabilities() : gmval;
+
+// Convenience predicate over igpu_get_capabilities(). Pass an IgpuCapability.
+[global, bind = typed_gml]
+function igpu_supports(capability : int32) : bool;
+
+// Native shader language of the active backend: "hlsl", "glsl", "glsl_es",
+// "msl", "spirv", or "" when there is no backend.
+[global, bind = typed_gml]
+function igpu_get_shader_dialect() : string;
+
+// ---------------------------------------------------------------------------
 // Runtime shader compilation
 // ---------------------------------------------------------------------------
 
+// Unified entry point. `stage` is backend-neutral; `dialect` is an OPTIONAL
+// hint and should normally be left empty, in which case the backend picks the
+// right profile for the stage.
+//
+// Returns a shader handle, or 0 on failure (see igpu_get_last_error()).
 [global, bind = typed_gml]
-function igpu_shader_compile_vertex(source : string, entry : string, target : string) : int64;
+function igpu_shader_compile(source : string, entry : string, stage : int32, [type_hint = `string`] dialect) : int64;
+
+// Convenience wrappers over igpu_shader_compile(). Kept because they read
+// better at call sites and cost nothing; they carry no backend assumptions.
+[global, bind = typed_gml]
+function igpu_shader_compile_vertex(source : string, entry : string, [type_hint = `string`] dialect) : int64;
 
 [global, bind = typed_gml]
-function igpu_shader_compile_pixel(source : string, entry : string, target : string) : int64;
+function igpu_shader_compile_pixel(source : string, entry : string, [type_hint = `string`] dialect) : int64;
 
 [global, bind = typed_gml]
-function igpu_shader_compile_compute(source : string, entry : string, target : string) : int64;
+function igpu_shader_compile_compute(source : string, entry : string, [type_hint = `string`] dialect) : int64;
 
 [global, bind = typed_gml]
 function igpu_shader_release([type_hint = `uint64`] shader) : bool;
@@ -77,10 +144,64 @@ enum IgpuFeatureLevel
     Level_12_1 = 4
 }
 
+// Shader stages are a backend-neutral concept: every graphics API has a
+// vertex and a fragment/pixel stage. The later entries are declared so the
+// interface does not have to change when a backend that supports them is
+// added - query igpu_supports() before use, do not assume.
+//
+//   D3D11 (Windows)  Vertex, Pixel, Geometry, Hull, Domain
+//   D3D12 (Xbox)     all of the above plus Mesh, Amplification
+//   OpenGL           Vertex, Pixel, Geometry, Hull(=tess control), Domain
+//   Vulkan/Metal     all of the above (Hull=tesc, Domain=tese)
+//   WebGL / GLES     Vertex, Pixel only
 [global, bind = typed_gml]
 enum IgpuShaderStage
 {
     Vertex = 0,
     Pixel = 1,
-    Compute = 2
+    Compute = 2,
+    Geometry = 3,
+    Hull = 4,
+    Domain = 5,
+    Mesh = 6,
+    Amplification = 7
+}
+
+// Backend-neutral feature flags for igpu_supports(). Values are stable and
+// must not be renumbered once shipped.
+[global, bind = typed_gml]
+enum IgpuCapability
+{
+    None = 0,
+
+    // Shader compilation and stages
+    ShaderCompileRuntime = 1,
+    ShaderStageVertex = 2,
+    ShaderStagePixel = 3,
+    ShaderStageCompute = 4,
+    ShaderStageGeometry = 5,
+    ShaderStageTessellation = 6,
+    ShaderStageMesh = 7,
+
+    // Resources
+    Texture3D = 20,
+    TextureArray = 21,
+    TextureCubemap = 22,
+    StructuredBuffer = 23,
+    UnorderedAccess = 24,
+    MultipleRenderTargets = 25,
+
+    // Pipeline features
+    Instancing = 40,
+    IndirectDraw = 41,
+    Queries = 42,
+    Timestamps = 43,
+    OcclusionQuery = 44,
+    Fence = 45,
+    Wireframe = 46,
+
+    // Platform info availability
+    AdapterInfo = 60,
+    VideoMemory = 61,
+    BackbufferSize = 62
 }

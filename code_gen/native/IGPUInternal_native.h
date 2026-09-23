@@ -28,7 +28,40 @@ namespace gm_enums
     {
         Vertex = 0,
         Pixel = 1,
-        Compute = 2
+        Compute = 2,
+        Geometry = 3,
+        Hull = 4,
+        Domain = 5,
+        Mesh = 6,
+        Amplification = 7
+    };
+
+    enum class IgpuCapability : std::int64_t
+    {
+        None = 0,
+        ShaderCompileRuntime = 1,
+        ShaderStageVertex = 2,
+        ShaderStagePixel = 3,
+        ShaderStageCompute = 4,
+        ShaderStageGeometry = 5,
+        ShaderStageTessellation = 6,
+        ShaderStageMesh = 7,
+        Texture3D = 20,
+        TextureArray = 21,
+        TextureCubemap = 22,
+        StructuredBuffer = 23,
+        UnorderedAccess = 24,
+        MultipleRenderTargets = 25,
+        Instancing = 40,
+        IndirectDraw = 41,
+        Queries = 42,
+        Timestamps = 43,
+        OcclusionQuery = 44,
+        Fence = 45,
+        Wireframe = 46,
+        AdapterInfo = 60,
+        VideoMemory = 61,
+        BackbufferSize = 62
     };
 
 }
@@ -56,8 +89,12 @@ std::string igpu_get_adapter_description();
 std::int64_t igpu_get_video_memory();
 std::int32_t igpu_get_backbuffer_width();
 std::int32_t igpu_get_backbuffer_height();
-std::int64_t igpu_shader_compile_vertex(std::string_view source, std::string_view entry, std::string_view target);
-std::int64_t igpu_shader_compile_pixel(std::string_view source, std::string_view entry, std::string_view target);
-std::int64_t igpu_shader_compile_compute(std::string_view source, std::string_view entry, std::string_view target);
+gm::wire::DataStream igpu_get_capabilities();
+bool igpu_supports(std::int32_t capability);
+std::string igpu_get_shader_dialect();
+std::int64_t igpu_shader_compile(std::string_view source, std::string_view entry, std::int32_t stage, std::string_view dialect);
+std::int64_t igpu_shader_compile_vertex(std::string_view source, std::string_view entry, std::string_view dialect);
+std::int64_t igpu_shader_compile_pixel(std::string_view source, std::string_view entry, std::string_view dialect);
+std::int64_t igpu_shader_compile_compute(std::string_view source, std::string_view entry, std::string_view dialect);
 bool igpu_shader_release(std::uint64_t shader);
 std::string igpu_get_last_error();

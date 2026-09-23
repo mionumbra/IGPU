@@ -77,6 +77,53 @@ GMEXPORT double __EXT_NATIVE__igpu_get_backbuffer_height()
     return static_cast<double>(__result);
 }
 
+GMEXPORT double __EXT_NATIVE__igpu_get_capabilities(char* __ret_buffer, double __ret_buffer_length)
+{
+    auto&& __result = igpu_get_capabilities();
+    gm::byteio::BufferWriter __bw{__ret_buffer, static_cast<size_t>(__ret_buffer_length)};
+
+    // return: __result, type: Any
+    gm::wire::codec::writeValue(__bw, __result);
+    return 0;
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_supports(double capability)
+{
+    auto&& __result = igpu_supports(static_cast<std::int32_t>(capability));
+    return static_cast<double>(__result);
+}
+
+GMEXPORT char* __EXT_NATIVE__igpu_get_shader_dialect()
+{
+    static std::string __result;
+    __result = igpu_get_shader_dialect();
+    return (char*)__result.c_str();
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_shader_compile(char* __arg_buffer, double __arg_buffer_length, char* __ret_buffer, double __ret_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: source, type: String
+    std::string_view source = gm::wire::codec::readValue<std::string_view>(__br);
+
+    // field: entry, type: String
+    std::string_view entry = gm::wire::codec::readValue<std::string_view>(__br);
+
+    // field: stage, type: Int32
+    std::int32_t stage = gm::wire::codec::readValue<std::int32_t>(__br);
+
+    // field: dialect, type: String
+    std::string_view dialect = gm::wire::codec::readValue<std::string_view>(__br);
+
+    auto&& __result = igpu_shader_compile(source, entry, stage, dialect);
+    gm::byteio::BufferWriter __bw{__ret_buffer, static_cast<size_t>(__ret_buffer_length)};
+
+    // return: __result, type: Int64
+    gm::wire::codec::writeValue(__bw, __result);
+    return 0;
+}
+
 GMEXPORT double __EXT_NATIVE__igpu_shader_compile_vertex(char* __arg_buffer, double __arg_buffer_length, char* __ret_buffer, double __ret_buffer_length)
 {
     gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
@@ -87,10 +134,10 @@ GMEXPORT double __EXT_NATIVE__igpu_shader_compile_vertex(char* __arg_buffer, dou
     // field: entry, type: String
     std::string_view entry = gm::wire::codec::readValue<std::string_view>(__br);
 
-    // field: target, type: String
-    std::string_view target = gm::wire::codec::readValue<std::string_view>(__br);
+    // field: dialect, type: String
+    std::string_view dialect = gm::wire::codec::readValue<std::string_view>(__br);
 
-    auto&& __result = igpu_shader_compile_vertex(source, entry, target);
+    auto&& __result = igpu_shader_compile_vertex(source, entry, dialect);
     gm::byteio::BufferWriter __bw{__ret_buffer, static_cast<size_t>(__ret_buffer_length)};
 
     // return: __result, type: Int64
@@ -108,10 +155,10 @@ GMEXPORT double __EXT_NATIVE__igpu_shader_compile_pixel(char* __arg_buffer, doub
     // field: entry, type: String
     std::string_view entry = gm::wire::codec::readValue<std::string_view>(__br);
 
-    // field: target, type: String
-    std::string_view target = gm::wire::codec::readValue<std::string_view>(__br);
+    // field: dialect, type: String
+    std::string_view dialect = gm::wire::codec::readValue<std::string_view>(__br);
 
-    auto&& __result = igpu_shader_compile_pixel(source, entry, target);
+    auto&& __result = igpu_shader_compile_pixel(source, entry, dialect);
     gm::byteio::BufferWriter __bw{__ret_buffer, static_cast<size_t>(__ret_buffer_length)};
 
     // return: __result, type: Int64
@@ -129,10 +176,10 @@ GMEXPORT double __EXT_NATIVE__igpu_shader_compile_compute(char* __arg_buffer, do
     // field: entry, type: String
     std::string_view entry = gm::wire::codec::readValue<std::string_view>(__br);
 
-    // field: target, type: String
-    std::string_view target = gm::wire::codec::readValue<std::string_view>(__br);
+    // field: dialect, type: String
+    std::string_view dialect = gm::wire::codec::readValue<std::string_view>(__br);
 
-    auto&& __result = igpu_shader_compile_compute(source, entry, target);
+    auto&& __result = igpu_shader_compile_compute(source, entry, dialect);
     gm::byteio::BufferWriter __bw{__ret_buffer, static_cast<size_t>(__ret_buffer_length)};
 
     // return: __result, type: Int64

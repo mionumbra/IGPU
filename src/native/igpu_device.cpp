@@ -1,29 +1,10 @@
 #include "igpu_device.h"
 
-#include <dxgi.h>
+#include <dxgi1_2.h>
 
 #include <Windows.h>
 
-#include <cstdio>
-
 #include "igpu_error.h"
-
-namespace
-{
-    void igpu_debug_trace(const char* text)
-    {
-        ::OutputDebugStringA(text);
-        ::OutputDebugStringA("\n");
-
-        std::FILE* file = nullptr;
-        if (fopen_s(&file, "igpu_native_trace.txt", "a") == 0 && file != nullptr)
-        {
-            std::fputs(text, file);
-            std::fputc('\n', file);
-            std::fclose(file);
-        }
-    }
-}
 
 namespace igpu
 {
@@ -60,21 +41,12 @@ namespace igpu
 
     bool bind_device(ID3D11Device* device, ID3D11DeviceContext* context, IDXGISwapChain* swapchain)
     {
-        char trace[256] = {};
-        std::snprintf(trace, sizeof(trace),
-            "bind_device: device=%p context=%p swapchain=%p",
-            static_cast<void*>(device),
-            static_cast<void*>(context),
-            static_cast<void*>(swapchain));
-        igpu_debug_trace(trace);
-
         auto& s = state();
         s.reset();
 
         if (device == nullptr || context == nullptr)
         {
             set_last_error("igpu_init: device and context pointers must be non-null");
-            igpu_debug_trace("bind_device: FAILED (null device or context)");
             return false;
         }
 
@@ -87,16 +59,6 @@ namespace igpu
 
         refresh_adapter_info();
         refresh_backbuffer_size();
-
-        {
-            char success[256] = {};
-            std::snprintf(success, sizeof(success),
-                "bind_device: OK featureLevel=0x%X backbuffer=%dx%d",
-                static_cast<unsigned>(s.feature_level),
-                s.backbuffer_width,
-                s.backbuffer_height);
-            igpu_debug_trace(success);
-        }
 
         clear_last_error();
         return true;
@@ -148,6 +110,31 @@ namespace igpu
             return;
         }
 
+        // Prefer GetDesc1: DXGI_SWAP_CHAIN_DESC1 carries the *current* buffer
+        // size, whereas the older GetDesc() reports the size the swapchain was
+        // created with - which goes stale as soon as the window is resized or
+        // the game switches to fullscreen.
+        IDXGISwapChain1* swapchain1 = nullptr;
+        if (SUCCEEDED(s.swapchain->QueryInterface(
+                __uuidof(IDXGISwapChain1),
+                reinterpret_cast<void**>(&swapchain1))) &&
+            swapchain1 != nullptr)
+        {
+            DXGI_SWAP_CHAIN_DESC1 desc1{};
+            if (SUCCEEDED(swapchain1->GetDesc1(&desc1)))
+            {
+                s.backbuffer_width = static_cast<std::int32_t>(desc1.Width);
+                s.backbuffer_height = static_cast<std::int32_t>(desc1.Height);
+            }
+            swapchain1->Release();
+
+            if (s.backbuffer_width > 0 && s.backbuffer_height > 0)
+            {
+                return;
+            }
+        }
+
+        // Fallback for a swapchain that is not IDXGISwapChain1 (DXGI 1.0).
         DXGI_SWAP_CHAIN_DESC desc{};
         if (FAILED(s.swapchain->GetDesc(&desc)))
         {

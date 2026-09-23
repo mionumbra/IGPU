@@ -55,10 +55,39 @@
  */
 
 /**
+ * @function_partial igpu_get_capabilities
+ * @returns {Any}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_supports
+ * @param {Real} capability
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_get_shader_dialect
+ * @returns {String}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_shader_compile
+ * @param {String} source
+ * @param {String} entry
+ * @param {Real} stage
+ * @param {String} dialect
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
  * @function_partial igpu_shader_compile_vertex
  * @param {String} source
  * @param {String} entry
- * @param {String} target
+ * @param {String} dialect
  * @returns {Real}
  * @function_end
  */
@@ -67,7 +96,7 @@
  * @function_partial igpu_shader_compile_pixel
  * @param {String} source
  * @param {String} entry
- * @param {String} target
+ * @param {String} dialect
  * @returns {Real}
  * @function_end
  */
@@ -76,7 +105,7 @@
  * @function_partial igpu_shader_compile_compute
  * @param {String} source
  * @param {String} entry
- * @param {String} target
+ * @param {String} dialect
  * @returns {Real}
  * @function_end
  */
@@ -109,6 +138,40 @@
  * @member Vertex
  * @member Pixel
  * @member Compute
+ * @member Geometry
+ * @member Hull
+ * @member Domain
+ * @member Mesh
+ * @member Amplification
+ * @enum_end
+ */
+
+/**
+ * @enum_partial IgpuCapability
+ * @member None
+ * @member ShaderCompileRuntime
+ * @member ShaderStageVertex
+ * @member ShaderStagePixel
+ * @member ShaderStageCompute
+ * @member ShaderStageGeometry
+ * @member ShaderStageTessellation
+ * @member ShaderStageMesh
+ * @member Texture3D
+ * @member TextureArray
+ * @member TextureCubemap
+ * @member StructuredBuffer
+ * @member UnorderedAccess
+ * @member MultipleRenderTargets
+ * @member Instancing
+ * @member IndirectDraw
+ * @member Queries
+ * @member Timestamps
+ * @member OcclusionQuery
+ * @member Fence
+ * @member Wireframe
+ * @member AdapterInfo
+ * @member VideoMemory
+ * @member BackbufferSize
  * @enum_end
  */
 

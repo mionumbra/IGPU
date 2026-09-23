@@ -9,6 +9,7 @@
 #include <string_view>
 
 #include "igpu_device.h"
+#include "igpu_capabilities.h"
 #include "igpu_error.h"
 
 using namespace gm::wire;
@@ -17,35 +18,93 @@ using namespace gm_enums;
 
 namespace
 {
-    constexpr const char* kIgpuVersion = "0.2.0";
+    constexpr const char* kIgpuVersion = "0.3.0";
 
-    enum class ShaderStage
+    // Shader stages are backend-neutral (see spec.gmidl). This mirrors the
+    // IgpuShaderStage enum; the numeric values must stay in sync with it.
+    enum class ShaderStage : std::int32_t
     {
-        Vertex,
-        Pixel,
-        Compute
+        Vertex = 0,
+        Pixel = 1,
+        Compute = 2,
+        Geometry = 3,
+        Hull = 4,
+        Domain = 5,
+        Mesh = 6,
+        Amplification = 7
     };
 
+    bool stage_from_int(std::int32_t raw, ShaderStage& out)
+    {
+        switch (raw)
+        {
+        case 0: out = ShaderStage::Vertex;        return true;
+        case 1: out = ShaderStage::Pixel;         return true;
+        case 2: out = ShaderStage::Compute;       return true;
+        case 3: out = ShaderStage::Geometry;      return true;
+        case 4: out = ShaderStage::Hull;          return true;
+        case 5: out = ShaderStage::Domain;        return true;
+        case 6: out = ShaderStage::Mesh;          return true;
+        case 7: out = ShaderStage::Amplification; return true;
+        default: return false;
+        }
+    }
+
+    // Default compilation profile per stage. This is the ONE place where
+    // backend-specific terminology is allowed, because IGPU is the thing that
+    // translates a neutral request into a backend profile - callers never see it.
     const char* entry_target_for(ShaderStage stage)
     {
         switch (stage)
         {
-        case ShaderStage::Vertex:  return "vs_5_0";
-        case ShaderStage::Pixel:   return "ps_5_0";
-        case ShaderStage::Compute: return "cs_5_0";
+        case ShaderStage::Vertex:        return "vs_5_0";
+        case ShaderStage::Pixel:         return "ps_5_0";
+        case ShaderStage::Compute:       return "cs_5_0";
+        case ShaderStage::Geometry:      return "gs_5_0";
+        case ShaderStage::Hull:          return "hs_5_0";
+        case ShaderStage::Domain:        return "ds_5_0";
+        case ShaderStage::Mesh:
+        case ShaderStage::Amplification:
+            // SM 6.5 mesh/amplification shaders are not available on the D3D11
+            // path; reported as unsupported rather than silently mistranslated.
+            return nullptr;
         }
-        return "vs_5_0";
+        return nullptr;
     }
 
     const char* stage_name(ShaderStage stage)
     {
         switch (stage)
         {
-        case ShaderStage::Vertex:  return "vertex";
-        case ShaderStage::Pixel:   return "pixel";
-        case ShaderStage::Compute: return "compute";
+        case ShaderStage::Vertex:        return "vertex";
+        case ShaderStage::Pixel:         return "pixel";
+        case ShaderStage::Compute:       return "compute";
+        case ShaderStage::Geometry:      return "geometry";
+        case ShaderStage::Hull:          return "hull";
+        case ShaderStage::Domain:        return "domain";
+        case ShaderStage::Mesh:          return "mesh";
+        case ShaderStage::Amplification: return "amplification";
         }
         return "unknown";
+    }
+
+    // Maps a neutral capability back to the stage it refers to, so
+    // compile_shader() can fail with the right message on unsupported stages.
+    bool stage_supported(ShaderStage stage)
+    {
+        switch (stage)
+        {
+        case ShaderStage::Vertex:   return igpu::supports(igpu::Capability::ShaderStageVertex);
+        case ShaderStage::Pixel:    return igpu::supports(igpu::Capability::ShaderStagePixel);
+        case ShaderStage::Compute:  return igpu::supports(igpu::Capability::ShaderStageCompute);
+        case ShaderStage::Geometry: return igpu::supports(igpu::Capability::ShaderStageGeometry);
+        case ShaderStage::Hull:
+        case ShaderStage::Domain:   return igpu::supports(igpu::Capability::ShaderStageTessellation);
+        case ShaderStage::Mesh:
+        case ShaderStage::Amplification:
+            return igpu::supports(igpu::Capability::ShaderStageMesh);
+        }
+        return false;
     }
 
     std::string build_error_message(
@@ -100,8 +159,29 @@ namespace
             return 0;
         }
 
+        // Check the backend can actually do this stage BEFORE reaching the
+        // compiler, so the caller gets a capability message rather than an
+        // opaque HLSL error.
+        if (!stage_supported(stage))
+        {
+            std::string message = "igpu_shader_compile: stage '";
+            message += stage_name(stage);
+            message += "' is not supported by the '";
+            message += igpu::backend_name();
+            message += "' backend (check igpu_supports)";
+            igpu::set_last_error(std::move(message));
+            return 0;
+        }
+
+        const char* default_target = entry_target_for(stage);
+        if (target.empty() && default_target == nullptr)
+        {
+            igpu::set_last_error("igpu_shader_compile: no default profile for this stage");
+            return 0;
+        }
+
         const std::string target_profile =
-            target.empty() ? entry_target_for(stage) : std::string(target);
+            target.empty() ? std::string(default_target) : std::string(target);
 
         const std::string entry_point(entry);
         const std::string source_text(source);
@@ -189,6 +269,50 @@ namespace
             }
             break;
         }
+        case ShaderStage::Geometry:
+        {
+            ID3D11GeometryShader* gs = nullptr;
+            if (SUCCEEDED(s.device->CreateGeometryShader(
+                    bytecode->GetBufferPointer(),
+                    bytecode->GetBufferSize(),
+                    nullptr,
+                    &gs)))
+            {
+                shader = gs;
+            }
+            break;
+        }
+        case ShaderStage::Hull:
+        {
+            ID3D11HullShader* hs = nullptr;
+            if (SUCCEEDED(s.device->CreateHullShader(
+                    bytecode->GetBufferPointer(),
+                    bytecode->GetBufferSize(),
+                    nullptr,
+                    &hs)))
+            {
+                shader = hs;
+            }
+            break;
+        }
+        case ShaderStage::Domain:
+        {
+            ID3D11DomainShader* ds = nullptr;
+            if (SUCCEEDED(s.device->CreateDomainShader(
+                    bytecode->GetBufferPointer(),
+                    bytecode->GetBufferSize(),
+                    nullptr,
+                    &ds)))
+            {
+                shader = ds;
+            }
+            break;
+        }
+        case ShaderStage::Mesh:
+        case ShaderStage::Amplification:
+            // Unreachable: stage_supported() already rejected these. Kept so
+            // the switch stays exhaustive under strict warnings.
+            break;
         }
 
         bytecode->Release();
@@ -294,28 +418,82 @@ std::int32_t igpu_get_backbuffer_height()
     return igpu::state().backbuffer_height;
 }
 
+// ---------------------------------------------------------------------------
+// Capability query (Tier 3)
+// ---------------------------------------------------------------------------
+
+gm::wire::DataStream igpu_get_capabilities()
+{
+    return igpu::build_capabilities();
+}
+
+bool igpu_supports(std::int32_t capability)
+{
+    return igpu::supports(static_cast<igpu::Capability>(capability));
+}
+
+std::string igpu_get_shader_dialect()
+{
+    return igpu::shader_dialect();
+}
+
+// ---------------------------------------------------------------------------
+// Runtime shader compilation
+// ---------------------------------------------------------------------------
+
+std::int64_t igpu_shader_compile(
+    std::string_view source,
+    std::string_view entry,
+    std::int32_t stage,
+    std::string_view dialect)
+{
+    ShaderStage resolved{};
+    if (!stage_from_int(stage, resolved))
+    {
+        igpu::set_last_error("igpu_shader_compile: unknown shader stage");
+        return 0;
+    }
+
+    // Only HLSL is available on the current backend. An explicit conflicting
+    // dialect is a caller error worth reporting rather than silently ignoring.
+    if (!dialect.empty() && dialect != "hlsl")
+    {
+        std::string message = "igpu_shader_compile: dialect '";
+        message += std::string(dialect);
+        message += "' is not supported by the '";
+        message += igpu::backend_name();
+        message += "' backend (it compiles '";
+        message += igpu::shader_dialect();
+        message += "')";
+        igpu::set_last_error(std::move(message));
+        return 0;
+    }
+
+    return compile_shader(resolved, source, entry, {});
+}
+
 std::int64_t igpu_shader_compile_vertex(
     std::string_view source,
     std::string_view entry,
-    std::string_view target)
+    std::string_view dialect)
 {
-    return compile_shader(ShaderStage::Vertex, source, entry, target);
+    return igpu_shader_compile(source, entry, static_cast<std::int32_t>(ShaderStage::Vertex), dialect);
 }
 
 std::int64_t igpu_shader_compile_pixel(
     std::string_view source,
     std::string_view entry,
-    std::string_view target)
+    std::string_view dialect)
 {
-    return compile_shader(ShaderStage::Pixel, source, entry, target);
+    return igpu_shader_compile(source, entry, static_cast<std::int32_t>(ShaderStage::Pixel), dialect);
 }
 
 std::int64_t igpu_shader_compile_compute(
     std::string_view source,
     std::string_view entry,
-    std::string_view target)
+    std::string_view dialect)
 {
-    return compile_shader(ShaderStage::Compute, source, entry, target);
+    return igpu_shader_compile(source, entry, static_cast<std::int32_t>(ShaderStage::Compute), dialect);
 }
 
 bool igpu_shader_release(std::uint64_t shader)

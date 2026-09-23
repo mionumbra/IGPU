@@ -21,7 +21,40 @@ enum IgpuShaderStage
 {
     Vertex = 0,
     Pixel = 1,
-    Compute = 2
+    Compute = 2,
+    Geometry = 3,
+    Hull = 4,
+    Domain = 5,
+    Mesh = 6,
+    Amplification = 7
+}
+
+enum IgpuCapability
+{
+    None = 0,
+    ShaderCompileRuntime = 1,
+    ShaderStageVertex = 2,
+    ShaderStagePixel = 3,
+    ShaderStageCompute = 4,
+    ShaderStageGeometry = 5,
+    ShaderStageTessellation = 6,
+    ShaderStageMesh = 7,
+    Texture3D = 20,
+    TextureArray = 21,
+    TextureCubemap = 22,
+    StructuredBuffer = 23,
+    UnorderedAccess = 24,
+    MultipleRenderTargets = 25,
+    Instancing = 40,
+    IndirectDraw = 41,
+    Queries = 42,
+    Timestamps = 43,
+    OcclusionQuery = 44,
+    Fence = 45,
+    Wireframe = 46,
+    AdapterInfo = 60,
+    VideoMemory = 61,
+    BackbufferSize = 62
 }
 
 // #####################################################################
@@ -105,12 +138,38 @@ function igpu_get_video_memory()
 
 
 /**
+ * @returns {Any}
+ */
+function igpu_get_capabilities()
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __decoders__ = __IGPU_get_decoders();
+
+    var __ret_buffer__ = __ext_core_get_ret_buffer();
+
+    var __return_value__ = __igpu_get_capabilities(buffer_get_address(__ret_buffer__), buffer_get_size(__ret_buffer__));
+
+    var __result__ = undefined;
+    __result__ = __ext_core_buffer_unmarshal_value(__ret_buffer__, __decoders__);
+    return __result__;
+}
+
+// Skipping function igpu_supports (no wrapper is required)
+
+
+// Skipping function igpu_get_shader_dialect (no wrapper is required)
+
+
+/**
  * @param {String} _source
  * @param {String} _entry
- * @param {String} _target
+ * @param {Real} _stage
+ * @param {String} _dialect
  * @returns {Real}
  */
-function igpu_shader_compile_vertex(_source, _entry, _target)
+function igpu_shader_compile(_source, _entry, _stage, _dialect)
 {
     var __available__ = __IGPU_is_available();
     if (!__available__) return;
@@ -127,10 +186,51 @@ function igpu_shader_compile_vertex(_source, _entry, _target)
     buffer_write(__args_buffer__, buffer_u32, string_byte_length(_entry));
     buffer_write(__args_buffer__, buffer_string, _entry);
 
-    // param: _target, type: String
-    if (!is_string(_target)) show_error($"{_GMFUNCTION_} :: _target expected string", true);
-    buffer_write(__args_buffer__, buffer_u32, string_byte_length(_target));
-    buffer_write(__args_buffer__, buffer_string, _target);
+    // param: _stage, type: Int32
+    if (!is_numeric(_stage)) show_error($"{_GMFUNCTION_} :: _stage expected number", true);
+    buffer_write(__args_buffer__, buffer_s32, _stage);
+
+    // param: _dialect, type: String
+    if (!is_string(_dialect)) show_error($"{_GMFUNCTION_} :: _dialect expected string", true);
+    buffer_write(__args_buffer__, buffer_u32, string_byte_length(_dialect));
+    buffer_write(__args_buffer__, buffer_string, _dialect);
+
+    var __ret_buffer__ = __ext_core_get_ret_buffer();
+
+    var __return_value__ = __igpu_shader_compile(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__), buffer_get_address(__ret_buffer__), buffer_get_size(__ret_buffer__));
+
+    var __result__ = undefined;
+    __result__ = buffer_read(__ret_buffer__, buffer_u64);
+    return __result__;
+}
+
+/**
+ * @param {String} _source
+ * @param {String} _entry
+ * @param {String} _dialect
+ * @returns {Real}
+ */
+function igpu_shader_compile_vertex(_source, _entry, _dialect)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _source, type: String
+    if (!is_string(_source)) show_error($"{_GMFUNCTION_} :: _source expected string", true);
+    buffer_write(__args_buffer__, buffer_u32, string_byte_length(_source));
+    buffer_write(__args_buffer__, buffer_string, _source);
+
+    // param: _entry, type: String
+    if (!is_string(_entry)) show_error($"{_GMFUNCTION_} :: _entry expected string", true);
+    buffer_write(__args_buffer__, buffer_u32, string_byte_length(_entry));
+    buffer_write(__args_buffer__, buffer_string, _entry);
+
+    // param: _dialect, type: String
+    if (!is_string(_dialect)) show_error($"{_GMFUNCTION_} :: _dialect expected string", true);
+    buffer_write(__args_buffer__, buffer_u32, string_byte_length(_dialect));
+    buffer_write(__args_buffer__, buffer_string, _dialect);
 
     var __ret_buffer__ = __ext_core_get_ret_buffer();
 
@@ -144,10 +244,10 @@ function igpu_shader_compile_vertex(_source, _entry, _target)
 /**
  * @param {String} _source
  * @param {String} _entry
- * @param {String} _target
+ * @param {String} _dialect
  * @returns {Real}
  */
-function igpu_shader_compile_pixel(_source, _entry, _target)
+function igpu_shader_compile_pixel(_source, _entry, _dialect)
 {
     var __available__ = __IGPU_is_available();
     if (!__available__) return;
@@ -164,10 +264,10 @@ function igpu_shader_compile_pixel(_source, _entry, _target)
     buffer_write(__args_buffer__, buffer_u32, string_byte_length(_entry));
     buffer_write(__args_buffer__, buffer_string, _entry);
 
-    // param: _target, type: String
-    if (!is_string(_target)) show_error($"{_GMFUNCTION_} :: _target expected string", true);
-    buffer_write(__args_buffer__, buffer_u32, string_byte_length(_target));
-    buffer_write(__args_buffer__, buffer_string, _target);
+    // param: _dialect, type: String
+    if (!is_string(_dialect)) show_error($"{_GMFUNCTION_} :: _dialect expected string", true);
+    buffer_write(__args_buffer__, buffer_u32, string_byte_length(_dialect));
+    buffer_write(__args_buffer__, buffer_string, _dialect);
 
     var __ret_buffer__ = __ext_core_get_ret_buffer();
 
@@ -181,10 +281,10 @@ function igpu_shader_compile_pixel(_source, _entry, _target)
 /**
  * @param {String} _source
  * @param {String} _entry
- * @param {String} _target
+ * @param {String} _dialect
  * @returns {Real}
  */
-function igpu_shader_compile_compute(_source, _entry, _target)
+function igpu_shader_compile_compute(_source, _entry, _dialect)
 {
     var __available__ = __IGPU_is_available();
     if (!__available__) return;
@@ -201,10 +301,10 @@ function igpu_shader_compile_compute(_source, _entry, _target)
     buffer_write(__args_buffer__, buffer_u32, string_byte_length(_entry));
     buffer_write(__args_buffer__, buffer_string, _entry);
 
-    // param: _target, type: String
-    if (!is_string(_target)) show_error($"{_GMFUNCTION_} :: _target expected string", true);
-    buffer_write(__args_buffer__, buffer_u32, string_byte_length(_target));
-    buffer_write(__args_buffer__, buffer_string, _target);
+    // param: _dialect, type: String
+    if (!is_string(_dialect)) show_error($"{_GMFUNCTION_} :: _dialect expected string", true);
+    buffer_write(__args_buffer__, buffer_u32, string_byte_length(_dialect));
+    buffer_write(__args_buffer__, buffer_string, _dialect);
 
     var __ret_buffer__ = __ext_core_get_ret_buffer();
 

@@ -1,0 +1,57 @@
+Phase A: cross-platform API surface + capability query (0.3.0)
+
+Makes the interface backend-neutral so a future backend is not a rewrite.
+No D3D terminology crosses into GML (see DESIGN.md for the reasoning).
+
+Interface changes (spec.gmidl):
+- New unified igpu_shader_compile(source, entry, stage, dialect="").
+  `stage` is a neutral IgpuShaderStage; `dialect` is an optional hint that
+  defaults to "" and is normally left empty.
+- The old target/profile argument ("vs_5_0") is GONE from the public API.
+  igpu_shader_compile_vertex/pixel/compute remain as convenience wrappers
+  carrying no backend assumptions.
+- IgpuShaderStage extended to 8 stages (Vertex/Pixel/Compute/Geometry/
+  Hull/Domain/Mesh/Amplification). The later ones are declared so the
+  interface does not have to change when a backend supports them; callers
+  must query rather than assume.
+- New IgpuCapability enum + igpu_supports() + igpu_get_capabilities() +
+  igpu_get_shader_dialect().
+
+Capability layer (Tier 3), src/native/igpu_capabilities.*:
+- igpu_get_capabilities() returns a struct with 19 always-present keys
+  describing backend, tier, shader stages, resources and pipeline features.
+- Never fails: with no backend bound it reports backend="none", tier=3 and
+  all-false flags, so callers degrade instead of crashing (this is what
+  makes the abstraction real on HTML5/GL platforms).
+
+Unsupported paths now fail cleanly and specifically:
+- An unsupported stage is refused by capability lookup, not by the HLSL
+  compiler, e.g. "stage 'mesh' is not supported by the 'd3d11' backend".
+- An explicit foreign dialect is rejected with a message naming the one
+  the backend does compile.
+
+Fixes:
+- refresh_backbuffer_size() now prefers IDXGISwapChain::GetDesc1(), which
+  reports the CURRENT buffer size. The old GetDesc() path returned the
+  creation-time size, so the reported dimensions went stale on resize or
+  fullscreen switch.
+- Removed igpu_debug_trace(): it appended igpu_native_trace.txt to the
+  working directory on every init. HANDOVER listed this as a known issue.
+- igpu_init_from_game() now destroys the os_get_info() DS Map, which
+  GameMaker never frees automatically (one leaked map per call), and
+  guards against os_get_info() returning -1 on HTML5/Switch.
+
+Two wire-format traps found and documented while implementing the struct
+return, both verified with standalone probes against GMExtWire.h:
+- StructStream must not be returned by value as DataStream: the virtual
+  writeTo() override is sliced and the Struct tag/entry count are dropped,
+  yielding a payload GML misparses. The bytes are seeded into the base
+  buffer instead.
+- String values must be passed as explicit std::string_view. A bare
+  const char* binds to the const T& template (T = char[N]) and encodes as
+  a number; likewise ArrayStream::push("x") binds to the bool overload.
+
+Verified on AMD Radeon Vega 8 / D3D11 feature level 11_1: capabilities
+report correctly, stage list is right, unsupported stage and dialect are
+rejected with useful messages, and both the unified and wrapper shader
+compile paths return live handles.
