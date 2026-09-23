@@ -128,6 +128,7 @@ $capNeedsApi = @{
     'ShaderStageCompute'   = 'shader_compile'
 }
 $unbacked = @()
+$checkedCaps = 0
 foreach ($cap in $capNeedsApi.Keys) {
     $expr = $nativeExprs[$cap]
     if ($null -eq $expr) { continue }
@@ -138,9 +139,18 @@ foreach ($cap in $capNeedsApi.Keys) {
     # 直接不匹配、不报错）。用 $apiRoot 这种带前缀的名字。
     $apiRoot = $capNeedsApi[$cap]
     $found = @($specFuncs | Where-Object { $_ -match $apiRoot })
+    $checkedCaps++
     if (-not $found) { $unbacked += $cap }
 }
-Check "报 true 的能力都有对应 API（共 $($capNeedsApi.Count) 个恒 true 能力）" `
+
+# 报的是"本组实际检查了几个"而不是映射表的大小。两者曾经不等（映射表 24 项，
+# 但其中 11 项已改为 false、会被上面的 continue 跳过），消息里的数字若用表大小
+# 就会虚高，让接手者以为检查覆盖了 24 个能力。
+# 顺带一提：若 $checkedCaps 变成 0，说明所有能力都不再是 native，
+# 这本身值得警惕，所以下面单独断言它非零。
+Check "本组确实检查到了能力（$checkedCaps 个恒 true）" `
+    ($checkedCaps -gt 0) "没有任何能力处于恒 true 状态——请确认能力表是否被整体改坏"
+Check "报 true 的能力都有对应 API（已查 $checkedCaps 个）" `
     ($unbacked.Count -eq 0) `
     ("这些能力报 true 但 spec 里没有对应函数: " + ($unbacked -join ", "))
 
