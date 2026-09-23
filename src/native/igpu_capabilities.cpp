@@ -101,21 +101,30 @@ namespace igpu
         case Capability::ShaderStageMesh: return false;
 
         // ---- resources ----
-        case Capability::Texture3D:             return native;
-        case Capability::TextureArray:          return native;
-        case Capability::TextureCubemap:        return native;
+        // 注意：以下 11 项曾一律 return native（Windows 恒 true），但 spec 里
+        // **没有任何对应函数**。这违反 spec 开头的核心约束"能力可查、降级优雅"：
+        // 调用方看到 igpu_supports(Instancing) == true，就会去调
+        // igpu_draw_instanced() —— 而那个函数不存在。虚报 true 比报 false 更糟，
+        // 因为它主动误导调用方。
+        //
+        // 现在的规则：**能力位只反映已经可以调用的 API**。实现某一项时，
+        // 连同它的 API 一起把这里翻成 true（并补测试断言）。
+        // 这条规则由 tools/verify_handover.ps1 第 3b 组强制检查。
+        case Capability::Texture3D:             return false;  // 待 igpu_texture_create
+        case Capability::TextureArray:          return false;  // 待 igpu_texture_create
+        case Capability::TextureCubemap:        return false;  // 待 igpu_texture_create
         case Capability::StructuredBuffer:      return device_at_least(D3D_FEATURE_LEVEL_11_0);
         case Capability::UnorderedAccess:       return device_at_least(D3D_FEATURE_LEVEL_11_0);
-        case Capability::MultipleRenderTargets: return native;
+        case Capability::MultipleRenderTargets: return false;  // 待 igpu_render_target_*
 
         // ---- pipeline ----
-        case Capability::Instancing:     return native;
-        case Capability::IndirectDraw:   return native;
-        case Capability::Queries:        return native;
-        case Capability::Timestamps:     return native;
-        case Capability::OcclusionQuery: return native;
-        case Capability::Fence:          return native;
-        case Capability::Wireframe:      return native;
+        case Capability::Instancing:     return false;  // 待 igpu_draw_instanced
+        case Capability::IndirectDraw:   return false;  // 待 igpu_draw_indirect
+        case Capability::Queries:        return false;  // 待 igpu_query_*
+        case Capability::Timestamps:     return false;  // 待 igpu_timestamp_*
+        case Capability::OcclusionQuery: return false;  // 待 igpu_occlusion_*
+        case Capability::Fence:          return false;  // 待 igpu_fence_*
+        case Capability::Wireframe:      return false;  // 待 igpu_set_fill_mode
 
         // ---- geometry submission ----
         // The input layout and buffer APIs are implemented, so these report

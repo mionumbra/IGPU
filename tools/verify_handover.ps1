@@ -76,6 +76,74 @@ Check "上报键无重复" ($dupeKeys.Count -eq 0) ("重复键: " + ($dupeKeys -
 Check "上报键数量 <= 枚举能力数" ($reportedKeys.Count -le $enumNames.Count) `
     "上报 $($reportedKeys.Count) 个键，枚举 $($enumNames.Count) 个能力"
 
+# ---- 3b. 报 true 的能力必须有对应 API ----
+# 来历：审计发现 11 个能力在 Windows 上报 true，却没有任何 spec 函数支撑
+# （Instancing / Queries / Fence / Texture3D ... 全是虚报）。
+# 这违反 spec 自己的核心约束"能力可查、降级优雅"——调用方看到 true 会去调
+# 一个不存在的函数。能力表是"承诺"，spec 是"实现"，两者必须对得上。
+#
+# 判据是保守的：只检查每个"恒 true"的能力是否有同名/近名函数，宁可漏报不误报，
+# 因为把已实现的能力误判为虚报会逼人写假注释。
+#
+# ⚠️ 必须 Get-Content 读**内容**：$capsCpp（L15）是**路径**，不是文本。
+# 直接把它喂给 [regex]::Matches 会得到 0 个匹配、$nativeExprs 为空、
+# 于是下面每个能力都命中 `continue`，检查**恒过**——一个永远不会失败的检查。
+# 这个 bug 我实际写出来过一次，并且脚本当时照样报"全部一致"。
+$capsCppText = Get-Content $capsCpp -Raw
+$nativeExprs = @{}
+foreach ($m in [regex]::Matches($capsCppText, 'case Capability::(\w+):\s*return\s+([^;]+);')) {
+    $nativeExprs[$m.Groups[1].Value] = $m.Groups[2].Value.Trim()
+}
+# 自检：解析不到分支说明上面的正则或输入出了问题，必须显式失败而不是静默通过。
+Check "能解析出 supports() 的返回分支（共 $($nativeExprs.Count) 个）" `
+    ($nativeExprs.Count -gt 0) "一个都没解析到——检查会退化成恒过，必须先修这里"
+$specFuncs = Select-String -Path $spec -Pattern '^function\s+(\w+)' |
+    ForEach-Object { $_.Matches[0].Groups[1].Value }
+
+# 能力名 -> 它需要的 API 词根（必须能在某个 spec 函数名里找到）
+$capNeedsApi = @{
+    'Texture3D'            = 'texture'
+    'TextureArray'         = 'texture'
+    'TextureCubemap'       = 'texture'
+    'MultipleRenderTargets'= 'render_target'
+    'Instancing'           = 'instanc'
+    'IndirectDraw'         = 'indirect'
+    'Queries'              = 'query'
+    'Timestamps'           = 'timestamp'
+    'OcclusionQuery'       = 'occlusion'
+    'Fence'                = 'fence'
+    'Wireframe'            = 'fill_mode'
+    'InputLayout'          = 'input_layout'
+    'VertexBuffer'         = 'buffer'
+    'IndexBuffer'          = 'buffer'
+    'UniformBuffer'        = 'buffer'
+    'BufferResize'         = 'buffer_resize'
+    'BufferReadback'       = 'buffer_read'
+    'Draw'                 = 'draw'
+    'DrawIndexed'          = 'draw_indexed'
+    'DrawStateRestore'     = 'draw'
+    'ShaderCompileRuntime' = 'shader_compile'
+    'ShaderStageVertex'    = 'shader_compile'
+    'ShaderStagePixel'     = 'shader_compile'
+    'ShaderStageCompute'   = 'shader_compile'
+}
+$unbacked = @()
+foreach ($cap in $capNeedsApi.Keys) {
+    $expr = $nativeExprs[$cap]
+    if ($null -eq $expr) { continue }
+    if ($expr -notmatch '^native$') { continue }   # 只查恒 true 的
+    # 注意：变量名不能叫 $root —— $root 是本脚本的仓库根路径（L11），
+    # 覆盖它会让后面所有 Join-Path $root 的检查静默失效（自己踩过，且当时
+    # 脚本仍报"全部一致"，因为路径变成 'texture' 之类的相对名后 Select-String
+    # 直接不匹配、不报错）。用 $apiRoot 这种带前缀的名字。
+    $apiRoot = $capNeedsApi[$cap]
+    $found = @($specFuncs | Where-Object { $_ -match $apiRoot })
+    if (-not $found) { $unbacked += $cap }
+}
+Check "报 true 的能力都有对应 API（共 $($capNeedsApi.Count) 个恒 true 能力）" `
+    ($unbacked.Count -eq 0) `
+    ("这些能力报 true 但 spec 里没有对应函数: " + ($unbacked -join ", "))
+
 # 文档里声明的键数量
 $docKeyLine = Select-String -Path $handover -Pattern '返回的\s*(\d+)\s*个键'
 if ($docKeyLine) {
