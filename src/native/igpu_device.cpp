@@ -34,6 +34,16 @@ namespace igpu
         input_layouts.clear();
         next_input_layout_id = 1;
 
+        for (auto& [id, entry] : buffers)
+        {
+            if (entry.object != nullptr)
+            {
+                entry.object->Release();
+            }
+        }
+        buffers.clear();
+        next_buffer_id = 1;
+
         // device, context and swapchain are borrowed from GameMaker: never release.
         device = nullptr;
         context = nullptr;
@@ -58,6 +68,13 @@ namespace igpu
         auto& shaders = state().shaders;
         const auto it = shaders.find(handle);
         return it == shaders.end() ? nullptr : &it->second;
+    }
+
+    DeviceState::BufferEntry* find_buffer(std::uint64_t handle)
+    {
+        auto& buffers = state().buffers;
+        const auto it = buffers.find(handle);
+        return it == buffers.end() ? nullptr : &it->second;
     }
 
     bool bind_device(ID3D11Device* device, ID3D11DeviceContext* context, IDXGISwapChain* swapchain)

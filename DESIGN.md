@@ -413,12 +413,13 @@ backbuffer 会变，但那里永远返回旧值。
 ### 阶段 D — 补全 Tier 1（Windows）
 10. ✅ **shader 句柄保留 `ID3DBlob`** ← 见下方说明
 11. ✅ **输入布局**（`ID3D11InputLayout`）+ 顶点格式
-12. ⬜ 缓冲区（`ID3D11Buffer`）+ 映射
+12. ✅ 缓冲区（`ID3D11Buffer`）+ 上传 / 读回
 13. ⬜ 绘制调用 + 实例化
 14. ⬜ 状态对象（depth-stencil / rasterizer / blend / sampler）
 15. ⬜ MRT
 16. ⬜ 纹理 / SRV / RTV / UAV
 17. ⬜ 查询 / 时间戳 / fence
+18. ⬜ 常量缓冲区反射（`D3DReflect`），自动打包 `cbuffer` 布局
 
 > **关于第 10 步（已完成）**：`DeviceState::shaders` 原先只存 `ID3D11DeviceChild*`，
 > **丢弃了 `ID3DBlob`**。而 `CreateInputLayout` 必须用编译产物里的 signature，

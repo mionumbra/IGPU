@@ -36,6 +36,21 @@ namespace igpu
         std::unordered_map<std::uint64_t, ID3D11InputLayout*> input_layouts;
         std::uint64_t next_input_layout_id = 1;
 
+        // GPU buffers. The usage and bind flags are recorded alongside the
+        // object because later calls must reject operations the buffer was not
+        // created for - e.g. resizing a Static buffer, or reading back from one
+        // that was not created as Staging.
+        struct BufferEntry
+        {
+            ID3D11Buffer* object = nullptr;
+            std::int64_t size = 0;
+            std::int32_t usage = 0;
+            std::int32_t bind = 0;
+        };
+
+        std::unordered_map<std::uint64_t, BufferEntry> buffers;
+        std::uint64_t next_buffer_id = 1;
+
         DXGI_ADAPTER_DESC adapter_desc{};
         bool adapter_desc_valid = false;
 
@@ -52,6 +67,9 @@ namespace igpu
     // Shader lookup helper. Returns nullptr for an unknown or already-released
     // handle, so callers can validate without reaching into the map.
     DeviceState::ShaderEntry* find_shader(std::uint64_t handle);
+
+    // Buffer lookup helper, same contract as find_shader.
+    DeviceState::BufferEntry* find_buffer(std::uint64_t handle);
 
     bool bind_device(ID3D11Device* device, ID3D11DeviceContext* context, IDXGISwapChain* swapchain);
     void release_all();

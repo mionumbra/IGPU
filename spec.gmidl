@@ -173,6 +173,65 @@ function igpu_input_layout_create(shader : int64, usage : array, type : array, [
 function igpu_input_layout_release([type_hint = `uint64`] layout) : bool;
 
 // ---------------------------------------------------------------------------
+// Buffers
+// ---------------------------------------------------------------------------
+
+// Creates a GPU buffer of `size` bytes.
+//
+// `usage` is a backend-neutral description of how often the contents change,
+// NOT a memory-placement hint: the backend picks the right placement for it.
+//
+//     IgpuBufferUsage.Static   written once, drawn many times   (upload)
+//     IgpuBufferUsage.Dynamic  rewritten every frame            (dynamic)
+//     IgpuBufferUsage.Staging  readable back from the GPU on the CPU
+//
+// `bind` is a combination (bitwise OR) of IgpuBufferBind flags:
+//
+//     IgpuBufferBind.Vertex  / .Index     geometry a draw call consumes
+//     IgpuBufferBind.Uniform              a shader constant block
+//     IgpuBufferBind.Storage              a structured / raw shader resource
+//
+// Returns a buffer handle, or 0 on failure (see igpu_get_last_error()).
+[global, bind = typed_gml]
+function igpu_buffer_create(size : int64, usage : int32, bind : int32) : int64;
+
+// Uploads bytes from a GameMaker buffer into `buffer`, starting `offset` bytes
+// into it.
+//
+// `data` is a GameMaker buffer (create it with buffer_create and fill it with
+// buffer_write / buffer_poke). GMIDL marshals it as raw memory that carries its
+// OWN length, so there is no separate size argument to get out of sync with the
+// real allocation - the copy is bounded by the buffer's actual length.
+//
+// The whole of `data` is copied. To upload a slice, create a buffer of the
+// desired size or use buffer_copy first.
+//
+// Returns false if the source would run past the end of the destination, so a
+// short buffer is caught here rather than corrupting neighbouring GPU memory.
+[global, bind = typed_gml]
+function igpu_buffer_write([type_hint = `uint64`] buffer, offset : int64, [type_hint = `buffer`] data) : bool;
+
+// Resizes a buffer to `size` bytes, preserving as much existing content as the
+// backend can. Only valid for buffers created with IgpuBufferUsage.Dynamic.
+[global, bind = typed_gml]
+function igpu_buffer_resize([type_hint = `uint64`] buffer, size : int64) : bool;
+
+// Reads `size` bytes from `offset` in `buffer` back into the GameMaker buffer
+// `dest`. Only valid for buffers created with IgpuBufferUsage.Staging; the
+// backend reports an error otherwise rather than returning undefined memory.
+//
+// As with igpu_buffer_write, `dest` carries its own length and the copy never
+// writes past it.
+[global, bind = typed_gml]
+function igpu_buffer_read([type_hint = `uint64`] buffer, offset : int64, [type_hint = `buffer`] dest) : bool;
+
+[global, bind = typed_gml]
+function igpu_buffer_size([type_hint = `uint64`] buffer) : int64;
+
+[global, bind = typed_gml]
+function igpu_buffer_release([type_hint = `uint64`] buffer) : bool;
+
+// ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
 
@@ -207,6 +266,46 @@ enum IgpuShaderStage
     Domain = 5,
     Mesh = 6,
     Amplification = 7
+}
+
+// How often a buffer's contents change. This is deliberately NOT GameMaker's
+// buffer_fixed / buffer_grow / buffer_wrap: those describe a CPU buffer's
+// size-growth policy, whereas this describes how the GPU will be asked to
+// store the data. Reusing the GM names here would silently mean something
+// different, so these are separate.
+//
+// The backend translates these into its own memory-placement terms; callers
+// never see them.
+[global, bind = typed_gml]
+enum IgpuBufferUsage
+{
+    // Written once at creation, then only read by the GPU. The backend is free
+    // to place this in the fastest memory it has.
+    Static = 0,
+
+    // Rewritten frequently. Correct for anything updated every frame; the
+    // backend keeps it CPU-writable.
+    Dynamic = 1,
+
+    // Readable back by the CPU. Never usable directly by a draw call, and read
+    // back with igpu_buffer_read().
+    Staging = 2
+}
+
+// What a buffer is allowed to be used for. Combine with bitwise OR, e.g.
+// IgpuBufferBind.Vertex | IgpuBufferBind.Index for a shared geometry buffer.
+//
+// These are capability-deciding bits, so they are validated at creation: a
+// buffer that claims a use the backend cannot honour fails loudly instead of
+// producing a draw that silently renders nothing.
+[global, bind = typed_gml]
+enum IgpuBufferBind
+{
+    None = 0,
+    Vertex = 1,
+    Index = 2,
+    Uniform = 4,
+    Storage = 8
 }
 
 // Backend-neutral feature flags for igpu_supports(). Values are stable and
@@ -246,6 +345,10 @@ enum IgpuCapability
     InputLayout = 47,
     VertexBuffer = 48,
     IndexBuffer = 49,
+    UniformBuffer = 50,
+    // Buffer update strategies, queried so callers can pick one that works
+    BufferResize = 51,
+    BufferReadback = 52,
 
     // Platform info availability
     AdapterInfo = 60,

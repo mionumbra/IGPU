@@ -65,6 +65,9 @@ namespace igpu
         InputLayout = 47,
         VertexBuffer = 48,
         IndexBuffer = 49,
+        UniformBuffer = 50,
+        BufferResize = 51,
+        BufferReadback = 52,
 
         AdapterInfo = 60,
         VideoMemory = 61,

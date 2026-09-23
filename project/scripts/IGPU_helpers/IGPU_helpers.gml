@@ -134,3 +134,76 @@ function igpu_vertex_format(_shader, _elements, _stride = -1)
 
     return igpu_input_layout_create(_shader, _usage, _type, _count, _stride);
 }
+
+/// @func igpu_buffer_upload(_buffer, _data[_buffer], _offset)
+/// @desc Uploads a GameMaker buffer into a GPU buffer.
+///       This is a thin wrapper over igpu_buffer_write() that exists to make
+///       the argument order read naturally; the native function is what
+///       carries the bounds checking.
+/// @param {Real} _buffer  IGPU buffer handle.
+/// @param {Id.Buffer} _data  GameMaker buffer holding the bytes to upload.
+/// @param {Real} _offset  Byte offset in the GPU buffer; 0 by default.
+/// @returns {Bool} True on success.
+function igpu_buffer_upload(_buffer, _data, _offset = 0)
+{
+    var _ok = igpu_buffer_write(_buffer, _offset, _data);
+    if (!_ok)
+    {
+        show_debug_message($"igpu_buffer_upload :: {igpu_get_last_error()}");
+    }
+    return _ok;
+}
+
+/// @func igpu_buffer_create_from_array(_values, _usage, _bind)
+/// @desc Builds a GPU buffer directly from a GML array of reals, packing each
+///       element as a 32-bit float.
+///
+///       This is the shortest path for feeding computed data (positions,
+///       indices, constants) to the GPU without hand-managing a GameMaker
+///       buffer and its fifo/text position.
+///
+///       NOTE: every value becomes one 4-byte float, so this suits numeric
+///       arrays only. For interleaved vertex structs, fill a buffer yourself
+///       and use igpu_buffer_upload() so the layout matches your format.
+/// @param {Array} _values  Array of reals.
+/// @param {Real}  _usage   IgpuBufferUsage constant.
+/// @param {Real}  _bind    IgpuBufferBind constant (or OR of several).
+/// @returns {Real} Buffer handle, or 0 on failure.
+function igpu_buffer_create_from_array(_values, _usage, _bind)
+{
+    var _count = array_length(_values);
+    if (_count <= 0)
+    {
+        show_debug_message("igpu_buffer_create_from_array :: array is empty");
+        return 0;
+    }
+
+    var _handle = igpu_buffer_create(_count * 4, _usage, _bind);
+    if (_handle == 0)
+    {
+        show_debug_message($"igpu_buffer_create_from_array :: {igpu_get_last_error()}");
+        return 0;
+    }
+
+    // buffer_fixed + buffer_fast keeps the writes tightly packed with no
+    // alignment padding, which is exactly what the GPU expects.
+    var _staging = buffer_create(_count * 4, buffer_fixed, 4);
+    buffer_seek(_staging, buffer_seek_start, 0);
+
+    for (var _i = 0; _i < _count; _i++)
+    {
+        buffer_write(_staging, buffer_f32, _values[_i]);
+    }
+
+    var _ok = igpu_buffer_write(_handle, 0, _staging);
+    buffer_delete(_staging);
+
+    if (!_ok)
+    {
+        show_debug_message($"igpu_buffer_create_from_array :: {igpu_get_last_error()}");
+        igpu_buffer_release(_handle);
+        return 0;
+    }
+
+    return _handle;
+}

@@ -36,6 +36,22 @@ namespace gm_enums
         Amplification = 7
     };
 
+    enum class IgpuBufferUsage : std::int64_t
+    {
+        Static = 0,
+        Dynamic = 1,
+        Staging = 2
+    };
+
+    enum class IgpuBufferBind : std::int64_t
+    {
+        None = 0,
+        Vertex = 1,
+        Index = 2,
+        Uniform = 4,
+        Storage = 8
+    };
+
     enum class IgpuCapability : std::int64_t
     {
         None = 0,
@@ -62,6 +78,9 @@ namespace gm_enums
         InputLayout = 47,
         VertexBuffer = 48,
         IndexBuffer = 49,
+        UniformBuffer = 50,
+        BufferResize = 51,
+        BufferReadback = 52,
         AdapterInfo = 60,
         VideoMemory = 61,
         BackbufferSize = 62
@@ -103,3 +122,9 @@ bool igpu_shader_release(std::uint64_t shader);
 std::string igpu_get_last_error();
 std::int64_t igpu_input_layout_create(std::int64_t shader, const gm::wire::GMArrayView& usage, const gm::wire::GMArrayView& type, std::int32_t element_count, std::int32_t stride);
 bool igpu_input_layout_release(std::uint64_t layout);
+std::int64_t igpu_buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind);
+bool igpu_buffer_write(std::uint64_t buffer, std::int64_t offset, gm::wire::GMBuffer data);
+bool igpu_buffer_resize(std::uint64_t buffer, std::int64_t size);
+bool igpu_buffer_read(std::uint64_t buffer, std::int64_t offset, gm::wire::GMBuffer dest);
+std::int64_t igpu_buffer_size(std::uint64_t buffer);
+bool igpu_buffer_release(std::uint64_t buffer);

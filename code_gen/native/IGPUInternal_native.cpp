@@ -6,6 +6,17 @@
 using namespace gm_structs;
 using namespace gm::wire::codec;
 
+static std::queue<gm::wire::GMBuffer> __buffer_queue;
+
+// Internal function used for queueing buffers to native code
+GMEXPORT double __EXT_NATIVE__IGPU_queue_buffer(char* __arg_buffer, double __arg_buffer_length)
+{
+    gm::wire::GMBuffer __buff{__arg_buffer, static_cast<uint64_t>(__arg_buffer_length)};
+    __buffer_queue.push(__buff);
+
+    return 1.0;
+}
+
 GMEXPORT double __EXT_NATIVE__igpu_init(char* __arg_buffer, double __arg_buffer_length)
 {
     gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
@@ -240,6 +251,103 @@ GMEXPORT double __EXT_NATIVE__igpu_input_layout_release(char* __arg_buffer, doub
     std::uint64_t layout = gm::wire::codec::readValue<std::uint64_t>(__br);
 
     auto&& __result = igpu_input_layout_release(layout);
+    return static_cast<double>(__result);
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_buffer_create(char* __arg_buffer, double __arg_buffer_length, char* __ret_buffer, double __ret_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: size, type: Int64
+    std::int64_t size = gm::wire::codec::readValue<std::int64_t>(__br);
+
+    // field: usage, type: Int32
+    std::int32_t usage = gm::wire::codec::readValue<std::int32_t>(__br);
+
+    // field: bind, type: Int32
+    std::int32_t bind = gm::wire::codec::readValue<std::int32_t>(__br);
+
+    auto&& __result = igpu_buffer_create(size, usage, bind);
+    gm::byteio::BufferWriter __bw{__ret_buffer, static_cast<size_t>(__ret_buffer_length)};
+
+    // return: __result, type: Int64
+    gm::wire::codec::writeValue(__bw, __result);
+    return 0;
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_buffer_write(char* __arg_buffer, double __arg_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: buffer, type: UInt64
+    std::uint64_t buffer = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    // field: offset, type: Int64
+    std::int64_t offset = gm::wire::codec::readValue<std::int64_t>(__br);
+
+    // field: data, type: Buffer
+    gm::wire::GMBuffer data = __buffer_queue.front();
+    __buffer_queue.pop();
+
+    auto&& __result = igpu_buffer_write(buffer, offset, data);
+    return static_cast<double>(__result);
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_buffer_resize(char* __arg_buffer, double __arg_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: buffer, type: UInt64
+    std::uint64_t buffer = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    // field: size, type: Int64
+    std::int64_t size = gm::wire::codec::readValue<std::int64_t>(__br);
+
+    auto&& __result = igpu_buffer_resize(buffer, size);
+    return static_cast<double>(__result);
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_buffer_read(char* __arg_buffer, double __arg_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: buffer, type: UInt64
+    std::uint64_t buffer = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    // field: offset, type: Int64
+    std::int64_t offset = gm::wire::codec::readValue<std::int64_t>(__br);
+
+    // field: dest, type: Buffer
+    gm::wire::GMBuffer dest = __buffer_queue.front();
+    __buffer_queue.pop();
+
+    auto&& __result = igpu_buffer_read(buffer, offset, dest);
+    return static_cast<double>(__result);
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_buffer_size(char* __arg_buffer, double __arg_buffer_length, char* __ret_buffer, double __ret_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: buffer, type: UInt64
+    std::uint64_t buffer = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    auto&& __result = igpu_buffer_size(buffer);
+    gm::byteio::BufferWriter __bw{__ret_buffer, static_cast<size_t>(__ret_buffer_length)};
+
+    // return: __result, type: Int64
+    gm::wire::codec::writeValue(__bw, __result);
+    return 0;
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_buffer_release(char* __arg_buffer, double __arg_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: buffer, type: UInt64
+    std::uint64_t buffer = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    auto&& __result = igpu_buffer_release(buffer);
     return static_cast<double>(__result);
 }
 

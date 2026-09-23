@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 
+#include "igpu_buffer.h"
 #include "igpu_device.h"
 #include "igpu_capabilities.h"
 #include "igpu_error.h"
@@ -543,4 +544,38 @@ std::int64_t igpu_input_layout_create(
 bool igpu_input_layout_release(std::uint64_t layout)
 {
     return igpu::input_layout_release(layout);
+}
+
+// ---------------------------------------------------------------------------
+// Buffers
+// ---------------------------------------------------------------------------
+
+std::int64_t igpu_buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind)
+{
+    return igpu::buffer_create(size, usage, bind);
+}
+
+bool igpu_buffer_write(std::uint64_t buffer, std::int64_t offset, gm::wire::GMBuffer data)
+{
+    return igpu::buffer_write(buffer, offset, data);
+}
+
+bool igpu_buffer_resize(std::uint64_t buffer, std::int64_t size)
+{
+    return igpu::buffer_resize(buffer, size);
+}
+
+bool igpu_buffer_read(std::uint64_t buffer, std::int64_t offset, gm::wire::GMBuffer dest)
+{
+    return igpu::buffer_read(buffer, offset, dest);
+}
+
+std::int64_t igpu_buffer_size(std::uint64_t buffer)
+{
+    return igpu::buffer_size(buffer);
+}
+
+bool igpu_buffer_release(std::uint64_t buffer)
+{
+    return igpu::buffer_release(buffer);
 }

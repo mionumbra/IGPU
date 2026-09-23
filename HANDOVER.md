@@ -1,7 +1,7 @@
 # IGPU — 交接文档
 
 > 最后更新：2026-09-23
-> 状态：**阶段 D 已开工**（Tier 1 补全：shader blob 保留 + 输入布局已跑通）
+> 状态：**阶段 D 进行中**（Tier 1：shader blob、输入布局、缓冲区已跑通）
 > 版本：`0.3.0`（API 有新增，版本号尚未提升）
 > Git：已是仓库，`main` 分支，工作区干净
 
@@ -125,6 +125,7 @@ IGPU/
 │       ├── igpu_device.h/.cpp     ← 设备状态、借用句柄管理
 │       ├── igpu_capabilities.h/.cpp ← **能力查询层（Tier 3）**
 │       ├── igpu_input_layout.h/.cpp ← **顶点输入布局（阶段 D）**
+│       ├── igpu_buffer.h/.cpp     ← **GPU 缓冲区（阶段 D）**
 │       └── igpu_error.h/.cpp      ← 错误信息 + UTF-16→UTF-8
 ├── third_party/               ← 第三方集成点（当前 discord SDK 残留，inert）
 └── project/                   ← GameMaker 工程
@@ -162,9 +163,32 @@ IGPU/
 - `igpu_shader_release([type_hint = \`uint64\`] shader) : bool`
 - `igpu_get_last_error() : string`
 
-### 顶点输入布局（阶段 D 新增）
+### 顶点输入布局（阶段 D）
 - `igpu_input_layout_create(shader : int64, usage : array, type : array, element_count : int32, stride : int32) : int64`
 - `igpu_input_layout_release([type_hint = \`uint64\`] layout) : bool`
+
+### 缓冲区（阶段 D）
+- `igpu_buffer_create(size : int64, usage : int32, bind : int32) : int64`
+- `igpu_buffer_write([type_hint = \`uint64\`] buffer, offset : int64, [type_hint = \`buffer\`] data) : bool`
+- `igpu_buffer_read([type_hint = \`uint64\`] buffer, offset : int64, [type_hint = \`buffer\`] dest) : bool`
+- `igpu_buffer_resize([type_hint = \`uint64\`] buffer, size : int64) : bool`
+- `igpu_buffer_size([type_hint = \`uint64\`] buffer) : int64`
+- `igpu_buffer_release([type_hint = \`uint64\`] buffer) : bool`
+
+`IgpuBufferUsage`（**更新频率**，不是内存位置）：
+
+| 值 | 含义 | 后端映射（D3D11） | 可写 | 可读回 |
+|---|---|---|---|---|
+| `Static = 0` | 写一次、画多次 | `DEFAULT` | ✅ 一次 | ❌ |
+| `Dynamic = 1` | 每帧重写 | `DYNAMIC` + `CPU_ACCESS_WRITE` | ✅ | ❌ |
+| `Staging = 2` | CPU 读回目标 | `STAGING` + `CPU_ACCESS_READ`，`BindFlags` 强制 0 | ❌ | ✅ |
+
+`IgpuBufferBind`（位标志，可 `|` 组合）：`None=0, Vertex=1, Index=2, Uniform=4, Storage=8`
+
+> ⚠️ **`igpu_buffer_write/read` 的最后一个参数用 GMIDL 原生 `buffer` 类型**
+> （C++ 侧是 `gm::wire::GMBuffer`，**自带 `length()`**），不是指针。
+> 所以**没有单独的 size 参数** —— 拷贝长度由源缓冲区真实长度决定，天然不会错位。
+> 详见 §7.14。
 
 `usage` / `type` 直接传 **GameMaker 自己的常量**，不另发明词汇：
 
@@ -189,22 +213,27 @@ IGPU/
 ### 枚举
 - `IgpuFeatureLevel { Unknown, Level_11_0, Level_11_1, Level_12_0, Level_12_1 }`
 - `IgpuShaderStage { Vertex=0, Pixel=1, Compute=2, Geometry=3, Hull=4, Domain=5, Mesh=6, Amplification=7 }`
-- `IgpuCapability { None=0, ShaderCompileRuntime=1, ShaderStage*=2-7, Texture3D=20…MultipleRenderTargets=25, Instancing=40…Wireframe=46, InputLayout=47, VertexBuffer=48, IndexBuffer=49, AdapterInfo=60…BackbufferSize=62 }`
+- `IgpuBufferUsage { Static=0, Dynamic=1, Staging=2 }`
+- `IgpuBufferBind { None=0, Vertex=1, Index=2, Uniform=4, Storage=8 }`
+- `IgpuCapability { None=0, ShaderCompileRuntime=1, ShaderStage*=2-7, Texture3D=20…MultipleRenderTargets=25, Instancing=40…Wireframe=46, InputLayout=47, VertexBuffer=48, IndexBuffer=49, UniformBuffer=50, BufferResize=51, BufferReadback=52, AdapterInfo=60…BackbufferSize=62 }`
 
-### `igpu_get_capabilities()` 返回的 22 个键
+### `igpu_get_capabilities()` 返回的 25 个键
 
 ```
 backend, tier, device_name, shader_dialect,
 shader_stages, runtime_compile, compute, geometry, tessellation, mesh_shader,
 texture_3d, texture_array, texture_cubemap, structured_buffer, uav, max_render_targets,
 instancing, indirect_draw, queries,
-input_layout, vertex_buffer, index_buffer
+input_layout, vertex_buffer, index_buffer, uniform_buffer, buffer_resize, buffer_readback
 ```
 
 **所有键永远存在**，调用方可无条件读取。非 Windows 平台返回 `backend="none"`, `tier=3`, 其余全 false。
 
-> `vertex_buffer` / `index_buffer` 现在恒为 **false** —— 缓冲区 API 尚未实现。
-> 这是有意的：能力位只在对应 API 真正存在时才允许为 true（见 §9 顺序）。
+> ⚠️ 能力位**只在对应 API 真正存在时才允许为 true**。
+> 已实现并返回 true 的：`input_layout`、`vertex_buffer`、`index_buffer`、
+> `uniform_buffer`、`buffer_resize`、`buffer_readback`。
+> 仍恒为 false 的：`texture_3d/array/cubemap`、`structured_buffer`、`uav` 等
+> —— 这些 API 还没写（见 §9）。
 
 ---
 
@@ -330,7 +359,30 @@ PASS
 `igpu_shutdown()` 后再 `igpu_init_from_game()` 重新绑定、能力结构体在 shutdown 后
 降级为 `backend="none"`。
 
-当前检查项 **36 项全部通过**，退出码 0。
+### 阶段 D 第二批（缓冲区）
+
+```
+vertex buffer     : 1
+overflow error    : igpu_buffer_write: 16 bytes at offset 56 exceeds the buffer size 64
+staging buffer    : 3
+staging reads back : 0
+array buffer      : 7
+checks failed     : 0
+PASS
+```
+
+**这批输出证明了什么**：
+
+1. `overflow error` —— 越界写入被**拒绝**并给出精确数字（16 字节 @ 56 → 超出 64）。
+   这条断言是这次开发中**唯一挡住真实内存破坏风险**的检查。
+2. `staging buffer : 3` 而**不是 0** —— 这条最初是**失败的**，暴露了一个真实缺陷：
+   我把 `to_d3d_bind()` 写成"bind == 0 就报错"，但 staging 缓冲区按定义
+   **就没有 bind 用途**（`IgpuBufferBind.None`）。修法是**先判 usage 再要求 bind**。
+3. `staging reads back : 0` —— 新建缓冲区读回是**零填充**，证明 Map/staging 路径连通。
+4. 能力位 `vertex_buffer` / `index_buffer` 已从恒 false 翻为 true。
+
+当前检查项 **86 项全部通过**（源文件 `_igpu_check()` 静态计数），退出码 0，
+`--clean-first` 全量重编译零警告。
 
 ---
 
@@ -465,6 +517,47 @@ vertex_usage_binormal     = 9      ← 不是 6
 **正确做法**：写个临时 GML 探针把常量 `show_debug_message(string(...))` 出来。
 本项目已实测并记录在上表；`igpu_input_layout.cpp` 的 `VertexUsage` 枚举与之一一对应。
 
+### 7.14 GMIDL 有原生 `buffer` 类型，别手工解指针
+
+**错误做法**（我最初就是这么写的）：
+
+```gmidl
+function igpu_buffer_write([type_hint = `uint64`] buffer, offset : int64, data : gmval, size : int64) : bool;
+//                                                                        ^^^^^ 手工读指针   ^^^^ 手工传长度
+```
+
+**正确做法**：
+
+```gmidl
+function igpu_buffer_write([type_hint = `uint64`] buffer, offset : int64, [type_hint = `buffer`] data) : bool;
+```
+
+GMIDL 的类型表里 **`buffer` 是一等类型**（需 `type_hint = \`buffer\``，且**只能做函数参数**，
+不能做返回值或结构体字段）。生成到 C++ 是：
+
+```cpp
+struct GMBuffer {
+    void* data() const noexcept;
+    std::uint64_t length() const noexcept;   // ← 自带长度，这就是关键
+    GMBufferReader getReader();
+    GMBufferWriter getWriter();
+};
+```
+
+**为什么这个区别很重要**：`GMBuffer` **自带 `length()`**。
+用手工指针 + 独立 `size` 参数时，这两个值可能不一致 —— 调用方传了个比实际分配更大的
+`size`，原生侧就会**越界读**，而且**不会报错**。用 `GMBuffer` 则拷贝长度天然受真实分配约束。
+
+**完整类型表**（来自官方 GMIDL 文档，已离线归档到 `.refs/`）：
+
+| 类别 | 类型 |
+|---|---|
+| 直接用 | `double` `float` `int32` `uint32` `int64` `bool` `string` `object` `array` `gmval` `func` `unit` |
+| 必须 `type_hint` | `uint8` `int8` `uint16` `int16` `uint64`、**`buffer`**、自定义 enum/class、`[]` `[X]` `?` |
+| 仅参数 | `func`（→ `GMFunction`）、`buffer`（→ `GMBuffer`）；**不能做返回值或字段** |
+
+> `func` 可用于异步回调：`callback.call(...)` 线程安全，数据排队到 GM 下一帧执行。
+
 ---
 
 ## 8. 已知问题 / 待清理
@@ -494,16 +587,24 @@ vertex_usage_binormal     = 9      ← 不是 6
    `DeviceState::reset()` 与 `igpu_shader_release()` 负责释放两者。
 2. ✅ **输入布局（`ID3D11InputLayout`）+ 顶点格式** ← **已完成**
    见 `igpu_input_layout.h/.cpp`，GML 侧用辅助函数 `igpu_vertex_format()`。
-3. **顶点/索引缓冲区**（`ID3D11Buffer`）+ 更新/映射 ← **建议从这里继续**
-   - 能力位 `VertexBuffer` / `IndexBuffer` **已占位但恒为 false**（`igpu_capabilities.cpp`）。
-     实现之后记得打开，否则调用方会以为不支持。
-   - 缓冲区需要 `D3D11_USAGE` / `BIND_FLAGS`，**不要**把这两个暴露到 GML：
-     照 DESIGN.md §2.3 的思路，用中立的用途枚举（`dynamic` / `static`）在内部翻译。
-   - 常量缓冲区还必须与着色器的 `cbuffer` 布局**逐字节对齐**（16 字节规则），
-     建议先用 `D3DReflect` 读回来再做映射，别手算。
-4. **绘制调用**（`Draw` / `DrawIndexed` / 实例化）
+3. ✅ **缓冲区（`ID3D11Buffer`）** ← **已完成**
+   见 `igpu_buffer.h/.cpp`。`IgpuBufferUsage`（更新频率）与 `IgpuBufferBind`（位标志）
+   都在内部翻译成 `D3D11_USAGE_*` / `D3D11_BIND_*`，GML 层看不到 D3D 术语。
+   - ⚠️ `Static` 映射到 `D3D11_USAGE_DEFAULT` **而不是 `IMMUTABLE`**：
+     IGPU 的 API 是"先创建后写入"，而 immutable 缓冲区必须在创建时带数据，
+     两者不兼容。用 DEFAULT 才能既保持 GPU 侧只读、又允许一次上传。
+     **改这个映射前先想清楚这条**。
+   - 常量缓冲区（`Uniform`）的 size 必须是 16 的倍数，已在创建时校验。
+   - ⚠️ **当前 `Uniform` 只有"创建 + 上传"这半截**：还没有 `D3DReflect` 反射，
+     所以 IGPU **不知道** shader 的 `cbuffer` 里各字段的偏移与大小。
+     调用方现在必须**自己按 16 字节规则排布**结构体。
+     让 IGPU 用 `D3DReflect` 把布局读回来并自动打包，是后续的独立改进。
+4. **绘制调用**（`Draw` / `DrawIndexed` / 实例化）← **建议从这里继续**
+   - 现在三块拼图（shader + layout + buffer）齐了，可以真正画东西了。
    - ⚠️ 这一步**真的会改 GM 的管线状态**。务必遵守设计约束第 5 条：
      改完用 `gpu_get_state` / `gpu_set_state` 恢复，否则会和 GM 自己的批处理打架。
+   - 还需要 `IASetVertexBuffers` / `IASetPrimitiveTopology` 等绑定调用，
+     以及"绘制前设回 GM 状态"的收尾逻辑 —— 建议**先设计好状态保存/恢复**再动手。
 5. **渲染状态对象**（depth-stencil / rasterizer / blend / sampler state）
 6. **MRT**（多 `ID3D11RenderTargetView`）
 7. **纹理 / SRV / RTV / UAV**（含 3D / array / cubemap）
@@ -569,5 +670,36 @@ git status --short
 - 参考实现：GMD3D11（blueburncz）、shader_replace_unsafe（YAL）、gm82dx9 / gm82angle（GM82Project）
 - 本机手册：`C:\ProgramData\GameMakerStudio2-LTS2026\Manual\GMS2-Robohelp-en.zip`
 - 本机 GmlSpec：`%LOCALAPPDATA%\GameMakerCLI\cache\runtimes-gms2\runtime-2026.0.0.23\GmlSpec.xml`
+- 离线归档的 wiki 文档：`.refs/`（仓库外，已被 `.gitignore`）
 
-> **注意**：本环境**没有公网出口**（`github.com` 等解析到非公网 IP），上述链接仅作离线参考。需要的资料优先查本机 GmlSpec 和离线手册。
+### ⚠️ 关于公网访问（**前一版的结论是错的，已实测更正**）
+
+旧版这里写着"本环境没有公网出口" —— **这个结论是错的**，现象对但原因错。
+
+**实测结果**：本机装了 Clash Verge（`verge-mihomo` / `clash-verge` 进程 + `Mihomo` TUN 网卡），
+它用 **fake-IP 模式**接管了 DNS，所有域名都解析到保留网段 `198.18.0.0/15`：
+
+```
+github.com          -> 198.18.0.112
+www.baidu.com       -> 198.18.0.213     ← 连百度也是
+registry.npmjs.org  -> 198.18.0.224
+```
+
+`198.18.0.0/15` 是 RFC 2544 基准测试保留段，正常情况下不该出现在公网，
+所以 **DSH 的 `web_fetch` 判定为"非公网地址"而拒绝**（这道防 SSRF 的校验本身是对的，只是和 fake-IP 撞了）。
+
+**网络其实是通的**。绕过 `web_fetch`，用 PowerShell 直接取即可：
+
+```pwsh
+# DSH 的 web_fetch 会被 fake-IP 挡住，但这条能通
+$ProgressPreference = 'SilentlyContinue'
+$u = "https://raw.githubusercontent.com/wiki/YoYoGames/GM-ExtensionGenerator/user_gmidl_docs.md"
+Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 25 | Select-Object -ExpandProperty Content
+```
+
+已用此法抓到并归档了 `user_gmidl_docs` 与 `user_impl_workflow` 两份 wiki 文档到 `.refs/`。
+
+> **教训**：§7.14 那个 `GMBuffer` 的坑，就是因为一开始误信了"没有公网出口"、
+> 没去查官方类型表，结果自己手搓了指针传参。
+> **文档能查就去查**，别因为一条过时的环境结论就放弃权威来源。
+

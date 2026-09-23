@@ -3,6 +3,9 @@
 #pragma once
 #include "core/GMExtUtils.h"
 
+// Internal function used for queueing buffers to native code
+GMEXPORT double __EXT_NATIVE__IGPU_queue_buffer(char* __arg_buffer, double __arg_buffer_length);
+
 GMEXPORT double __EXT_NATIVE__igpu_init(char* __arg_buffer, double __arg_buffer_length);
 GMEXPORT double __EXT_NATIVE__igpu_shutdown();
 GMEXPORT char* __EXT_NATIVE__igpu_version();
@@ -23,4 +26,10 @@ GMEXPORT double __EXT_NATIVE__igpu_shader_release(char* __arg_buffer, double __a
 GMEXPORT char* __EXT_NATIVE__igpu_get_last_error();
 GMEXPORT double __EXT_NATIVE__igpu_input_layout_create(char* __arg_buffer, double __arg_buffer_length, char* __ret_buffer, double __ret_buffer_length);
 GMEXPORT double __EXT_NATIVE__igpu_input_layout_release(char* __arg_buffer, double __arg_buffer_length);
+GMEXPORT double __EXT_NATIVE__igpu_buffer_create(char* __arg_buffer, double __arg_buffer_length, char* __ret_buffer, double __ret_buffer_length);
+GMEXPORT double __EXT_NATIVE__igpu_buffer_write(char* __arg_buffer, double __arg_buffer_length);
+GMEXPORT double __EXT_NATIVE__igpu_buffer_resize(char* __arg_buffer, double __arg_buffer_length);
+GMEXPORT double __EXT_NATIVE__igpu_buffer_read(char* __arg_buffer, double __arg_buffer_length);
+GMEXPORT double __EXT_NATIVE__igpu_buffer_size(char* __arg_buffer, double __arg_buffer_length, char* __ret_buffer, double __ret_buffer_length);
+GMEXPORT double __EXT_NATIVE__igpu_buffer_release(char* __arg_buffer, double __arg_buffer_length);
 

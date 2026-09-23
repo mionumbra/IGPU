@@ -29,6 +29,22 @@ enum IgpuShaderStage
     Amplification = 7
 }
 
+enum IgpuBufferUsage
+{
+    Static = 0,
+    Dynamic = 1,
+    Staging = 2
+}
+
+enum IgpuBufferBind
+{
+    None = 0,
+    Vertex = 1,
+    Index = 2,
+    Uniform = 4,
+    Storage = 8
+}
+
 enum IgpuCapability
 {
     None = 0,
@@ -55,6 +71,9 @@ enum IgpuCapability
     InputLayout = 47,
     VertexBuffer = 48,
     IndexBuffer = 49,
+    UniformBuffer = 50,
+    BufferResize = 51,
+    BufferReadback = 52,
     AdapterInfo = 60,
     VideoMemory = 61,
     BackbufferSize = 62
@@ -401,6 +420,169 @@ function igpu_input_layout_release(_layout)
     buffer_write(__args_buffer__, buffer_u64, _layout);
 
     var __return_value__ = __igpu_input_layout_release(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__));
+
+    return __return_value__;
+}
+
+/**
+ * @param {Real} _size
+ * @param {Real} _usage
+ * @param {Real} _bind
+ * @returns {Real}
+ */
+function igpu_buffer_create(_size, _usage, _bind)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _size, type: Int64
+    if (!is_numeric(_size)) show_error($"{_GMFUNCTION_} :: _size expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _size);
+
+    // param: _usage, type: Int32
+    if (!is_numeric(_usage)) show_error($"{_GMFUNCTION_} :: _usage expected number", true);
+    buffer_write(__args_buffer__, buffer_s32, _usage);
+
+    // param: _bind, type: Int32
+    if (!is_numeric(_bind)) show_error($"{_GMFUNCTION_} :: _bind expected number", true);
+    buffer_write(__args_buffer__, buffer_s32, _bind);
+
+    var __ret_buffer__ = __ext_core_get_ret_buffer();
+
+    var __return_value__ = __igpu_buffer_create(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__), buffer_get_address(__ret_buffer__), buffer_get_size(__ret_buffer__));
+
+    var __result__ = undefined;
+    __result__ = buffer_read(__ret_buffer__, buffer_u64);
+    return __result__;
+}
+
+/**
+ * @param {Real} _buffer
+ * @param {Real} _offset
+ * @param {Id.Buffer} _data
+ * @returns {Bool}
+ */
+function igpu_buffer_write(_buffer, _offset, _data)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _buffer, type: UInt64
+    if (!is_numeric(_buffer)) show_error($"{_GMFUNCTION_} :: _buffer expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _buffer);
+
+    // param: _offset, type: Int64
+    if (!is_numeric(_offset)) show_error($"{_GMFUNCTION_} :: _offset expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _offset);
+
+    // param: _data, type: Buffer
+    if (!buffer_exists(_data)) show_error($"{_GMFUNCTION_} :: _data expected Id.Buffer", true);
+    __IGPU_queue_buffer(buffer_get_address(_data), buffer_get_size(_data));
+
+    var __return_value__ = __igpu_buffer_write(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__));
+
+    return __return_value__;
+}
+
+/**
+ * @param {Real} _buffer
+ * @param {Real} _size
+ * @returns {Bool}
+ */
+function igpu_buffer_resize(_buffer, _size)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _buffer, type: UInt64
+    if (!is_numeric(_buffer)) show_error($"{_GMFUNCTION_} :: _buffer expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _buffer);
+
+    // param: _size, type: Int64
+    if (!is_numeric(_size)) show_error($"{_GMFUNCTION_} :: _size expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _size);
+
+    var __return_value__ = __igpu_buffer_resize(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__));
+
+    return __return_value__;
+}
+
+/**
+ * @param {Real} _buffer
+ * @param {Real} _offset
+ * @param {Id.Buffer} _dest
+ * @returns {Bool}
+ */
+function igpu_buffer_read(_buffer, _offset, _dest)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _buffer, type: UInt64
+    if (!is_numeric(_buffer)) show_error($"{_GMFUNCTION_} :: _buffer expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _buffer);
+
+    // param: _offset, type: Int64
+    if (!is_numeric(_offset)) show_error($"{_GMFUNCTION_} :: _offset expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _offset);
+
+    // param: _dest, type: Buffer
+    if (!buffer_exists(_dest)) show_error($"{_GMFUNCTION_} :: _dest expected Id.Buffer", true);
+    __IGPU_queue_buffer(buffer_get_address(_dest), buffer_get_size(_dest));
+
+    var __return_value__ = __igpu_buffer_read(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__));
+
+    return __return_value__;
+}
+
+/**
+ * @param {Real} _buffer
+ * @returns {Real}
+ */
+function igpu_buffer_size(_buffer)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _buffer, type: UInt64
+    if (!is_numeric(_buffer)) show_error($"{_GMFUNCTION_} :: _buffer expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _buffer);
+
+    var __ret_buffer__ = __ext_core_get_ret_buffer();
+
+    var __return_value__ = __igpu_buffer_size(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__), buffer_get_address(__ret_buffer__), buffer_get_size(__ret_buffer__));
+
+    var __result__ = undefined;
+    __result__ = buffer_read(__ret_buffer__, buffer_u64);
+    return __result__;
+}
+
+/**
+ * @param {Real} _buffer
+ * @returns {Bool}
+ */
+function igpu_buffer_release(_buffer)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _buffer, type: UInt64
+    if (!is_numeric(_buffer)) show_error($"{_GMFUNCTION_} :: _buffer expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _buffer);
+
+    var __return_value__ = __igpu_buffer_release(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__));
 
     return __return_value__;
 }

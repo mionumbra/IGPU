@@ -142,6 +142,55 @@
  */
 
 /**
+ * @function_partial igpu_buffer_create
+ * @param {Real} size
+ * @param {Real} usage
+ * @param {Real} bind
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_buffer_write
+ * @param {Real} buffer
+ * @param {Real} offset
+ * @param {Buffer} data
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_buffer_resize
+ * @param {Real} buffer
+ * @param {Real} size
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_buffer_read
+ * @param {Real} buffer
+ * @param {Real} offset
+ * @param {Buffer} dest
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_buffer_size
+ * @param {Real} buffer
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_buffer_release
+ * @param {Real} buffer
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
  * @enum_partial IgpuFeatureLevel
  * @member Unknown
  * @member Level_11_0
@@ -161,6 +210,24 @@
  * @member Domain
  * @member Mesh
  * @member Amplification
+ * @enum_end
+ */
+
+/**
+ * @enum_partial IgpuBufferUsage
+ * @member Static
+ * @member Dynamic
+ * @member Staging
+ * @enum_end
+ */
+
+/**
+ * @enum_partial IgpuBufferBind
+ * @member None
+ * @member Vertex
+ * @member Index
+ * @member Uniform
+ * @member Storage
  * @enum_end
  */
 
@@ -190,6 +257,9 @@
  * @member InputLayout
  * @member VertexBuffer
  * @member IndexBuffer
+ * @member UniformBuffer
+ * @member BufferResize
+ * @member BufferReadback
  * @member AdapterInfo
  * @member VideoMemory
  * @member BackbufferSize

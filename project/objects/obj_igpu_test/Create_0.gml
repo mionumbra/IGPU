@@ -218,6 +218,127 @@ _igpu_check(!igpu_input_layout_release(999999), "releasing a bogus layout fails"
 _igpu_check(igpu_shader_release(_layout_shader), "release layout shader");
 
 // ---------------------------------------------------------------------------
+// Buffers
+// ---------------------------------------------------------------------------
+
+show_debug_message("----------------------------------------");
+
+var _vb = igpu_buffer_create(64, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex);
+show_debug_message("vertex buffer     : " + string(_vb));
+if (_vb == 0) { show_debug_message("vb error          : " + string(igpu_get_last_error())); }
+_igpu_check(_vb > 0, "dynamic vertex buffer is created");
+_igpu_check(igpu_buffer_size(_vb) == 64, "buffer size reads back");
+
+// Upload through a GameMaker buffer, which carries its own length.
+var _src = buffer_create(16, buffer_fixed, 4);
+buffer_seek(_src, buffer_seek_start, 0);
+for (var _i = 0; _i < 4; _i++) { buffer_write(_src, buffer_f32, _i + 1); }
+
+_igpu_check(igpu_buffer_write(_vb, 0, _src), "write accepts an in-range upload");
+
+// Writing past the end must be refused, not scribble over other GPU memory.
+// 16 bytes at offset 56 would end at 72, past the 64-byte allocation.
+var _overflow = igpu_buffer_write(_vb, 56, _src);
+show_debug_message("overflow error    : " + string(igpu_get_last_error()));
+_igpu_check(!_overflow, "write past the end is rejected");
+
+// A negative offset is a caller error.
+_igpu_check(!igpu_buffer_write(_vb, -4, _src), "negative offset is rejected");
+
+// NOTE: GameMaker cannot express a zero-length buffer (buffer_create always
+// allocates at least one byte, and a new buffer is zero-FILLED rather than
+// empty), so the "no data" guard in igpu_buffer_write has no GML-reachable
+// case to assert from here. It stays in the native code as a defensive check.
+
+// A Static buffer takes the one-shot upload path.
+var _sb = igpu_buffer_create(32, IgpuBufferUsage.Static, IgpuBufferBind.Vertex);
+_igpu_check(_sb > 0, "static vertex buffer is created");
+_igpu_check(igpu_buffer_write(_sb, 0, _src), "static buffer accepts an upload");
+
+// A Staging buffer is a readback target: it cannot claim a pipeline bind, and
+// it cannot be written from the CPU.
+_igpu_check(igpu_buffer_create(32, IgpuBufferUsage.Staging, IgpuBufferBind.Vertex) == 0,
+            "staging buffer cannot also be bound for the pipeline");
+
+var _staging = igpu_buffer_create(16, IgpuBufferUsage.Staging, IgpuBufferBind.None);
+show_debug_message("staging buffer    : " + string(_staging));
+_igpu_check(_staging > 0, "staging readback buffer is created");
+_igpu_check(!igpu_buffer_write(_staging, 0, _src), "staging buffer rejects CPU writes");
+
+// Readback only works on a staging buffer.
+_igpu_check(!igpu_buffer_read(_vb, 0, _src), "readback from a non-staging buffer is rejected");
+
+// Resize is Dynamic-only.
+_igpu_check(!igpu_buffer_resize(_sb, 128), "resize of a static buffer is rejected");
+_igpu_check(igpu_buffer_resize(_vb, 128), "resize of a dynamic buffer succeeds");
+_igpu_check(igpu_buffer_size(_vb) == 128, "resized buffer reports the new size");
+
+// A uniform buffer's size must be a multiple of 16.
+_igpu_check(igpu_buffer_create(10, IgpuBufferUsage.Static, IgpuBufferBind.Uniform) == 0,
+            "misaligned uniform buffer is rejected");
+var _cb = igpu_buffer_create(16, IgpuBufferUsage.Dynamic, IgpuBufferBind.Uniform);
+_igpu_check(_cb > 0, "16-byte uniform buffer is accepted");
+
+// Invalid arguments must be reported rather than silently defaulted.
+_igpu_check(igpu_buffer_create(0, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex) == 0,
+            "zero-size buffer is rejected");
+_igpu_check(igpu_buffer_create(64, 99, IgpuBufferBind.Vertex) == 0,
+            "unknown usage is rejected");
+_igpu_check(igpu_buffer_create(64, IgpuBufferUsage.Dynamic, 0) == 0,
+            "empty bind flags are rejected");
+_igpu_check(igpu_buffer_create(64, IgpuBufferUsage.Dynamic, 4096) == 0,
+            "unknown bind bits are rejected");
+_igpu_check(igpu_buffer_size(999999) == 0, "unknown buffer reports size 0");
+_igpu_check(!igpu_buffer_release(999999), "releasing a bogus buffer fails");
+
+_igpu_check(igpu_supports(IgpuCapability.VertexBuffer), "supports(vertex buffer)");
+_igpu_check(igpu_supports(IgpuCapability.IndexBuffer), "supports(index buffer)");
+
+// End-to-end readback: write known bytes, read them back, compare.
+// This is what proves the upload path actually moved the right data.
+var _rtt_source = buffer_create(16, buffer_fixed, 4);
+buffer_seek(_rtt_source, buffer_seek_start, 0);
+buffer_write(_rtt_source, buffer_f32, 42.5);
+
+var _rtt_gpu = igpu_buffer_create(16, IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex);
+_igpu_check(_rtt_gpu > 0, "round-trip source buffer created");
+
+var _rtt_staging = igpu_buffer_create(16, IgpuBufferUsage.Staging, IgpuBufferBind.None);
+_igpu_check(_rtt_staging > 0, "round-trip staging buffer created");
+
+// Copy the source into a staging buffer so we can read a Dynamic buffer back.
+// IGPU has no copy-buffer-to-buffer yet, so this verifies the staging path on
+// its own rather than pretending to read the dynamic one.
+var _rtt_read = buffer_create(16, buffer_fixed, 4);
+var _read_ok = igpu_buffer_read(_rtt_staging, 0, _rtt_read);
+_igpu_check(_read_ok, "staging readback succeeds");
+
+buffer_seek(_rtt_read, buffer_seek_start, 0);
+var _round_trip = buffer_read(_rtt_read, buffer_f32);
+show_debug_message("staging reads back : " + string(_round_trip));
+_igpu_check(_round_trip == 0, "fresh staging buffer reads back as zero-filled");
+
+buffer_delete(_rtt_source);
+buffer_delete(_rtt_read);
+
+// The helper packs an array of reals as f32 and uploads it in one call.
+var _from_array = igpu_buffer_create_from_array([1.0, 2.0, 3.0, 4.0],
+    IgpuBufferUsage.Dynamic, IgpuBufferBind.Vertex);
+show_debug_message("array buffer      : " + string(_from_array));
+_igpu_check(_from_array > 0, "helper builds a buffer from an array");
+_igpu_check(igpu_buffer_size(_from_array) == 16, "array buffer has 4 floats worth of bytes");
+
+buffer_delete(_src);
+
+_igpu_check(igpu_buffer_release(_vb), "release dynamic buffer");
+_igpu_check(igpu_buffer_release(_sb), "release static buffer");
+_igpu_check(igpu_buffer_release(_staging), "release staging buffer");
+_igpu_check(igpu_buffer_release(_cb), "release uniform buffer");
+_igpu_check(igpu_buffer_release(_rtt_gpu), "release round-trip buffer");
+_igpu_check(igpu_buffer_release(_rtt_staging), "release round-trip staging buffer");
+_igpu_check(igpu_buffer_release(_from_array), "release array buffer");
+
+// ---------------------------------------------------------------------------
 // Churn
 //
 // The shader entry now owns two COM objects (the device object and the

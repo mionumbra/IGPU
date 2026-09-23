@@ -31,4 +31,10 @@ igpu_native_trace.txt
 
 # GameMaker local state
 project/.gmcache/
-project/*.resource_orderCOMMITMSG.tmp
+project/*.resource_order
+
+# Scratch/commit-message files
+*.tmp
+
+# Offline copies of external docs, fetched for reference only - not sources
+.refs/
