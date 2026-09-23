@@ -1,0 +1,221 @@
+# 会话交接 — 2026-09-23
+
+> 本文件是**本次会话的交接单**。项目本身的长期文档是 `HANDOVER.md`，
+> 本文件只讲"这次会话做了什么、现在处于什么状态、下一步从哪开始"。
+> 读完本文件后，**请去读 `HANDOVER.md` 的 §0.0**，那里有更完整的背景。
+
+---
+
+## 0. 三十秒版本
+
+用户给了 **GMS2 引擎去混淆源码**，要求"根据源码重新认真审视我们的扩展"。
+
+审下来了：**常量映射这类细节全部正确，但有三处结构性偏差**，其中两处已修。
+最重要的发现不是新 bug，而是**"我们以为已经验证过的东西其实没有"** ——
+`igpu_draw` 当时连着色器都绑不上，而测试从未察觉。
+
+| 门禁 | 状态 |
+|---|---|
+| `pwsh -File tools\verify_handover.ps1` | ✅ exit 0（**10 个检查组**，共 26 条 `Check`） |
+| `cmake --build --preset win-x64-release-vs18 --clean-first` | ✅ exit 0，非 C4819 警告 **0** 条 |
+| `gm-cli run --no-errors-only` | ✅ `checks failed: 0`，**152** 项断言，exit 0 |
+
+**HEAD `add3cf2`，分支 `main`，工作区干净。**
+⚠️ **没有配置 git remote —— 所有提交只存在本地。**
+
+---
+
+## 1. 现状快照（接手前请自行复验）
+
+```
+仓库      D:\Users\User\Documents\gml_ext\IGPU
+HEAD      add3cf2   (main)
+版本      0.3.0（API 有新增，版本号未提升）
+断言      152 个 _igpu_check 调用点（定义行另计 1）
+能力表    恒 true 13 项 / 恒 false 12 项
+```
+
+### 本次会话的 5 个提交
+
+| 提交 | 内容 |
+|---|---|
+| `6006794` | 引擎源码审计 + 修正 11 项虚报能力 + 新增第 3b 组检查 |
+| `f848570` | HANDOVER 顶部指向审计报告，修正"绘制"措辞 |
+| `c148506` | **新增 `igpu_shader_bind`** —— 补上审计发现的断链 |
+| `53d5657` | 写会话交接，记录检查器自己是怎么写错的 |
+| `add3cf2` | 修正第 3b 组的计数显示（24 → 实际检查数） |
+
+---
+
+## 2. 外部依赖（不在仓库里，接手前确认仍在）
+
+| 依赖 | 路径 | 用途 |
+|---|---|---|
+| extgen | `D:\GM-ExtensionGenerator\extgen.exe` | **改 `spec.gmidl` 后必须手动跑** |
+| 引擎源码 | `D:\Users\User\Documents\gml_ext\OpenGM\` | 审计依据（去混淆，非官方） |
+| gm-cli | `D:\node.js\node_cache\_npx\166e0ec5f4c2d768\...\gm-cli\dist\cli.js` | 跑集成测试 |
+| YoYo.lib 符号 | `...\runtime-2026.0.0.23\yyc\Win32\lib\x64\YoYo.lib` | 符号层交叉验证 |
+
+> `OpenGM` 是**去混淆的派生源码**，不是官方发布。本次结论都用
+> `YoYo.lib` 符号做了交叉验证，两者一致 —— 但**不要把源码当稳定 API**。
+
+---
+
+## 3. ⚠️ 最容易再踩的坑：extgen 必须手动跑
+
+**改了 `spec.gmidl` 之后，不跑 extgen 就不会生成绑定代码，
+而 `cmake --build` 照样成功** —— 因为还没有人引用新函数，编译器不会报错。
+
+```pwsh
+extgen --config config.json          # 必须
+Select-String -Path code_gen\native\IGPUInternal_native.h -Pattern 'igpu_shader_bind'   # 验证
+```
+
+`code_gen/` 是**输入**（被 cmake GLOB），不是构建产物。
+**"build 成功"不能证明新 API 存在** —— 本次就是靠 grep 生成文件才发现的。
+
+---
+
+## 4. 本次会话的实质产出
+
+### 4.1 审计报告 `tools/engine_audit.md`
+
+逐条把 `spec.gmidl` / `src/native/*` 的设计主张拿去和引擎真源码对质。
+
+**✅ 验证为正确（不要动）**
+
+- `os_get_info()` 确实给出 `GR_D3D_Device` / `GR_D3D_Context` / `g_SwapChain`
+  （`YoYo_FunctionsM.cpp:519-538`）
+- `pr_*` 1–6 与引擎 `ePrimType` 完全一致（`Graphics.h:789-807`）
+- `vertex_usage_*` 1–9 / `vertex_type_*` 1–6 与 `yyVU*` / `yyVT*` 完全一致
+  （`Vertex_Class.h:10-46`）
+- 语义名拼写与 `g_VertexUsageStrings[]` 一致（`ShaderM.cpp:1336-1354`）
+- `Static` → `D3D11_USAGE_DEFAULT` 与引擎 `VertexBuffer::Init` 同构
+- 引擎**从不调用 `D3DCompile`**（全仓库零匹配）→ IGPU 运行时编译是**增量能力**
+
+**常量映射的最强证据是运行时反证**，不是读源码：测试 L177 断言"匹配的布局
+被接受"，若 `vertex_usage_position` 差一位就会变成 `COLOR` 而**必定被拒**。
+L186 的反向断言证明该校验真的有鉴别力。两个审计子代理都把这条列为
+"无法确定"，**现已确定：一致**。
+
+**❌ 已修的两处**
+
+1. **11 个能力虚报 true 却无对应 API**（Instancing / Queries / Fence /
+   Texture3D / TextureArray / TextureCubemap / MultipleRenderTargets /
+   IndirectDraw / Timestamps / OcclusionQuery / Wireframe）。
+   调用方看到 `igpu_supports(Instancing) == true` 会去调一个**不存在的**函数。
+   违反 `spec.gmidl:38-41` 自己写的核心约束。已全部改 `false`。
+2. **`igpu_draw` 绑不上着色器** —— 见 §4.2。
+
+**⚠️ 未解决的三处**
+
+1. **像素级验证仍然缺失**（**下一优先级**）
+2. **设备丢失无恢复路径**：`HandleDeviceLost()` 会释放并重建 device/context
+   （`Graphics_DisplayM.cpp:1225-1258`），IGPU 仍持旧指针 → use-after-free 风险
+3. **`IaStateGuard` 的文档理由不成立**（**实现正确，不要改代码，改措辞**）：
+   引擎每次绘制都**无条件重设** IA 状态且**不缓存**
+   （`StateManagerM.h:27-28` 明说 IA 状态"not included yet"），
+   所以"防止污染 GM 绘制"是错的 —— 引擎自己会修好。它仍有价值
+   （状态自洽 + 未来 GM 若引入缓存时的保护），但理由要改写。
+
+### 4.2 新增 `igpu_shader_bind` / `igpu_get_bound_shader`
+
+**审计最严重的发现**：`igpu_draw` 的注释说"调用方负责设置着色器"，
+但 spec 里**没有任何函数能绑着色器** —— `igpu_shader_compile` 的句柄
+传不进 GM 的 `shader_set()`。引擎绑定着色器只有一处
+（`VertexBuilderM.cpp:816/822`）且只认自己的对象。
+测试**从未调用 `shader_set`**，所以"draw 返回 true"只证明调用发出去了。
+
+已补上，实现要点：
+- `ShaderEntry` 记录编译时 stage，绑定时**校验匹配** → 类型错误在绑定点报错
+- `shader = 0` **显式解绑**（非错误），不释放着色器
+- **释放着色器会清掉绑定记录** → 否则"还绑着吗"会对已释放句柄答"是"
+- `reset()` 同步清空，避免 shutdown/re-init 后残留
+
+**有意不自动恢复**（与 IA 状态不同）：着色器是调用方主动设定的状态，
+不是绘制的副作用；每次绘制后重绑会**对抗调用方自己的切换**，
+且没有 GML 接口能读回"之前绑的是谁"。代价是 GM 自己的绘制**仍会覆盖**
+IGPU 的绑定 → 应在需要的 `igpu_draw` **紧前**绑定。这条已写进 spec 注释。
+
+新增 13 项断言（136 → 152），**经过金丝雀验证**：把 stage 校验改成
+`if (false)` → `CHECK FAILED : stage mismatch is rejected`、exit 1。
+
+---
+
+## 5. 本次会话的教训（写给接手者，避免重蹈）
+
+### 5.1 检查器自己会骗人 —— 我自己犯了两次
+
+写第 3b 组时：
+1. `$capsCpp` 是**路径**不是文本 → 喂给 `[regex]::Matches` 得 0 匹配 →
+   每个能力都 `continue` → **检查恒过**
+2. 循环变量取名 `$root`，**覆盖了脚本的仓库根路径** → 后面 4 组检查静默失效
+
+**两个 bug 叠加，脚本照样打印"全部一致"** —— 而当时有 11 项虚报
+且 4 组检查已坏。已加自检（"能解析出 N 个返回分支"）并改名 `$apiRoot`。
+
+### 5.2 金丝雀"没红"有两种可能
+
+给第 2 组做金丝雀时前两次"通过"**都是假象**：该组要求 API 名写成
+**反引号+括号**（`` `name()` ``），我插入的是裸名字，**根本没进被检查集合**。
+
+**教训**：金丝雀没红，要么检查器坏了，**要么你的突变没生效**。
+必须确认突变**真的落到被检查范围内**（本次靠计数从 38 变 39 才判定生效）。
+
+### 5.3 数字要报"实际检查了几个"
+
+第 3b 组原先打印"共 24 个恒 true 能力"，那是**映射表大小**；
+实际只有 13 个是 `native`，另 11 个已改 false 被跳过。
+数字虚高会让接手者以为覆盖更广。已改为报实际值，**并断言它非零**
+（若全部非 native，主检查会**空过**——正是这组要防的事）。
+
+### 5.4 前一份交接文档的可信度是"打折"来的
+
+我此前多份报告都说"draw 链路已跑通"，那是**基于测试通过**的判断。
+用引擎源码一看，"跑通"的含义比文档暗示的弱得多。
+**本次最大收获不是发现新 bug，而是发现"我们以为验证过的其实没有"。**
+
+---
+
+## 6. 接手后建议的第一步
+
+按优先级：
+
+1. **像素级验证**（§9 第 5 项）—— 绑定缺口已补，**现在可以做了**：
+   渲染到离屏 surface → `surface_getpixel` 读回 → 断言颜色。
+   链路已被引擎源码逐环验证：`surface_id → GR_Surface_Get → RSurface::tex →
+   GR_Texture_Get → RTexture::tex → Graphics::SetRenderTarget(0, tex, NULL)`，
+   且 `Graphics_Surface.cpp:687,712` 引擎自己就是这么做的。
+   **引擎持有 RTV，无需手动 `CreateRenderTargetView`。**
+2. **设备丢失检测** —— 至少检测 `DXGI_ERROR_DEVICE_REMOVED` 并置错，
+   不要求立刻做完整重建。
+3. **修正 §4.1 第 3 条的文档措辞**（实现不动）。
+
+> 顺带：`surface_set_target_ext(stage, id, depth_id)` **已是 GML 内置函数**，
+> `MAX_MRTS = 4`（`Graphics.h:8`）—— §9 第 7 项（MRT）**可能不需要新 API**。
+
+---
+
+## 7. 交接物清单
+
+| 文件 | 说明 |
+|---|---|
+| `HANDOVER.md` | 长期交接文档，**§0.0 是本次会话摘要** |
+| `tools/engine_audit.md` | 引擎源码审计报告（本次核心产出） |
+| `tools/verify_handover.ps1` | 自检脚本，10 组 / 26 条检查，**改文档或代码后必须跑** |
+| `tools/yoyo_lib_symbols.md` | `YoYo.lib` 符号层调研（上次会话产出） |
+| `spec.gmidl` | API 契约，**新增 2 个函数（共 33 个）** |
+| `src/native/IGPU_native.cpp` | 绑定实现（`igpu_shader_bind` 等） |
+| `project/objects/obj_igpu_test/Create_0.gml` | 集成测试，152 项断言 |
+
+---
+
+## 8. 诚实声明：没做到的事
+
+1. **没有像素级证据** —— 从头到尾，**没有任何一次运行证明过屏幕上出现了什么**
+2. **设备丢失行为是源码推断**，未做运行时插桩验证引用计数
+3. **`OpenGM` 是去混淆派生源码，不是官方** —— 结论已用 `YoYo.lib`
+   符号交叉验证（一致），但源码反映的是"某个 GM 版本"，未必是
+   runtime-2026.0.0.23 的逐字对应
+4. **DX12 路径未深挖** —— IGPU 目前只针对 DX11
+5. **`desc[32]` 越界**（`ShaderM.cpp:1388`）是引擎侧潜在问题，未验证能否触发

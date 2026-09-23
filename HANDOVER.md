@@ -3,11 +3,14 @@
 > 最后更新：2026-09-23
 > 状态：**阶段 D 进行中**（shader blob / 输入布局 / 缓冲区 / 绘制 / **着色器绑定**已跑通）
 > 版本：`0.3.0`（API 有新增，版本号尚未提升）
-> Git：`main` 分支，HEAD `c148506`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）
+> Git：`main` 分支，HEAD `add3cf2`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）
 > **接手第一件事：跑 `pwsh -File tools\verify_handover.ps1`** —— 见 §0
 >
-> 🔴 **本次会话（2026-09-23）用真实引擎源码做了审计，发现并修复了若干问题。
-> 请先读 `tools/engine_audit.md`，再读本文档。**
+> 📄 **本次会话（2026-09-23）的交接单在 `SESSION_HANDOVER.md`** ——
+> 三十秒版本、门禁状态、外部依赖、踩过的坑、下一步。**建议先读它。**
+>
+> 🔴 本次会话用**真实引擎源码**做了审计，发现并修复了若干问题。
+> 详细结论见 `tools/engine_audit.md`；本文档 §0.0 是摘要。
 
 ---
 
