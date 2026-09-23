@@ -138,14 +138,29 @@ if ($checkMentions) {
 }
 
 Write-Host "`n=== 5b. 文档里的能力键数量声明处处一致 ===" -ForegroundColor Cyan
-# 'N 个键' 可能出现在多处（API 清单 + 能力清单标题），必须都是同一个数。
-$keyMentions = Select-String -Path $handover -Pattern '(\d+)\s*个键'
+# 键数声明有**两种措辞**，必须都覆盖：
+#   (a) "28 个键"        —— API 清单 + 能力清单标题
+#   (b) "当前键数是 **22**" —— §9 流程说明里的一句提醒
+# 早先只匹配 (a)，于是 (b) 那句写着 22 而实际是 28 时**漏检了**——
+# 讽刺的是它就写在"别去找 kEntryCount"这段提醒旁边。
+# 教训：同一个事实在文档里有几种写法，检查就得覆盖几种；只覆盖自己
+# 记得的那一种，等于给剩下的写法发了免检通行证。
+$keyMentions = @()
+$keyMentions += Select-String -Path $handover -Pattern '(\d+)\s*个键'
+$keyMentions += Select-String -Path $handover -Pattern '当前键数是\s*\**\s*(\d+)'
+
 if ($keyMentions) {
     $distinct = $keyMentions | ForEach-Object { [int]$_.Matches[0].Groups[1].Value } | Sort-Object -Unique
+    # 各处措辞之间必须自洽
     Check "键数声明处处一致（$($distinct -join ', ')）" ($distinct.Count -eq 1) `
         ("出现了不同的数字: " + (($keyMentions | ForEach-Object { "行$($_.LineNumber)=$($_.Matches[0].Groups[1].Value)" }) -join ", "))
+    # 并且必须等于代码里实际上报的个数
+    if ($distinct.Count -eq 1) {
+        Check "文档声明的键数($($distinct[0])) == 实际上报($($reportedKeys.Count))" ($distinct[0] -eq $reportedKeys.Count) `
+            "文档说 $($distinct[0]) 个，代码里上报 $($reportedKeys.Count) 个"
+    }
 } else {
-    Check "文档里有 'N 个键' 声明" $false "没找到"
+    Check "文档里有键数声明" $false "没找到 'N 个键' 或 '当前键数是 N'"
 }
 
 Write-Host "`n=== 6. 版本号三处一致 ===" -ForegroundColor Cyan
