@@ -118,6 +118,21 @@
  */
 
 /**
+ * @function_partial igpu_shader_bind
+ * @param {Real} shader
+ * @param {Real} stage
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_get_bound_shader
+ * @param {Real} stage
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
  * @function_partial igpu_get_last_error
  * @returns {String}
  * @function_end

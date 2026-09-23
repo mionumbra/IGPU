@@ -150,6 +150,55 @@ if (_pixel > 0)       { _igpu_check(igpu_shader_release(_pixel), "release wrappe
 _igpu_check(!igpu_shader_release(999999), "releasing a bogus handle fails");
 
 // ---------------------------------------------------------------------------
+// Shader binding
+//
+// This block exists because an engine-source audit found that igpu_draw could
+// not actually put an IGPU shader on the pipeline: igpu_shader_compile returned
+// a handle that no function could bind, so a draw ran against whatever shader
+// GameMaker happened to have, and "draw returned true" only proved the call was
+// issued. igpu_shader_bind is the missing half, and these assertions cover the
+// paths that were previously unverifiable.
+// ---------------------------------------------------------------------------
+
+var _bind_vs = igpu_shader_compile(_good, "main", IgpuShaderStage.Vertex, "");
+_igpu_check(_bind_vs > 0, "shader for binding compiles");
+
+// A fresh stage reports nothing bound, so the bookkeeping starts clean.
+_igpu_check(igpu_get_bound_shader(IgpuShaderStage.Vertex) == 0, "nothing bound before bind");
+
+_igpu_check(igpu_shader_bind(_bind_vs, IgpuShaderStage.Vertex), "bind a vertex shader");
+_igpu_check(igpu_get_bound_shader(IgpuShaderStage.Vertex) == _bind_vs, "bound handle is reported back");
+
+// Binding is per stage, not global: binding the vertex stage must not make the
+// pixel stage claim a shader.
+_igpu_check(igpu_get_bound_shader(IgpuShaderStage.Pixel) == 0, "binding is per stage");
+
+// A stage mismatch must be refused. This is the assertion that would have
+// caught the original defect: a handle compiled for one stage must not be
+// accepted by another.
+_igpu_check(!igpu_shader_bind(_bind_vs, IgpuShaderStage.Pixel), "stage mismatch is rejected");
+show_debug_message("stage mismatch err: " + string(igpu_get_last_error()));
+_igpu_check(igpu_get_bound_shader(IgpuShaderStage.Vertex) == _bind_vs,
+            "a rejected bind leaves the previous binding intact");
+
+// Unknown handles and unknown stage numbers fail cleanly rather than faulting.
+_igpu_check(!igpu_shader_bind(999999, IgpuShaderStage.Vertex), "unknown shader handle is rejected");
+_igpu_check(!igpu_shader_bind(_bind_vs, 999), "unknown stage number is rejected");
+_igpu_check(igpu_get_bound_shader(999) == 0, "unknown stage reports nothing bound");
+
+// shader = 0 unbinds deliberately, and does not release the shader.
+_igpu_check(igpu_shader_bind(0, IgpuShaderStage.Vertex), "shader 0 unbinds");
+_igpu_check(igpu_get_bound_shader(IgpuShaderStage.Vertex) == 0, "unbind clears the record");
+
+// Releasing a bound shader must drop the record too, or a caller asking "is my
+// shader still bound" would be told yes about a handle that no longer exists.
+_igpu_check(igpu_shader_bind(_bind_vs, IgpuShaderStage.Vertex), "rebind before release");
+_igpu_check(igpu_get_bound_shader(IgpuShaderStage.Vertex) == _bind_vs, "rebind is recorded");
+_igpu_check(igpu_shader_release(_bind_vs), "release the bound shader");
+_igpu_check(igpu_get_bound_shader(IgpuShaderStage.Vertex) == 0,
+            "releasing a bound shader clears its binding");
+
+// ---------------------------------------------------------------------------
 // Input layout
 //
 // Creating one is only possible because the shader handle now retains its

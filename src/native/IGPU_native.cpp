@@ -91,6 +91,16 @@ namespace
         return "unknown";
     }
 
+    // ShaderEntry stores the stage as a plain int32 so the header does not have
+    // to expose this local enum. Error messages still need a readable name, so
+    // this converts back, treating anything unrecognised as "unknown" rather
+    // than asserting.
+    const char* stored_stage_name(std::int32_t raw)
+    {
+        ShaderStage stage{};
+        return stage_from_int(raw, stage) ? stage_name(stage) : "unknown";
+    }
+
     // Maps a neutral capability back to the stage it refers to, so
     // compile_shader() can fail with the right message on unsupported stages.
     bool stage_supported(ShaderStage stage)
@@ -133,11 +143,15 @@ namespace
         return message;
     }
 
-    std::int64_t create_shader_handle(ID3D11DeviceChild* shader, ID3DBlob* bytecode)
+    std::int64_t create_shader_handle(
+        ID3D11DeviceChild* shader, ID3DBlob* bytecode, ShaderStage stage)
     {
         auto& s = igpu::state();
         const std::uint64_t id = s.next_shader_id++;
-        s.shaders.emplace(id, igpu::DeviceState::ShaderEntry{ shader, bytecode });
+        s.shaders.emplace(
+            id,
+            igpu::DeviceState::ShaderEntry{
+                shader, bytecode, static_cast<std::int32_t>(stage) });
         return static_cast<std::int64_t>(id);
     }
 
@@ -331,7 +345,7 @@ namespace
 
         // Ownership of the blob transfers to the shader entry: an input layout
         // needs the vertex signature that lives inside it.
-        return create_shader_handle(shader, bytecode);
+        return create_shader_handle(shader, bytecode, stage);
     }
 }
 
@@ -519,8 +533,131 @@ bool igpu_shader_release(std::uint64_t shader)
     {
         entry->bytecode->Release();
     }
-    igpu::state().shaders.erase(shader);
+
+    // Drop any binding that points at this handle. Otherwise
+    // igpu_get_bound_shader() would keep reporting a handle that no longer
+    // exists, so a caller asking "is my shader still bound" would be told yes
+    // about a shader that has been released.
+    auto& s = igpu::state();
+    for (auto it = s.bound_shaders.begin(); it != s.bound_shaders.end();)
+    {
+        it = (it->second == shader) ? s.bound_shaders.erase(it) : std::next(it);
+    }
+
+    s.shaders.erase(shader);
     return true;
+}
+
+bool igpu_shader_bind(std::int64_t shader, std::int32_t stage_raw)
+{
+    igpu::clear_last_error();
+
+    auto& s = igpu::state();
+    if (!s.initialised || s.context == nullptr)
+    {
+        igpu::set_last_error("igpu_shader_bind: call igpu_init() first");
+        return false;
+    }
+
+    ShaderStage stage{};
+    if (!stage_from_int(stage_raw, stage))
+    {
+        igpu::set_last_error(
+            "igpu_shader_bind: unknown stage value " + std::to_string(stage_raw) +
+            " (use an IgpuShaderStage constant)");
+        return false;
+    }
+
+    // shader = 0 unbinds. That is a deliberate operation rather than an error,
+    // so a caller can hand the stage back without releasing the shader.
+    if (shader == 0)
+    {
+        switch (stage)
+        {
+        case ShaderStage::Vertex:   s.context->VSSetShader(nullptr, nullptr, 0); break;
+        case ShaderStage::Pixel:    s.context->PSSetShader(nullptr, nullptr, 0); break;
+        case ShaderStage::Compute:  s.context->CSSetShader(nullptr, nullptr, 0); break;
+        case ShaderStage::Geometry: s.context->GSSetShader(nullptr, nullptr, 0); break;
+        case ShaderStage::Hull:     s.context->HSSetShader(nullptr, nullptr, 0); break;
+        case ShaderStage::Domain:   s.context->DSSetShader(nullptr, nullptr, 0); break;
+        default:
+            igpu::set_last_error(
+                std::string("igpu_shader_bind: stage '") + stage_name(stage) +
+                "' has no backend stage to unbind");
+            return false;
+        }
+
+        s.bound_shaders.erase(static_cast<std::int32_t>(stage));
+        return true;
+    }
+
+    auto* entry = igpu::find_shader(static_cast<std::uint64_t>(shader));
+    if (entry == nullptr)
+    {
+        igpu::set_last_error("igpu_shader_bind: unknown shader handle");
+        return false;
+    }
+
+    // The stage must match what the handle was compiled for. Passing a pixel
+    // shader to VSSetShader is a type error the backend would report only much
+    // later, if at all, so it is caught here where the message can name both
+    // stages.
+    if (entry->stage != static_cast<std::int32_t>(stage))
+    {
+        igpu::set_last_error(
+            std::string("igpu_shader_bind: the handle was compiled for stage '") +
+            stored_stage_name(entry->stage) + "' but was bound to '" +
+            stage_name(stage) + "'");
+        return false;
+    }
+
+    switch (stage)
+    {
+    case ShaderStage::Vertex:
+        s.context->VSSetShader(static_cast<ID3D11VertexShader*>(entry->object), nullptr, 0);
+        break;
+    case ShaderStage::Pixel:
+        s.context->PSSetShader(static_cast<ID3D11PixelShader*>(entry->object), nullptr, 0);
+        break;
+    case ShaderStage::Compute:
+        s.context->CSSetShader(static_cast<ID3D11ComputeShader*>(entry->object), nullptr, 0);
+        break;
+    case ShaderStage::Geometry:
+        s.context->GSSetShader(static_cast<ID3D11GeometryShader*>(entry->object), nullptr, 0);
+        break;
+    case ShaderStage::Hull:
+        s.context->HSSetShader(static_cast<ID3D11HullShader*>(entry->object), nullptr, 0);
+        break;
+    case ShaderStage::Domain:
+        s.context->DSSetShader(static_cast<ID3D11DomainShader*>(entry->object), nullptr, 0);
+        break;
+    default:
+        igpu::set_last_error(
+            std::string("igpu_shader_bind: stage '") + stage_name(stage) +
+            "' has no backend stage object");
+        return false;
+    }
+
+    s.bound_shaders[static_cast<std::int32_t>(stage)] =
+        static_cast<std::uint64_t>(shader);
+    return true;
+}
+
+std::int64_t igpu_get_bound_shader(std::int32_t stage_raw)
+{
+    igpu::clear_last_error();
+
+    ShaderStage stage{};
+    if (!stage_from_int(stage_raw, stage))
+    {
+        igpu::set_last_error(
+            "igpu_get_bound_shader: unknown stage value " + std::to_string(stage_raw));
+        return 0;
+    }
+
+    const auto& bound = igpu::state().bound_shaders;
+    const auto it = bound.find(static_cast<std::int32_t>(stage));
+    return it == bound.end() ? 0 : static_cast<std::int64_t>(it->second);
 }
 
 std::string igpu_get_last_error()

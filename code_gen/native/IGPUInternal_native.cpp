@@ -209,6 +209,30 @@ GMEXPORT double __EXT_NATIVE__igpu_shader_release(char* __arg_buffer, double __a
     return static_cast<double>(__result);
 }
 
+GMEXPORT double __EXT_NATIVE__igpu_shader_bind(char* __arg_buffer, double __arg_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: shader, type: Int64
+    std::int64_t shader = gm::wire::codec::readValue<std::int64_t>(__br);
+
+    // field: stage, type: Int32
+    std::int32_t stage = gm::wire::codec::readValue<std::int32_t>(__br);
+
+    auto&& __result = igpu_shader_bind(shader, stage);
+    return static_cast<double>(__result);
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_get_bound_shader(double stage, char* __ret_buffer, double __ret_buffer_length)
+{
+    auto&& __result = igpu_get_bound_shader(static_cast<std::int32_t>(stage));
+    gm::byteio::BufferWriter __bw{__ret_buffer, static_cast<size_t>(__ret_buffer_length)};
+
+    // return: __result, type: Int64
+    gm::wire::codec::writeValue(__bw, __result);
+    return 0;
+}
+
 GMEXPORT char* __EXT_NATIVE__igpu_get_last_error()
 {
     static std::string __result;

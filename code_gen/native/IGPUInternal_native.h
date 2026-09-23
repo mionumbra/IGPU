@@ -132,6 +132,8 @@ std::int64_t igpu_shader_compile_vertex(std::string_view source, std::string_vie
 std::int64_t igpu_shader_compile_pixel(std::string_view source, std::string_view entry, std::string_view dialect);
 std::int64_t igpu_shader_compile_compute(std::string_view source, std::string_view entry, std::string_view dialect);
 bool igpu_shader_release(std::uint64_t shader);
+bool igpu_shader_bind(std::int64_t shader, std::int32_t stage);
+std::int64_t igpu_get_bound_shader(std::int32_t stage);
 std::string igpu_get_last_error();
 std::int64_t igpu_input_layout_create(std::int64_t shader, const gm::wire::GMArrayView& usage, const gm::wire::GMArrayView& type, std::int32_t element_count, std::int32_t stride);
 bool igpu_input_layout_release(std::uint64_t layout);

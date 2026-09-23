@@ -127,6 +127,41 @@ function igpu_shader_compile_compute(source : string, entry : string, [type_hint
 [global, bind = typed_gml]
 function igpu_shader_release([type_hint = `uint64`] shader) : bool;
 
+// Binds a compiled shader to `stage` for subsequent igpu_draw calls.
+//
+// WHY THIS EXISTS: igpu_draw's header used to say "the caller is responsible for
+// having set a shader", but there was no way to do that - the handles returned
+// by igpu_shader_compile are IGPU's own and cannot be passed to GameMaker's
+// shader_set(). So a draw ran against whatever shader GameMaker happened to have
+// bound, and "igpu_draw returned true" proved only that the call was issued.
+// This function is the missing half of that contract.
+//
+// NO AUTOMATIC RESTORE, BY DESIGN - unlike the input-assembler state, which
+// igpu_draw saves and restores around each call. The shader is a caller-chosen
+// setting rather than a side effect of drawing: rebinding GameMaker's shader
+// after every IGPU draw would fight any deliberate shader switch the caller
+// made, and there is no GML-level way to read what was bound before. So the
+// binding is sticky until changed, and `shader` = 0 unbinds explicitly.
+//
+// This DOES mean an IGPU shader can be silently replaced by GameMaker's own
+// drawing, because the backend re-binds its shader on every one of its draws.
+// Bind immediately before the igpu_draw calls that need it, and query
+// igpu_get_bound_shader() if you need to know whether it is still yours.
+//
+// The stage must match the stage the handle was compiled for; binding a pixel
+// shader to the vertex stage fails with an error rather than silently doing
+// nothing. Requires a bound device, so call igpu_init() first.
+[global, bind = typed_gml]
+function igpu_shader_bind(shader : int64, stage : int32) : bool;
+
+// Reports which IGPU shader handle is currently bound to `stage`, or 0 if none
+// is. This is IGPU's own bookkeeping, NOT a read-back from the device: another
+// extension, or GameMaker's own drawing, can change the real binding without
+// IGPU knowing. It answers "is my binding still the one I set", which is what a
+// caller can actually act on.
+[global, bind = typed_gml]
+function igpu_get_bound_shader(stage : int32) : int64;
+
 [global, bind = typed_gml]
 function igpu_get_last_error() : string;
 

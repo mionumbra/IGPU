@@ -24,6 +24,12 @@ namespace igpu
         shaders.clear();
         next_shader_id = 1;
 
+        // The bound-shader records point at handles that no longer exist once
+        // the map above is cleared, so they must go with it. Leaving them would
+        // make igpu_get_bound_shader() report a stale handle after a
+        // shutdown/re-init cycle.
+        bound_shaders.clear();
+
         for (auto& [id, layout] : input_layouts)
         {
             if (layout != nullptr)

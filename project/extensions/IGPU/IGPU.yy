@@ -315,6 +315,43 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "__igpu_shader_bind",
+          "argCount": 2,
+          "args": [
+            1,
+            2
+          ],
+          "documentation": "@param {Pointer} _arg_buffer\r\n@param {Real} _arg_buffer_length\r\n@returns {Real}",
+          "externalName": "__EXT_NATIVE__igpu_shader_bind",
+          "help": "",
+          "hidden": true,
+          "kind": 4,
+          "name": "__igpu_shader_bind",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__igpu_get_bound_shader",
+          "argCount": 3,
+          "args": [
+            2,
+            1,
+            2
+          ],
+          "documentation": "@param {Real} stage\r\n@param {Pointer} _ret_buffer\r\n@param {Real} _ret_buffer_length\r\n@returns {Real}",
+          "externalName": "__EXT_NATIVE__igpu_get_bound_shader",
+          "help": "",
+          "hidden": true,
+          "kind": 4,
+          "name": "__igpu_get_bound_shader",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "igpu_get_last_error",
           "argCount": 0,
           "args": [],

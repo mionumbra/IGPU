@@ -25,10 +25,24 @@ namespace igpu
         {
             ID3D11DeviceChild* object = nullptr;
             ID3DBlob* bytecode = nullptr;
+
+            // The IgpuShaderStage this was compiled for, recorded so
+            // igpu_shader_bind can reject a stage mismatch instead of binding a
+            // pixel shader to the vertex stage and letting the backend fail
+            // later with a far more opaque message.
+            std::int32_t stage = -1;
         };
 
         std::unordered_map<std::uint64_t, ShaderEntry> shaders;
         std::uint64_t next_shader_id = 1;
+
+        // Which IGPU handle is bound per stage, mirrored from IgpuShaderStage.
+        // This is IGPU's own bookkeeping, not a device read-back: the backend
+        // can change the real binding behind IGPU's back (it re-binds its own
+        // shader on every one of its draws), so this records intent, and
+        // igpu_get_bound_shader() documents that distinction rather than
+        // pretending to be authoritative.
+        std::unordered_map<std::int32_t, std::uint64_t> bound_shaders;
 
         // Input layouts are keyed by handle like every other resource, and also
         // indexed by the vertex shader they were built against so the same
