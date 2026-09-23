@@ -38,9 +38,22 @@ node "D:\node.js\node_cache\_npx\166e0ec5f4c2d768\node_modules\@gamemaker\gm-cli
 **能编译着色器、建输入布局、建缓冲区、真正发出绘制调用，并且绘制后
 自动把 GameMaker 的输入装配状态恢复原样。**
 
+> ⚠️ **2026-09-23 用引擎源码审计后，上面这句话需要打折**：
+> "真正发出绘制调用"是真的，但**画不出东西**——见 `tools/engine_audit.md`。
+> 核心问题：spec 里**没有 `igpu_shader_bind`**，IGPU 编译出的着色器
+> 根本无法绑到管线上；而 §3 的 `igpu_draw` 注释说"调用方负责设置着色器"，
+> 那是一个**不存在的能力**。测试从未调用 `shader_set`，所以
+> "draw 返回 true" 只证明调用发出去了。
+> **接手第一件事请先读 `tools/engine_audit.md`。**
+
 **下一步是「渲染目标绑定」**（§9 第 5 项）。它有一个额外的重要性：
 **它是补上像素级验证的前提** —— 现在没有它，我们无法证明"画面上真的出现东西了"
 （详见 §6「这批输出不能证明什么」）。
+
+**引擎源码审计的结论**（`OpenGM`，见 `tools/engine_audit.md`）：
+渲染目标链路**已逐环验证可行**，且 `surface_set_target_ext` 已是 GML 内置函数
+、`MAX_MRTS = 4` —— §9 第 7 项（MRT）可能**不需要新 API**。
+优先建议改为：先补 `igpu_shader_bind`，再做像素级验证。
 
 ---
 
