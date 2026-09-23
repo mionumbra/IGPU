@@ -1,0 +1,11 @@
+{
+  "$GMNotes":"v2",
+  "%Name":"ExtensionCore_readme",
+  "name":"ExtensionCore_readme",
+  "parent":{
+    "name":"Extensions",
+    "path":"folders/Extensions.yy",
+  },
+  "resourceType":"GMNotes",
+  "resourceVersion":"2.0",
+}

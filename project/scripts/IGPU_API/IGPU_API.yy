@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"IGPU_API",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"IGPU_API",
+  "parent":{
+    "name":"IGPU",
+    "path":"folders/Extensions/IGPU.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

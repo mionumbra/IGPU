@@ -1,0 +1,119 @@
+/**
+ * @function_partial igpu_init
+ * @param {Any} device
+ * @param {Any} context
+ * @param {Any} swapchain
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_shutdown
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_version
+ * @returns {String}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_is_available
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_get_feature_level
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_get_adapter_description
+ * @returns {String}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_get_video_memory
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_get_backbuffer_width
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_get_backbuffer_height
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_shader_compile_vertex
+ * @param {String} source
+ * @param {String} entry
+ * @param {String} target
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_shader_compile_pixel
+ * @param {String} source
+ * @param {String} entry
+ * @param {String} target
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_shader_compile_compute
+ * @param {String} source
+ * @param {String} entry
+ * @param {String} target
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_shader_release
+ * @param {Real} shader
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_get_last_error
+ * @returns {String}
+ * @function_end
+ */
+
+/**
+ * @enum_partial IgpuFeatureLevel
+ * @member Unknown
+ * @member Level_11_0
+ * @member Level_11_1
+ * @member Level_12_0
+ * @member Level_12_1
+ * @enum_end
+ */
+
+/**
+ * @enum_partial IgpuShaderStage
+ * @member Vertex
+ * @member Pixel
+ * @member Compute
+ * @enum_end
+ */
+
+/**
+ * @const_partial macros
+ * @const_end
+ */
+

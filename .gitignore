@@ -1,0 +1,34 @@
+out/
+
+# REQUIRED for console targets with extra configs
+CMakeUserPresets.json
+
+# Bundler's local machine state (apple_mobile Xcode integration) - always machine-local
+.bundle/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.vcxproj
+*.vcxproj.*
+*.sln
+
+# Build artefacts
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Extension build output: IGPU.dll is produced by the build and copied into the
+# project by cmake/windows/extgen_post_build.cmake. Never commit it.
+project/extensions/IGPU/IGPU.dll
+project/extensions/IGPU/IGPU.pdb
+
+# Runtime debug trace written to CWD by igpu_debug_trace()
+igpu_native_trace.txt
+
+# GameMaker local state
+project/.gmcache/
+project/*.resource_order

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "gamemaker-resource-tool": {
+      "type": "stdio",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "gm-cli resourcetool mcp project\\IGPU.yyp"
+      ],
+      "env": {}
+    }
+  }
+}

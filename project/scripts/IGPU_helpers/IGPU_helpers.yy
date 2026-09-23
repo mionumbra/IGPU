@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"IGPU_helpers",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"IGPU_helpers",
+  "parent":{
+    "name":"IGPU",
+    "path":"IGPU.yyp",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

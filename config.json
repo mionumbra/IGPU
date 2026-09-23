@@ -1,0 +1,50 @@
+{
+  "$schema": "./extgen.schema.json",
+  "input": "./spec.gmidl",
+  "root": "./",
+  "profile": "Full",
+  "gamemaker": {
+    "wrappers": {
+      "enabled": true,
+      "outputFile": "./project/scripts/IGPU_API/IGPU_API.gml"
+    },
+    "runtime": {
+      "enabled": false
+    },
+    "extension": {
+      "enabled": true,
+      "mode": "patch",
+      "outputFile": "./project/extensions/IGPU/IGPU.yy",
+      "extensionName": "IGPU",
+      "extensionFileName": "IGPU.ext"
+    },
+    "injectors": {
+      "enabled": false
+    }
+  },
+  "targets": {
+    "sourceFolder": "./native",
+    "sourceFile": "{0}_native",
+    "windows": {
+      "enabled": true,
+      "outputFolder": "./project/extensions/IGPU"
+    }
+  },
+  "extras": {
+    "docs": {
+      "enabled": true,
+      "outputFolder": "./docs",
+      "overwrite": true
+    }
+  },
+  "build": {
+    "emitCmake": true,
+    "cmake": {
+      "cppStandard": 17,
+      "cppExtensions": false,
+      "strictWarnings": true,
+      "useThirdParty": true,
+      "emitPresets": true
+    }
+  }
+}

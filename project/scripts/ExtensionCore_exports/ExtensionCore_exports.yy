@@ -1,0 +1,13 @@
+{
+  "$GMScript":"v1",
+  "%Name":"ExtensionCore_exports",
+  "isCompatibility":false,
+  "isDnD":false,
+  "name":"ExtensionCore_exports",
+  "parent":{
+    "name":"Extensions",
+    "path":"folders/Extensions.yy",
+  },
+  "resourceType":"GMScript",
+  "resourceVersion":"2.0",
+}

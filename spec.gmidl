@@ -1,0 +1,86 @@
+[gml_api]
+module IGPU;
+
+// ============================================================================
+// IGPU - Advanced GPU access for GameMaker
+//
+// GameMaker owns the D3D11 device. IGPU borrows it: GML reads the device,
+// immediate context and swapchain pointers from os_get_info() and hands them
+// to igpu_init(). Everything else in IGPU operates on those borrowed handles.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+[global, bind = typed_gml]
+function igpu_init(device : gmval, context : gmval, swapchain : gmval) : bool;
+
+[global, bind = typed_gml]
+function igpu_shutdown() : unit;
+
+[global, bind = typed_gml]
+function igpu_version() : string;
+
+[global, bind = typed_gml]
+function igpu_is_available() : bool;
+
+// ---------------------------------------------------------------------------
+// Device info
+// ---------------------------------------------------------------------------
+
+[global, bind = typed_gml]
+function igpu_get_feature_level() : int32;
+
+[global, bind = typed_gml]
+function igpu_get_adapter_description() : string;
+
+[global, bind = typed_gml]
+function igpu_get_video_memory() : int64;
+
+[global, bind = typed_gml]
+function igpu_get_backbuffer_width() : int32;
+
+[global, bind = typed_gml]
+function igpu_get_backbuffer_height() : int32;
+
+// ---------------------------------------------------------------------------
+// Runtime shader compilation
+// ---------------------------------------------------------------------------
+
+[global, bind = typed_gml]
+function igpu_shader_compile_vertex(source : string, entry : string, target : string) : int64;
+
+[global, bind = typed_gml]
+function igpu_shader_compile_pixel(source : string, entry : string, target : string) : int64;
+
+[global, bind = typed_gml]
+function igpu_shader_compile_compute(source : string, entry : string, target : string) : int64;
+
+[global, bind = typed_gml]
+function igpu_shader_release([type_hint = `uint64`] shader) : bool;
+
+[global, bind = typed_gml]
+function igpu_get_last_error() : string;
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+[global, bind = typed_gml]
+enum IgpuFeatureLevel
+{
+    Unknown = 0,
+    Level_11_0 = 1,
+    Level_11_1 = 2,
+    Level_12_0 = 3,
+    Level_12_1 = 4
+}
+
+[global, bind = typed_gml]
+enum IgpuShaderStage
+{
+    Vertex = 0,
+    Pixel = 1,
+    Compute = 2
+}
