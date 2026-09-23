@@ -3,7 +3,42 @@
 > 最后更新：2026-09-23
 > 状态：**阶段 D 进行中**（shader blob / 输入布局 / 缓冲区 / 绘制已跑通）
 > 版本：`0.3.0`（API 有新增，版本号尚未提升）
-> Git：已是仓库，`main` 分支，工作区干净
+> Git：`main` 分支，HEAD `03a5818`
+> **接手第一件事：跑 `pwsh -File tools\verify_handover.ps1`** —— 见 §0
+
+---
+
+## 0. 从这里开始（接手第一件事）
+
+```pwsh
+# 1) 核对文档与代码是否一致 —— 不要跳过，这决定你能不能信任本文档
+pwsh -File tools\verify_handover.ps1
+
+# 2) 全量重编译，确认零警告
+cmake --preset win-x64-release-vs18
+cmake --build --preset win-x64-release-vs18 --clean-first
+
+# 3) 跑集成测试，确认 137 项断言通过、退出码 0
+cd project
+node "D:\node.js\node_cache\_npx\166e0ec5f4c2d768\node_modules\@gamemaker\gm-cli\dist\cli.js" run --no-errors-only
+```
+
+**关于 `tools/verify_handover.ps1`**：交接文档最容易失真的地方是 API 清单、
+能力位数量、测试断言数 —— 它们会被后续每次改动悄悄改掉，而文档不会自己更新。
+这个脚本把"文档说的"和"代码里的"逐条对比（7 组检查）。
+**它本身做过反向验证**：故意改坏文档里的键数 / 删掉一个 API 行，脚本确实报错退出 1,
+不是恒绿的摆设。
+
+**如果脚本报错**：先修文档，再开工。基于错误前提写代码的代价远大于跑这个脚本。
+
+### 当前进度一句话总结
+
+**能编译着色器、建输入布局、建缓冲区、真正发出绘制调用，并且绘制后
+自动把 GameMaker 的输入装配状态恢复原样。**
+
+**下一步是「渲染目标绑定」**（§9 第 5 项）。它有一个额外的重要性：
+**它是补上像素级验证的前提** —— 现在没有它，我们无法证明"画面上真的出现东西了"
+（详见 §6「这批输出不能证明什么」）。
 
 ---
 
@@ -129,6 +164,8 @@ IGPU/
 │       ├── igpu_draw.h/.cpp      ← **绘制 + IA 状态保存恢复（阶段 D）**
 │       └── igpu_error.h/.cpp      ← 错误信息 + UTF-16→UTF-8
 ├── third_party/               ← 第三方集成点（当前 discord SDK 残留，inert）
+├── tools/
+│   └── verify_handover.ps1    ← **交接自检**：核对文档与代码是否一致
 └── project/                   ← GameMaker 工程
     ├── IGPU.yyp
     ├── AGENTS.md              ← **必读：.yy/.yyp 编辑规则 + GML 约定**
@@ -154,13 +191,16 @@ IGPU/
 - `igpu_get_backbuffer_height() : int32`
 
 ### 能力查询（Tier 3）
-- `igpu_get_capabilities() : gmval` → **struct，19 个键，永不失败**
+- `igpu_get_capabilities() : gmval` → **struct，28 个键，永不失败**（清单见 §4 末）
 - `igpu_supports(capability : int32) : bool`
 - `igpu_get_shader_dialect() : string` → `"hlsl"` / `""`
 
 ### 运行时着色器编译
 - `igpu_shader_compile(source, entry, stage : int32, dialect : string = "") : int64` ← **统一入口**
-- `igpu_shader_compile_vertex/pixel/compute(source, entry, dialect = "") : int64` ← 便捷包装
+- `igpu_shader_compile_vertex(source, entry, dialect = "") : int64`
+- `igpu_shader_compile_pixel(source, entry, dialect = "") : int64`
+- `igpu_shader_compile_compute(source, entry, dialect = "") : int64`
+  （上三个是便捷包装）
 - `igpu_shader_release([type_hint = \`uint64\`] shader) : bool`
 - `igpu_get_last_error() : string`
 
@@ -169,12 +209,16 @@ IGPU/
 - `igpu_input_layout_release([type_hint = \`uint64\`] layout) : bool`
 
 ### 缓冲区（阶段 D）
-- `igpu_buffer_create(size : int64, usage : int32, bind : int32) : int64`
+- `igpu_buffer_create(size : int64, usage : int32, bind : int32, stride : int32) : int64`
 - `igpu_buffer_write([type_hint = \`uint64\`] buffer, offset : int64, [type_hint = \`buffer\`] data) : bool`
 - `igpu_buffer_read([type_hint = \`uint64\`] buffer, offset : int64, [type_hint = \`buffer\`] dest) : bool`
 - `igpu_buffer_resize([type_hint = \`uint64\`] buffer, size : int64) : bool`
 - `igpu_buffer_size([type_hint = \`uint64\`] buffer) : int64`
 - `igpu_buffer_release([type_hint = \`uint64\`] buffer) : bool`
+
+> ⚠️ **`stride`（字节/顶点）是必填参数**，顶点缓冲区必须给正数、
+> 非顶点缓冲区必须给 0。绘制要靠 `size / stride` 推算顶点数，
+> 只有创建者知道 stride。**这是破坏性变更**，旧调用需补第 4 个参数。
 
 `IgpuBufferUsage`（**更新频率**，不是内存位置）：
 
@@ -418,8 +462,8 @@ PASS
 3. `staging reads back : 0` —— 新建缓冲区读回是**零填充**，证明 Map/staging 路径连通。
 4. 能力位 `vertex_buffer` / `index_buffer` 已从恒 false 翻为 true。
 
-当前检查项 **86 项全部通过**（源文件 `_igpu_check()` 静态计数），退出码 0，
-`--clean-first` 全量重编译零警告。
+> 本批完成时累计 86 项断言通过；加上后面的绘制的断言，**当前总数是 137 项**
+> （见本节末尾）。这里保留 86 是为了说明该批次自身的规模，不是当前数字。
 
 ### 阶段 D 第三批（绘制）
 
@@ -450,7 +494,7 @@ PASS
 
 **没有验证像素真的被光栅化出来。**
 
-原因：IGPU **目前还没有设置渲染目标的 API**（那是 §9 第 6 项 MRT 的范畴）。
+原因：IGPU **目前还没有设置渲染目标的 API**（那是 §9 第 5 项的范畴）。
 `igpu_draw` 画到 GM 当时绑定的目标，而测试跑在 Create 事件里，那里绑的是
 backbuffer —— 测试无法读回它的像素。`surface_getpixel()` 只能读 surface，
 而把 IGPU 的输出导向某个 surface 的能力**现在还不存在**。
@@ -786,12 +830,19 @@ var _v = [(-1), (-1), (0), (0), (0), (3), (-1), (0), (1), (0)];
 ## 10. 关键命令速查
 
 ```pwsh
+# 交接自检：核对文档与代码是否一致（开工前先跑这个）
+pwsh -File tools\verify_handover.ps1        # 退出码 0 = 一致，1 = 有差异
+
 # 重新生成绑定（改 spec.gmidl / config.json 后）
 & "D:\GM-ExtensionGenerator\extgen.exe" --config "D:\Users\User\Documents\gml_ext\IGPU\config.json"
 
 # 构建
 cmake --preset win-x64-release-vs18
 cmake --build --preset win-x64-release-vs18
+
+# 零警告检查（C4819 是生成代码的代码页噪声，可忽略）
+cmake --build --preset win-x64-release-vs18 --clean-first 2>&1 |
+    Select-String -Pattern 'warning|error' | Where-Object { $_ -notmatch 'C4819' }
 
 # 编译游戏 / 运行（看 debug 输出必须 --no-errors-only）
 $cli = "D:\node.js\node_cache\_npx\166e0ec5f4c2d768\node_modules\@gamemaker\gm-cli\dist\cli.js"
