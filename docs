@@ -124,6 +124,24 @@
  */
 
 /**
+ * @function_partial igpu_input_layout_create
+ * @param {Real} shader
+ * @param {Array} usage
+ * @param {Array} type
+ * @param {Real} element_count
+ * @param {Real} stride
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_input_layout_release
+ * @param {Real} layout
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
  * @enum_partial IgpuFeatureLevel
  * @member Unknown
  * @member Level_11_0
@@ -169,6 +187,9 @@
  * @member OcclusionQuery
  * @member Fence
  * @member Wireframe
+ * @member InputLayout
+ * @member VertexBuffer
+ * @member IndexBuffer
  * @member AdapterInfo
  * @member VideoMemory
  * @member BackbufferSize

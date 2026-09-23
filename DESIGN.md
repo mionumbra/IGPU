@@ -1,10 +1,12 @@
 # IGPU — 跨平台抽象层设计
 
-> 状态：**设计草案**（未实现）
+> 状态：**阶段 A/B/C 已实现并验证；阶段 D 进行中**
 > 目标读者：IGPU 实现者 / 上层扩展调用方
 > 依据：`GmlSpec.xml`（runtime-2026.0.0.23）、离线官方手册、`os_get_info()` 全平台键位表
 >
 > 本文回答一个问题：**在只有 Windows 能真跑的前提下，接口该怎么设计，才能让跨平台不是重写？**
+>
+> 📌 **现状与操作请看 `HANDOVER.md`**；本文是设计论证，两者互补。
 
 ---
 
@@ -68,7 +70,11 @@ bm_src_alpha | bm_inv_src_alpha | bm_eq_add ...            ← 混合
 
 ---
 
-## 2. 现有 14 个 API 的跨平台语义审查
+## 2. 早期 API 的跨平台语义审查
+
+> **注**：本节写于阶段 A 之前，当时是 **14 个 API**、编译参数还是 `"vs_5_0"`。
+> 这些污染**均已在阶段 A 修复**（现为 **20 个函数**，见 `HANDOVER.md` §4）。
+> 保留本节是因为它记录了**判断标准**——新增 API 时应继续用同一把尺子量。
 
 当前 `spec.gmidl` 的实现全部基于 D3D11。逐个检查接口层面是否有平台污染：
 
@@ -325,70 +331,59 @@ if (_caps.compute) { ... }
 
 ## 7. 需要修复的现有问题
 
+> **状态（已核实）**：7.1 / 7.2 / 7.3 / 7.5 在阶段 C **均已修复**；
+> 7.4 **不是 bug**（平台如此），已由能力层如实上报。
+> 本节保留原始分析作为记录。
+
 设计审查过程中发现的实现问题（与跨平台无关，但应一并修）：
 
-### 7.1 `refresh_backbuffer_size()` 用了陈旧的尺寸
+### 7.1 `refresh_backbuffer_size()` 用了陈旧的尺寸 ✅ 已修复
 
-`igpu_device.cpp:151` 用 `GetDesc()`：
-```cpp
-DXGI_SWAP_CHAIN_DESC desc{};
-s.swapchain->GetDesc(&desc);
-s.backbuffer_width = desc.BufferDesc.Width;
-```
+原实现用 `GetDesc()`，返回的是 **swapchain 创建时**的尺寸；窗口拉伸或切全屏后
+backbuffer 会变，但那里永远返回旧值。
 
-**问题**：`GetDesc()` 返回的是 **swapchain 创建时**的尺寸。Windows 下窗口被拉伸、切全屏后 backbuffer 会变，但这里永远返回旧值。
+**修复**：已改为优先用 `GetDesc1()`（DXGI 1.1+），取不到再回退到 `GetDesc()`。
+见 `igpu_device.cpp` 的 `refresh_backbuffer_size()`。
 
-**修复**：改用 `GetDesc1()`（DXGI 1.1+，Win8+），或在每次查询时重新读取。更稳的方案是问 GM 自己：`window_get_width()`。
+### 7.2 `igpu_init_from_game()` 未销毁 DS Map ✅ 已修复
 
-### 7.2 `igpu_init_from_game()` 未销毁 DS Map
+`os_get_info()` 返回的 DS Map **不会自动释放**，手册明确警告要用 `ds_map_destroy()`。
+原实现每次调用泄漏一个 map。
 
-`IGPU_helpers.gml:16` 拿到 `os_get_info()` 的 map 后没有 `ds_map_destroy()`。手册明确警告：
+**修复**：`IGPU_helpers.gml` 的两个返回分支**都已**补上 `ds_map_destroy()`。
 
-> "Note that the DS map is not automatically cleared from memory and you should use the `ds_map_destroy()` function when you no longer need it."
-
-**每次调用泄漏一个 DS Map。**
-
-### 7.3 `igpu_init_from_game()` 未防御 `-1` 返回值
+### 7.3 `igpu_init_from_game()` 未防御 `-1` 返回值 ✅ 已修复
 
 手册（已核实）：
 
 > **HTML5** Returns `-1`.
 > **Nintendo Switch** Returns `-1`.
 
-而当前代码：
-```gml
-var _info = os_get_info();
-if (!ds_map_exists(_info, "video_d3d11_device")) { ... }
-```
+在 HTML5/Switch 上 `_info` 是 `-1`（**不是 map**），对 `-1` 调 `ds_map_exists()`
+行为未定义。
 
-在 HTML5/Switch 上 `_info` 是 `-1`，`ds_map_exists(-1, ...)` 的行为**未定义**（可能报错）。
+**修复**：现有代码是 `if (!is_real(_info) && !ds_map_exists(...))` ——
+用 `is_real()` 先挡掉 `-1`，且该分支内也调用了 `ds_map_destroy()`
+（`-1` 上调用是安全的，因为此时必然不是 map）。
 
-**修复**：
-```gml
-if (os_type != os_windows) { ... return false; }   // 已有，但...
-var _info = os_get_info();
-if (!is_struct(_info) && !is_real(_info) || is_real(_info)) { /* 非 map */ }
-// 更稳：显式检查类型
-if (typeof(_info) != "ref" && typeof(_info) != "number") { ... }
-```
-
-实际上现有代码的 `os_type != os_windows` 检查**已经挡住了大部分情况** —— 但 HTML5 上 `os_type` 也可能是 `os_windows`？不会。所以这个风险较低。不过 **GX.games** 值得注意，它返回有效 map 但没有 `video_d3d11_*` 键，现有代码能正确处理（走 `ds_map_exists` false 分支）—— **但 map 仍然泄漏**。
-
-### 7.4 Xbox 上的返回值语义
+### 7.4 Xbox 上的返回值语义 —— **不是 bug**
 
 手册（已核实）：
 
 > the `video_adapter_*` and `udid` keys are `0` (except for `video_adapter_description` which is an empty string `""`).
 
 所以在 Xbox 上：
-- `igpu_get_adapter_description()` → `""`（当前代码返回空串 ✅ 正确）
-- `igpu_get_video_memory()` → `0`（当前代码返回 0 ✅ 正确）
+- `igpu_get_adapter_description()` → `""`
+- `igpu_get_video_memory()` → `0`
 
-**这些不是 bug，是平台如此。** 但调用方需要知道 —— 这正是 `igpu_get_capabilities()` 要解决的问题。
+**这是平台如此，不是缺陷。** 但调用方需要知道 —— 这正是 `igpu_get_capabilities()`
+要解决的问题（Xbox 上 `AdapterInfo` / `VideoMemory` 仍会报 true，因为 Xbox 确实
+有适配器，只是 GM 不上报数值；见 `igpu_capabilities.cpp` 的注释）。
 
-### 7.5 `igpu_debug_trace()` 写文件到 CWD
+### 7.5 `igpu_debug_trace()` 写文件到 CWD ✅ 已移除
 
-`igpu_device.cpp:13`，往 CWD 写 `igpu_native_trace.txt` 并 `OutputDebugString`。**正式版应移除或改为编译期开关。**
+原实现往 CWD 写 `igpu_native_trace.txt` 并调 `OutputDebugString`。
+**已从代码中移除**（`grep igpu_debug_trace` 无结果）。
 
 ---
 
@@ -398,32 +393,39 @@ if (typeof(_info) != "ref" && typeof(_info) != "number") { ... }
 
 ### 阶段 A — 接口定型（不改行为，零风险）
 1. ✅ 本文档
-2. 重构 `spec.gmidl`：
+2. ✅ 重构 `spec.gmidl`：
    - 新增 `igpu_shader_compile(source, entry, stage, dialect="")` 统一接口
    - 旧三个函数改为便捷包装
    - 扩展 `IgpuShaderStage` 枚举到 8 个阶段
    - 新增 `IgpuCapability` 枚举
-3. 重跑 extgen，确认生成物正常
+3. ✅ 重跑 extgen，确认生成物正常
 
 ### 阶段 B — 能力层（Tier 3）
-4. 实现 `igpu_get_capabilities()` — Wine 上走原生查询，其他平台走纯 GML 兜底
-5. 实现 `igpu_supports(capability)` 便捷函数
+4. ✅ 实现 `igpu_get_capabilities()` — Windows 走原生查询，其他平台纯 GML 兜底
+5. ✅ 实现 `igpu_supports(capability)` 便捷函数
 
 ### 阶段 C — 修复现有缺陷
-6. §7.1 backbuffer 尺寸
-7. §7.2 DS Map 泄漏
-8. §7.5 移除 debug trace
+6. ✅ §7.1 backbuffer 尺寸（改用 `GetDesc1()`）
+7. ✅ §7.2 DS Map 泄漏（补 `ds_map_destroy()`）
+8. ✅ §7.3 `-1` 返回值防御
+9. ✅ §7.5 移除 debug trace
 
 ### 阶段 D — 补全 Tier 1（Windows）
-9. 缓冲区（`ID3D11Buffer`）+ 映射
-10. **输入布局**（`ID3D11InputLayout`）+ 顶点格式 ← 让顶点着色器真正可用
-11. 绘制调用 + 实例化
-12. 状态对象（depth-stencil / rasterizer / blend / sampler）
-13. MRT
-14. 纹理 / SRV / RTV / UAV
-15. 查询 / 时间戳 / fence
+10. ✅ **shader 句柄保留 `ID3DBlob`** ← 见下方说明
+11. ✅ **输入布局**（`ID3D11InputLayout`）+ 顶点格式
+12. ⬜ 缓冲区（`ID3D11Buffer`）+ 映射
+13. ⬜ 绘制调用 + 实例化
+14. ⬜ 状态对象（depth-stencil / rasterizer / blend / sampler）
+15. ⬜ MRT
+16. ⬜ 纹理 / SRV / RTV / UAV
+17. ⬜ 查询 / 时间戳 / fence
 
-> **注意 10 的优先级**：当前 shader 句柄只存 `ID3D11DeviceChild*`，**丢弃了 `ID3DBlob`**。而 `CreateInputLayout` 必须用编译产物里的 signature。所以做输入布局时，**必须改 shader 句柄结构同时保留 blob**。这是 HANDOVER §10 没点出的依赖关系。
+> **关于第 10 步（已完成）**：`DeviceState::shaders` 原先只存 `ID3D11DeviceChild*`，
+> **丢弃了 `ID3DBlob`**。而 `CreateInputLayout` 必须用编译产物里的 signature，
+> 所以这一步是输入布局（以及后续所有绘制）的**硬前置**。
+>
+> 现结构：`ShaderEntry { ID3D11DeviceChild* object; ID3DBlob* bytecode; }`。
+> 注意 blob 有三个所有权出口（编译失败 / 建对象失败 / 成功移交），改动时别漏。
 
 ---
 

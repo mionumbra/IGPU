@@ -131,6 +131,48 @@ function igpu_shader_release([type_hint = `uint64`] shader) : bool;
 function igpu_get_last_error() : string;
 
 // ---------------------------------------------------------------------------
+// Input layout
+// ---------------------------------------------------------------------------
+
+// Creates an input layout describing how vertex data is laid out in a buffer,
+// so a compiled vertex shader can actually be bound and drawn with.
+//
+// A layout is built from a vertex format that the CALLER describes using
+// GameMaker's own vertex_usage_* / vertex_type_* vocabulary, exactly as
+// vertex_format_begin() + vertex_format_add_* do at the GML level. IGPU does
+// not invent parallel names, and no backend term appears here.
+//
+// `usage` and `type` accept the GameMaker constants directly:
+//
+//     usage : vertex_usage_position / _normal / _colour / _texcoord / _tangent
+//             / _binormal / _blendweight / _blendindices / _psize
+//     type  : vertex_type_float1 / _float2 / _float3 / _float4
+//             / _colour / _ubyte4
+//
+// The first `element_count` entries of the two arrays are read pairwise:
+// usage[i] and type[i] describe one element. The semantic index (the N in
+// TEXCOORDn) is assigned automatically in first-seen order per usage, which
+// matches how GameMaker's own formats are numbered.
+//
+// `shader` must be a vertex shader handle from igpu_shader_compile; it
+// supplies the input signature the layout is validated against.
+//
+// `element_count` is how many entries to read from the arrays.
+//
+// `stride` is the size in bytes of one whole vertex. It is validated (a stride
+// smaller than the declared elements is rejected) but not stored on the layout,
+// because the vertex stride is supplied when the buffer is bound at draw time.
+// Pass 0, or any negative value (which is what the GML helper's default of -1
+// sends), to mean "tightly packed" - the elements are then assumed contiguous.
+//
+// Returns a layout handle, or 0 on failure (see igpu_get_last_error()).
+[global, bind = typed_gml]
+function igpu_input_layout_create(shader : int64, usage : array, type : array, [type_hint = `int32`] element_count, [type_hint = `int32`] stride) : int64;
+
+[global, bind = typed_gml]
+function igpu_input_layout_release([type_hint = `uint64`] layout) : bool;
+
+// ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
 
@@ -199,6 +241,11 @@ enum IgpuCapability
     OcclusionQuery = 44,
     Fence = 45,
     Wireframe = 46,
+
+    // Geometry submission
+    InputLayout = 47,
+    VertexBuffer = 48,
+    IndexBuffer = 49,
 
     // Platform info availability
     AdapterInfo = 60,

@@ -21,4 +21,6 @@ GMEXPORT double __EXT_NATIVE__igpu_shader_compile_pixel(char* __arg_buffer, doub
 GMEXPORT double __EXT_NATIVE__igpu_shader_compile_compute(char* __arg_buffer, double __arg_buffer_length, char* __ret_buffer, double __ret_buffer_length);
 GMEXPORT double __EXT_NATIVE__igpu_shader_release(char* __arg_buffer, double __arg_buffer_length);
 GMEXPORT char* __EXT_NATIVE__igpu_get_last_error();
+GMEXPORT double __EXT_NATIVE__igpu_input_layout_create(char* __arg_buffer, double __arg_buffer_length, char* __ret_buffer, double __ret_buffer_length);
+GMEXPORT double __EXT_NATIVE__igpu_input_layout_release(char* __arg_buffer, double __arg_buffer_length);
 

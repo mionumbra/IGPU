@@ -62,6 +62,10 @@ namespace igpu
         Fence = 45,
         Wireframe = 46,
 
+        InputLayout = 47,
+        VertexBuffer = 48,
+        IndexBuffer = 49,
+
         AdapterInfo = 60,
         VideoMemory = 61,
         BackbufferSize = 62

@@ -87,3 +87,50 @@ function igpu_compile_shader_from_file(_path, _stage, _entry)
 
     return igpu_shader_compile(_source, _entry, _stage, "");
 }
+
+/// @func igpu_vertex_format(_shader, _elements)
+/// @desc Builds an input layout for a compiled vertex shader from a compact
+///       element list, so callers do not have to maintain two parallel arrays.
+///
+///       Each entry is [usage, type] using GameMaker's own constants, e.g.
+///           igpu_vertex_format(_vs, [
+///               [vertex_usage_position, vertex_type_float3],
+///               [vertex_usage_texcoord, vertex_type_float2]
+///           ]);
+///       which mirrors vertex_format_begin() + vertex_format_add_position_3d()
+///       and friends.
+///
+///       The vertex stride is derived automatically from the element sizes
+///       (tightly packed). Pass _stride explicitly if your data is interleaved
+///       with padding.
+/// @param {Real}   _shader  Vertex shader handle from igpu_shader_compile.
+/// @param {Array}  _elements  Array of [usage, type] pairs.
+/// @param {Real}   _stride  Optional byte stride; -1 (default) means auto.
+/// @returns {Real} Layout handle, or 0 on failure.
+function igpu_vertex_format(_shader, _elements, _stride = -1)
+{
+    var _count = array_length(_elements);
+    if (_count <= 0)
+    {
+        show_debug_message("igpu_vertex_format :: element list is empty");
+        return 0;
+    }
+
+    var _usage = array_create(_count, 0);
+    var _type = array_create(_count, 0);
+
+    for (var _i = 0; _i < _count; _i++)
+    {
+        var _element = _elements[_i];
+        if (!is_array(_element) || array_length(_element) < 2)
+        {
+            show_debug_message($"igpu_vertex_format :: element {_i} is not a [usage, type] pair");
+            return 0;
+        }
+
+        _usage[_i] = _element[0];
+        _type[_i] = _element[1];
+    }
+
+    return igpu_input_layout_create(_shader, _usage, _type, _count, _stride);
+}

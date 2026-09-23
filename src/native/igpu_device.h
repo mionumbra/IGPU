@@ -16,8 +16,25 @@ namespace igpu
 
         bool initialised = false;
 
-        std::unordered_map<std::uint64_t, ID3D11DeviceChild*> shaders;
+        // A compiled shader keeps BOTH the live device object and the bytecode
+        // blob it was created from. The blob is not redundant: creating an
+        // input layout requires the vertex shader's signature, which only
+        // exists inside the compiled bytecode. Dropping it would make
+        // ID3D11InputLayout impossible to build.
+        struct ShaderEntry
+        {
+            ID3D11DeviceChild* object = nullptr;
+            ID3DBlob* bytecode = nullptr;
+        };
+
+        std::unordered_map<std::uint64_t, ShaderEntry> shaders;
         std::uint64_t next_shader_id = 1;
+
+        // Input layouts are keyed by handle like every other resource, and also
+        // indexed by the vertex shader they were built against so the same
+        // layout can be reused without the caller re-passing it.
+        std::unordered_map<std::uint64_t, ID3D11InputLayout*> input_layouts;
+        std::uint64_t next_input_layout_id = 1;
 
         DXGI_ADAPTER_DESC adapter_desc{};
         bool adapter_desc_valid = false;
@@ -31,6 +48,10 @@ namespace igpu
     };
 
     DeviceState& state();
+
+    // Shader lookup helper. Returns nullptr for an unknown or already-released
+    // handle, so callers can validate without reaching into the map.
+    DeviceState::ShaderEntry* find_shader(std::uint64_t handle);
 
     bool bind_device(ID3D11Device* device, ID3D11DeviceContext* context, IDXGISwapChain* swapchain);
     void release_all();

@@ -205,3 +205,41 @@ GMEXPORT char* __EXT_NATIVE__igpu_get_last_error()
     return (char*)__result.c_str();
 }
 
+GMEXPORT double __EXT_NATIVE__igpu_input_layout_create(char* __arg_buffer, double __arg_buffer_length, char* __ret_buffer, double __ret_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: shader, type: Int64
+    std::int64_t shader = gm::wire::codec::readValue<std::int64_t>(__br);
+
+    // field: usage, type: AnyArray
+    gm::wire::GMArrayView usage = gm::wire::codec::readValue<gm::wire::GMArrayView>(__br);
+
+    // field: type, type: AnyArray
+    gm::wire::GMArrayView type = gm::wire::codec::readValue<gm::wire::GMArrayView>(__br);
+
+    // field: element_count, type: Int32
+    std::int32_t element_count = gm::wire::codec::readValue<std::int32_t>(__br);
+
+    // field: stride, type: Int32
+    std::int32_t stride = gm::wire::codec::readValue<std::int32_t>(__br);
+
+    auto&& __result = igpu_input_layout_create(shader, usage, type, element_count, stride);
+    gm::byteio::BufferWriter __bw{__ret_buffer, static_cast<size_t>(__ret_buffer_length)};
+
+    // return: __result, type: Int64
+    gm::wire::codec::writeValue(__bw, __result);
+    return 0;
+}
+
+GMEXPORT double __EXT_NATIVE__igpu_input_layout_release(char* __arg_buffer, double __arg_buffer_length)
+{
+    gm::byteio::BufferReader __br{__arg_buffer, static_cast<size_t>(__arg_buffer_length)};
+
+    // field: layout, type: UInt64
+    std::uint64_t layout = gm::wire::codec::readValue<std::uint64_t>(__br);
+
+    auto&& __result = igpu_input_layout_release(layout);
+    return static_cast<double>(__result);
+}
+

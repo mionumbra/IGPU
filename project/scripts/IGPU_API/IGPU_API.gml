@@ -52,6 +52,9 @@ enum IgpuCapability
     OcclusionQuery = 44,
     Fence = 45,
     Wireframe = 46,
+    InputLayout = 47,
+    VertexBuffer = 48,
+    IndexBuffer = 49,
     AdapterInfo = 60,
     VideoMemory = 61,
     BackbufferSize = 62
@@ -337,6 +340,70 @@ function igpu_shader_release(_shader)
 
 // Skipping function igpu_get_last_error (no wrapper is required)
 
+
+/**
+ * @param {Real} _shader
+ * @param {Array} _usage
+ * @param {Array} _type
+ * @param {Real} _element_count
+ * @param {Real} _stride
+ * @returns {Real}
+ */
+function igpu_input_layout_create(_shader, _usage, _type, _element_count, _stride)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _shader, type: Int64
+    if (!is_numeric(_shader)) show_error($"{_GMFUNCTION_} :: _shader expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _shader);
+
+    // param: _usage, type: AnyArray
+
+    __ext_core_buffer_marshal_value(__args_buffer__, _usage);
+
+    // param: _type, type: AnyArray
+
+    __ext_core_buffer_marshal_value(__args_buffer__, _type);
+
+    // param: _element_count, type: Int32
+    if (!is_numeric(_element_count)) show_error($"{_GMFUNCTION_} :: _element_count expected number", true);
+    buffer_write(__args_buffer__, buffer_s32, _element_count);
+
+    // param: _stride, type: Int32
+    if (!is_numeric(_stride)) show_error($"{_GMFUNCTION_} :: _stride expected number", true);
+    buffer_write(__args_buffer__, buffer_s32, _stride);
+
+    var __ret_buffer__ = __ext_core_get_ret_buffer();
+
+    var __return_value__ = __igpu_input_layout_create(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__), buffer_get_address(__ret_buffer__), buffer_get_size(__ret_buffer__));
+
+    var __result__ = undefined;
+    __result__ = buffer_read(__ret_buffer__, buffer_u64);
+    return __result__;
+}
+
+/**
+ * @param {Real} _layout
+ * @returns {Bool}
+ */
+function igpu_input_layout_release(_layout)
+{
+    var __available__ = __IGPU_is_available();
+    if (!__available__) return;
+
+    var __args_buffer__ = __ext_core_get_args_buffer();
+
+    // param: _layout, type: UInt64
+    if (!is_numeric(_layout)) show_error($"{_GMFUNCTION_} :: _layout expected number", true);
+    buffer_write(__args_buffer__, buffer_u64, _layout);
+
+    var __return_value__ = __igpu_input_layout_release(buffer_get_address(__args_buffer__), buffer_tell(__args_buffer__));
+
+    return __return_value__;
+}
 
 /// @ignore
 function __IGPU_get_decoders()

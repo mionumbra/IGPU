@@ -11,6 +11,7 @@
 #include "igpu_device.h"
 #include "igpu_capabilities.h"
 #include "igpu_error.h"
+#include "igpu_input_layout.h"
 
 using namespace gm::wire;
 using namespace gm_structs;
@@ -130,11 +131,11 @@ namespace
         return message;
     }
 
-    std::int64_t create_shader_handle(ID3D11DeviceChild* shader)
+    std::int64_t create_shader_handle(ID3D11DeviceChild* shader, ID3DBlob* bytecode)
     {
         auto& s = igpu::state();
         const std::uint64_t id = s.next_shader_id++;
-        s.shaders.emplace(id, shader);
+        s.shaders.emplace(id, igpu::DeviceState::ShaderEntry{ shader, bytecode });
         return static_cast<std::int64_t>(id);
     }
 
@@ -315,17 +316,20 @@ namespace
             break;
         }
 
-        bytecode->Release();
-
         if (shader == nullptr)
         {
+            // The device object was never created, so the bytecode has no owner
+            // to hand it to and must be released here.
+            bytecode->Release();
             igpu::set_last_error(
                 std::string("igpu_shader_compile_") + stage_name(stage) +
                 ": CreateShader failed");
             return 0;
         }
 
-        return create_shader_handle(shader);
+        // Ownership of the blob transfers to the shader entry: an input layout
+        // needs the vertex signature that lives inside it.
+        return create_shader_handle(shader, bytecode);
     }
 }
 
@@ -498,23 +502,45 @@ std::int64_t igpu_shader_compile_compute(
 
 bool igpu_shader_release(std::uint64_t shader)
 {
-    auto& s = igpu::state();
-    const auto it = s.shaders.find(shader);
-    if (it == s.shaders.end())
+    auto* entry = igpu::find_shader(shader);
+    if (entry == nullptr)
     {
         igpu::set_last_error("igpu_shader_release: unknown shader handle");
         return false;
     }
 
-    if (it->second != nullptr)
+    if (entry->object != nullptr)
     {
-        it->second->Release();
+        entry->object->Release();
     }
-    s.shaders.erase(it);
+    if (entry->bytecode != nullptr)
+    {
+        entry->bytecode->Release();
+    }
+    igpu::state().shaders.erase(shader);
     return true;
 }
 
 std::string igpu_get_last_error()
 {
     return igpu::last_error();
+}
+
+// ---------------------------------------------------------------------------
+// Input layout
+// ---------------------------------------------------------------------------
+
+std::int64_t igpu_input_layout_create(
+    std::int64_t shader,
+    const gm::wire::GMArrayView& usage,
+    const gm::wire::GMArrayView& type,
+    std::int32_t element_count,
+    std::int32_t stride)
+{
+    return igpu::input_layout_create(shader, usage, type, element_count, stride);
+}
+
+bool igpu_input_layout_release(std::uint64_t layout)
+{
+    return igpu::input_layout_release(layout);
 }

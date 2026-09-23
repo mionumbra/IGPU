@@ -117,6 +117,14 @@ namespace igpu
         case Capability::Fence:          return native;
         case Capability::Wireframe:      return native;
 
+        // ---- geometry submission ----
+        // Only the input layout is implemented so far; the buffer capabilities
+        // are declared in the interface but must not advertise themselves as
+        // available until the matching API exists.
+        case Capability::InputLayout:  return native;
+        case Capability::VertexBuffer: return false;
+        case Capability::IndexBuffer:  return false;
+
         case Capability::None:
         default:
             return false;
@@ -181,6 +189,11 @@ namespace igpu
         caps.add("instancing", supports(Capability::Instancing));
         caps.add("indirect_draw", supports(Capability::IndirectDraw));
         caps.add("queries", supports(Capability::Queries));
+
+        // ---- geometry submission ----
+        caps.add("input_layout", supports(Capability::InputLayout));
+        caps.add("vertex_buffer", supports(Capability::VertexBuffer));
+        caps.add("index_buffer", supports(Capability::IndexBuffer));
 
         // Serialise through StructStream::writeTo(), which is the only thing
         // that knows both the entry count and the raw-header encoding, then

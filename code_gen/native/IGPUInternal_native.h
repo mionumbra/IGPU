@@ -59,6 +59,9 @@ namespace gm_enums
         OcclusionQuery = 44,
         Fence = 45,
         Wireframe = 46,
+        InputLayout = 47,
+        VertexBuffer = 48,
+        IndexBuffer = 49,
         AdapterInfo = 60,
         VideoMemory = 61,
         BackbufferSize = 62
@@ -98,3 +101,5 @@ std::int64_t igpu_shader_compile_pixel(std::string_view source, std::string_view
 std::int64_t igpu_shader_compile_compute(std::string_view source, std::string_view entry, std::string_view dialect);
 bool igpu_shader_release(std::uint64_t shader);
 std::string igpu_get_last_error();
+std::int64_t igpu_input_layout_create(std::int64_t shader, const gm::wire::GMArrayView& usage, const gm::wire::GMArrayView& type, std::int32_t element_count, std::int32_t stride);
+bool igpu_input_layout_release(std::uint64_t layout);

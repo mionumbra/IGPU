@@ -1,8 +1,8 @@
 # IGPU — 交接文档
 
 > 最后更新：2026-09-23
-> 状态：**阶段 A 完成并验证通过**（跨平台 API 抽象层 + 能力查询层已跑通）
-> 版本：`0.3.0`
+> 状态：**阶段 D 已开工**（Tier 1 补全：shader blob 保留 + 输入布局已跑通）
+> 版本：`0.3.0`（API 有新增，版本号尚未提升）
 > Git：已是仓库，`main` 分支，工作区干净
 
 ---
@@ -124,6 +124,7 @@ IGPU/
 │       ├── IGPU_native.h          ← 只有一行 include
 │       ├── igpu_device.h/.cpp     ← 设备状态、借用句柄管理
 │       ├── igpu_capabilities.h/.cpp ← **能力查询层（Tier 3）**
+│       ├── igpu_input_layout.h/.cpp ← **顶点输入布局（阶段 D）**
 │       └── igpu_error.h/.cpp      ← 错误信息 + UTF-16→UTF-8
 ├── third_party/               ← 第三方集成点（当前 discord SDK 残留，inert）
 └── project/                   ← GameMaker 工程
@@ -161,21 +162,49 @@ IGPU/
 - `igpu_shader_release([type_hint = \`uint64\`] shader) : bool`
 - `igpu_get_last_error() : string`
 
+### 顶点输入布局（阶段 D 新增）
+- `igpu_input_layout_create(shader : int64, usage : array, type : array, element_count : int32, stride : int32) : int64`
+- `igpu_input_layout_release([type_hint = \`uint64\`] layout) : bool`
+
+`usage` / `type` 直接传 **GameMaker 自己的常量**，不另发明词汇：
+
+| 用途 | 常量 | 实测数值 |
+|---|---|---|
+| usage | `vertex_usage_position` | 1 |
+| usage | `vertex_usage_colour` | 2 |
+| usage | `vertex_usage_normal` | 3 |
+| usage | `vertex_usage_texcoord` | 4 |
+| usage | `vertex_usage_blendweight` | 5 |
+| usage | `vertex_usage_blendindices` | 6 |
+| usage | `vertex_usage_psize` | 7 |
+| usage | `vertex_usage_tangent` | **8** |
+| usage | `vertex_usage_binormal` | **9** |
+| type | `vertex_type_float1/2/3/4` | 1–4 |
+| type | `vertex_type_colour` | 5 |
+| type | `vertex_type_ubyte4` | 6 |
+
+> ⚠️ **tangent=8 / binormal=9 不是按字母序推出来的**，是**实测**的（见 §7.13）。
+> 用 GML 辅助函数 `igpu_vertex_format()` 可免于手工维护两个并行数组。
+
 ### 枚举
 - `IgpuFeatureLevel { Unknown, Level_11_0, Level_11_1, Level_12_0, Level_12_1 }`
 - `IgpuShaderStage { Vertex=0, Pixel=1, Compute=2, Geometry=3, Hull=4, Domain=5, Mesh=6, Amplification=7 }`
-- `IgpuCapability { None=0, ShaderCompileRuntime=1, ShaderStage*=2-7, Texture3D=20…MultipleRenderTargets=25, Instancing=40…Wireframe=46, AdapterInfo=60…BackbufferSize=62 }`
+- `IgpuCapability { None=0, ShaderCompileRuntime=1, ShaderStage*=2-7, Texture3D=20…MultipleRenderTargets=25, Instancing=40…Wireframe=46, InputLayout=47, VertexBuffer=48, IndexBuffer=49, AdapterInfo=60…BackbufferSize=62 }`
 
-### `igpu_get_capabilities()` 返回的 19 个键
+### `igpu_get_capabilities()` 返回的 22 个键
 
 ```
 backend, tier, device_name, shader_dialect,
 shader_stages, runtime_compile, compute, geometry, tessellation, mesh_shader,
 texture_3d, texture_array, texture_cubemap, structured_buffer, uav, max_render_targets,
-instancing, indirect_draw, queries
+instancing, indirect_draw, queries,
+input_layout, vertex_buffer, index_buffer
 ```
 
 **所有键永远存在**，调用方可无条件读取。非 Windows 平台返回 `backend="none"`, `tier=3`, 其余全 false。
+
+> `vertex_buffer` / `index_buffer` 现在恒为 **false** —— 缓冲区 API 尚未实现。
+> 这是有意的：能力位只在对应 API 真正存在时才允许为 true（见 §9 顺序）。
 
 ---
 
@@ -238,7 +267,9 @@ node "...\gm-cli\dist\cli.js" manual read <函数名>
 
 ---
 
-## 6. 验证证据（阶段 A）
+## 6. 验证证据
+
+### 阶段 A（能力层）
 
 `gm-cli run --no-errors-only` 实测输出：
 
@@ -269,6 +300,37 @@ Game exited
 ```
 
 验证了：设备借用、能力结构体解码、阶段列表、**能力拒绝路径优于编译器报错**、统一/包装两条编译路径、dialect 校验。
+
+### 阶段 D 第一批（shader blob + 输入布局）
+
+同一命令，新增段落实测输出：
+
+```
+layout shader     : 3
+layout handle     : 1
+mismatch handle   : 0
+mismatch error    : igpu_input_layout_create: the vertex shader's input signature does not match the requested elements (hr=0x80070057)
+bad usage error   : igpu_input_layout_create: unknown vertex usage value 12345
+bad stride error  : igpu_input_layout_create: stride 4 is smaller than the element size 20
+checks failed     : 0
+PASS
+```
+
+**这批输出为什么能证明 blob 真的被保留了**：
+
+1. `layout handle : 1` —— 布局**创建成功**。`CreateInputLayout` 必须吃顶点着色器
+   的 signature，而 signature **只存在于编译产物 blob 里**。句柄若仍丢弃 blob，
+   这里必然返回 0。
+2. `hr=0x80070057`（`E_INVALIDARG`）出现在**故意错配**的用例上 —— 后端是**拿真实
+   signature 比对后**才拒绝的，不是无脑报错。这也反证 signature 有效。
+3. `stride 4 < 元素大小 20` —— 自动算出的紧凑 stride 是 20 字节
+   （`float3` 12 + `float2` 8），证明格式映射表正确。
+
+另外覆盖了：25 次 create/release 循环（blob + 设备对象**两个** COM 引用都不泄漏）、
+`igpu_shutdown()` 后再 `igpu_init_from_game()` 重新绑定、能力结构体在 shutdown 后
+降级为 `backend="none"`。
+
+当前检查项 **36 项全部通过**，退出码 0。
 
 ---
 
@@ -380,6 +442,29 @@ GML 的 `@"` 后**紧跟换行**会导致 `invalid token`。多行 HLSL 用字�
 - MSBuild / gm-cli 需要 piped `cmd.exe`，沙箱下报 `EPERM` / `spawn EPERM`，同样需提权。
 - PowerShell 里重定向 `2>&1` 会让某些 `.exe` 包装器报 `StandardErrorEncoding` 错误；用 `Out-File` 或直接不加重定向。
 
+### 7.13 GameMaker 顶点常量的数值**不能靠猜**（实测 8/9）
+
+`GmlSpec.xml` 里 `vertex_usage_*` / `vertex_type_*` **只有名字和描述，没有数值**
+（`Constant` 元素不带 `Value` 属性）。所以任何"按字母序推断"的做法都是错的：
+
+```
+vertex_usage_position     = 1
+vertex_usage_colour       = 2
+vertex_usage_normal       = 3
+vertex_usage_texcoord     = 4
+vertex_usage_blendweight  = 5
+vertex_usage_blendindices = 6
+vertex_usage_psize        = 7
+vertex_usage_tangent      = 8      ← 不是 5
+vertex_usage_binormal     = 9      ← 不是 6
+```
+
+`tangent`/`binormal` 排在 `psize` **之后**，按名字排序会得到完全错误的映射，
+而且**不会报错**——只会把 UV 当切线用。
+
+**正确做法**：写个临时 GML 探针把常量 `show_debug_message(string(...))` 出来。
+本项目已实测并记录在上表；`igpu_input_layout.cpp` 的 `VertexUsage` 枚举与之一一对应。
+
 ---
 
 ## 8. 已知问题 / 待清理
@@ -398,21 +483,43 @@ GML 的 `@"` 后**紧跟换行**会导致 `invalid token`。多行 HLSL 用字�
 
 ### 阶段 D — 补全 Tier 1（Windows）
 
-按依赖顺序：
+1. ✅ **shader 句柄保留 `ID3DBlob`** ← **已完成**
+   `DeviceState::shaders` 现为 `unordered_map<uint64, ShaderEntry>`，
+   `ShaderEntry { ID3D11DeviceChild* object; ID3DBlob* bytecode; }`。
+   blob 的所有权规则（三条路径都要对，改动时务必保持）：
+   - 编译失败 → 当场 `Release()`
+   - 编译成功但 `CreateShader` 失败 → 当场 `Release()`
+   - 编译成功且对象创建成功 → **所有权移交**给 `ShaderEntry`
 
-1. **⚠️ 先改 shader 句柄结构保留 `ID3DBlob`** ← **关键前置**
-   当前 `DeviceState::shaders` 只存 `ID3D11DeviceChild*`，**丢弃了编译产物 blob**。
-   而 `CreateInputLayout` **必须**用 blob 里的 signature。没有它，编译出的顶点着色器无法真正绘制。
-   → 建议 `shaders` 改为 `struct ShaderEntry { ID3D11DeviceChild* object; ID3D11Blob* bytecode; }`
-2. **常量缓冲区 / 顶点缓冲区**（`ID3D11Buffer`）+ 更新/映射
-3. **输入布局**（`ID3D11InputLayout`）+ 顶点格式定义
+   `DeviceState::reset()` 与 `igpu_shader_release()` 负责释放两者。
+2. ✅ **输入布局（`ID3D11InputLayout`）+ 顶点格式** ← **已完成**
+   见 `igpu_input_layout.h/.cpp`，GML 侧用辅助函数 `igpu_vertex_format()`。
+3. **顶点/索引缓冲区**（`ID3D11Buffer`）+ 更新/映射 ← **建议从这里继续**
+   - 能力位 `VertexBuffer` / `IndexBuffer` **已占位但恒为 false**（`igpu_capabilities.cpp`）。
+     实现之后记得打开，否则调用方会以为不支持。
+   - 缓冲区需要 `D3D11_USAGE` / `BIND_FLAGS`，**不要**把这两个暴露到 GML：
+     照 DESIGN.md §2.3 的思路，用中立的用途枚举（`dynamic` / `static`）在内部翻译。
+   - 常量缓冲区还必须与着色器的 `cbuffer` 布局**逐字节对齐**（16 字节规则），
+     建议先用 `D3DReflect` 读回来再做映射，别手算。
 4. **绘制调用**（`Draw` / `DrawIndexed` / 实例化）
+   - ⚠️ 这一步**真的会改 GM 的管线状态**。务必遵守设计约束第 5 条：
+     改完用 `gpu_get_state` / `gpu_set_state` 恢复，否则会和 GM 自己的批处理打架。
 5. **渲染状态对象**（depth-stencil / rasterizer / blend / sampler state）
 6. **MRT**（多 `ID3D11RenderTargetView`）
 7. **纹理 / SRV / RTV / UAV**（含 3D / array / cubemap）
 8. **查询 / 时间戳 / fence**
 
-> 新增 API 时**同步更新** `igpu_capabilities.cpp` 的 `supports()` 与 `build_capabilities()`（**注意 `kEntryCount` 要跟着改**）。
+> **新增 API 的固定流程**（漏一步就会卡住）：
+> 1. 改 `spec.gmidl` → **重跑 extgen**（不跑就没有绑定代码）
+> 2. 照 `code_gen/native/IGPUInternal_native.h` 里的**生成签名**写实现
+>    （参数类型是 extgen 定的，比如数组会变成 `const gm::wire::GMArrayView&`）
+> 3. 同步改 `igpu_capabilities.cpp` 的 **`supports()` 和 `build_capabilities()` 两处**
+>    （只改一处会出现"能力说支持但函数不存在"）
+> 4. 在 `obj_igpu_test` 加断言，跑 `gm-cli run --no-errors-only` 确认 PASS + 退出码 0
+>
+> ⚠️ **旧版文档的过时说法**：曾要求改能力键时同步 `kEntryCount`。
+> **当前代码里没有这个常量**（条目数由 `StructStream::writeTo()` 自动计算），
+> 不要去找它。当前键数是 **22**。
 
 ### 优先级 2
 - [ ] `igpu_get_capabilities()` 增加 `formats` 子结构（复用 GM 的 `surface_*` 词汇表）

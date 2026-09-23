@@ -327,6 +327,44 @@
           "resourceType": "GMExtensionFunction",
           "resourceVersion": "2.0",
           "returnType": 1
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__igpu_input_layout_create",
+          "argCount": 4,
+          "args": [
+            1,
+            2,
+            1,
+            2
+          ],
+          "documentation": "@param {Pointer} _arg_buffer\r\n@param {Real} _arg_buffer_length\r\n@param {Pointer} _ret_buffer\r\n@param {Real} _ret_buffer_length\r\n@returns {Real}",
+          "externalName": "__EXT_NATIVE__igpu_input_layout_create",
+          "help": "",
+          "hidden": true,
+          "kind": 4,
+          "name": "__igpu_input_layout_create",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
+          "%Name": "__igpu_input_layout_release",
+          "argCount": 2,
+          "args": [
+            1,
+            2
+          ],
+          "documentation": "@param {Pointer} _arg_buffer\r\n@param {Real} _arg_buffer_length\r\n@returns {Real}",
+          "externalName": "__EXT_NATIVE__igpu_input_layout_release",
+          "help": "",
+          "hidden": true,
+          "kind": 4,
+          "name": "__igpu_input_layout_release",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
         }
       ],
       "init": "",

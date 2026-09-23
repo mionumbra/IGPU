@@ -150,6 +150,122 @@ if (_pixel > 0)       { _igpu_check(igpu_shader_release(_pixel), "release wrappe
 _igpu_check(!igpu_shader_release(999999), "releasing a bogus handle fails");
 
 // ---------------------------------------------------------------------------
+// Input layout
+//
+// Creating one is only possible because the shader handle now retains its
+// compiled bytecode: the vertex signature lives inside that blob, so a shader
+// entry that discarded it could never produce a layout.
+// ---------------------------------------------------------------------------
+
+show_debug_message("----------------------------------------");
+
+var _layout_shader = igpu_shader_compile(_good, "main", IgpuShaderStage.Vertex, "");
+show_debug_message("layout shader     : " + string(_layout_shader));
+_igpu_check(_layout_shader > 0, "vertex shader for layout compiles");
+
+// The shader above declares POSITION (float3) and TEXCOORD0 (float2), so a
+// matching layout must be accepted.
+var _layout = igpu_vertex_format(_layout_shader, [
+    [vertex_usage_position, vertex_type_float3],
+    [vertex_usage_texcoord, vertex_type_float2]
+]);
+show_debug_message("layout handle     : " + string(_layout));
+if (_layout == 0)
+{
+    show_debug_message("layout error      : " + string(igpu_get_last_error()));
+}
+_igpu_check(_layout > 0, "matching layout is created");
+
+// A layout whose elements do not match the shader signature must be refused by
+// the backend rather than producing a broken pipeline later.
+var _mismatch = igpu_vertex_format(_layout_shader, [
+    [vertex_usage_normal, vertex_type_float3]
+]);
+show_debug_message("mismatch handle   : " + string(_mismatch));
+show_debug_message("mismatch error    : " + string(igpu_get_last_error()));
+_igpu_check(_mismatch == 0, "layout not matching the signature is rejected");
+_igpu_check(igpu_get_last_error() != "", "rejected layout sets an error");
+
+// An unknown shader handle must fail cleanly.
+var _no_shader = igpu_vertex_format(999999, [[vertex_usage_position, vertex_type_float3]]);
+_igpu_check(_no_shader == 0, "layout with a bogus shader is rejected");
+
+// An unknown usage constant must be reported, not silently mapped.
+var _bad_usage = igpu_vertex_format(_layout_shader, [[12345, vertex_type_float3]]);
+show_debug_message("bad usage error   : " + string(igpu_get_last_error()));
+_igpu_check(_bad_usage == 0, "unknown usage is rejected");
+
+// A stride too small to hold the elements is a caller error.
+var _bad_stride = igpu_vertex_format(_layout_shader, [
+    [vertex_usage_position, vertex_type_float3],
+    [vertex_usage_texcoord, vertex_type_float2]
+], 4);
+show_debug_message("bad stride error  : " + string(igpu_get_last_error()));
+_igpu_check(_bad_stride == 0, "undersized stride is rejected");
+
+// An explicit, large-enough stride is accepted.
+var _strided = igpu_vertex_format(_layout_shader, [
+    [vertex_usage_position, vertex_type_float3],
+    [vertex_usage_texcoord, vertex_type_float2]
+], 32);
+_igpu_check(_strided > 0, "explicit stride is accepted");
+
+_igpu_check(igpu_input_layout_release(_layout), "release layout handle");
+_igpu_check(igpu_input_layout_release(_strided), "release strided layout handle");
+_igpu_check(!igpu_input_layout_release(999999), "releasing a bogus layout fails");
+
+// Releasing the shader that a layout was built from must stay safe.
+_igpu_check(igpu_shader_release(_layout_shader), "release layout shader");
+
+// ---------------------------------------------------------------------------
+// Churn
+//
+// The shader entry now owns two COM objects (the device object and the
+// bytecode blob) instead of one, so create/release is exercised repeatedly.
+// A double-release or a missed release shows up here as a crash or an
+// allocation failure rather than silently at shutdown.
+// ---------------------------------------------------------------------------
+
+var _churn_ok = true;
+for (var _i = 0; _i < 25; _i++)
+{
+    var _cs = igpu_shader_compile(_good, "main", IgpuShaderStage.Vertex, "");
+    if (_cs == 0) { _churn_ok = false; break; }
+
+    var _cl = igpu_vertex_format(_cs, [
+        [vertex_usage_position, vertex_type_float3],
+        [vertex_usage_texcoord, vertex_type_float2]
+    ]);
+    if (_cl == 0) { _churn_ok = false; break; }
+
+    if (!igpu_input_layout_release(_cl)) { _churn_ok = false; break; }
+    if (!igpu_shader_release(_cs))       { _churn_ok = false; break; }
+}
+
+_igpu_check(_churn_ok, "create/release churn completes cleanly");
+
+// A layout built from a shader that is then released must not be used by IGPU
+// again, but releasing the shader first must itself stay safe.
+var _orphan_shader = igpu_shader_compile(_good, "main", IgpuShaderStage.Vertex, "");
+var _orphan_layout = igpu_vertex_format(_orphan_shader, [
+    [vertex_usage_position, vertex_type_float3],
+    [vertex_usage_texcoord, vertex_type_float2]
+]);
+_igpu_check(_orphan_shader > 0 && _orphan_layout > 0, "orphan pair created");
+_igpu_check(igpu_shader_release(_orphan_shader), "release shader before its layout");
+_igpu_check(igpu_input_layout_release(_orphan_layout), "release layout after its shader");
+
+// Shutdown must release everything still live without touching GM's device.
+igpu_shutdown();
+_igpu_check(!igpu_is_available(), "shutdown clears availability");
+_igpu_check(igpu_get_capabilities().backend == "none", "capabilities degrade after shutdown");
+
+// Re-initialising after shutdown must work: the borrowed device is still valid.
+_igpu_check(igpu_init_from_game(), "re-init after shutdown");
+_igpu_check(igpu_is_available(), "available again after re-init");
+_igpu_check(igpu_get_capabilities().backend == "d3d11", "backend restored after re-init");
+
+// ---------------------------------------------------------------------------
 
 show_debug_message("----------------------------------------");
 show_debug_message($"checks failed    : {_igpu_failures}");

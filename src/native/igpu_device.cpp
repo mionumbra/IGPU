@@ -10,15 +10,29 @@ namespace igpu
 {
     void DeviceState::reset()
     {
-        for (auto& [id, shader] : shaders)
+        for (auto& [id, entry] : shaders)
         {
-            if (shader != nullptr)
+            if (entry.object != nullptr)
             {
-                shader->Release();
+                entry.object->Release();
+            }
+            if (entry.bytecode != nullptr)
+            {
+                entry.bytecode->Release();
             }
         }
         shaders.clear();
         next_shader_id = 1;
+
+        for (auto& [id, layout] : input_layouts)
+        {
+            if (layout != nullptr)
+            {
+                layout->Release();
+            }
+        }
+        input_layouts.clear();
+        next_input_layout_id = 1;
 
         // device, context and swapchain are borrowed from GameMaker: never release.
         device = nullptr;
@@ -37,6 +51,13 @@ namespace igpu
     {
         static DeviceState instance;
         return instance;
+    }
+
+    DeviceState::ShaderEntry* find_shader(std::uint64_t handle)
+    {
+        auto& shaders = state().shaders;
+        const auto it = shaders.find(handle);
+        return it == shaders.end() ? nullptr : &it->second;
     }
 
     bool bind_device(ID3D11Device* device, ID3D11DeviceContext* context, IDXGISwapChain* swapchain)
