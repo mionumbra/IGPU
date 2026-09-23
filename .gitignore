@@ -31,4 +31,4 @@ igpu_native_trace.txt
 
 # GameMaker local state
 project/.gmcache/
-project/*.resource_order
+project/*.resource_orderCOMMITMSG.tmp
