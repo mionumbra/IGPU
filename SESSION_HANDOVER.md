@@ -21,6 +21,9 @@
 | `gm-cli run --no-errors-only` | ✅ `checks failed: 0`，**152** 项断言，exit 0 |
 
 **HEAD `add3cf2`，分支 `main`，工作区干净。**
+（`add3cf2` 是写完本文件时的提交；**再提交一次这个数字就会过期**。
+以 `git rev-parse --short HEAD` 为准 —— 自检脚本第 8 组会核对它。
+注意本文件自身的提交 `25fc643` 及之后都在 `add3cf2` 之上。）
 ⚠️ **没有配置 git remote —— 所有提交只存在本地。**
 
 ---
