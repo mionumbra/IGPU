@@ -320,6 +320,11 @@ namespace igpu
             set_last_error("igpu_draw_to_render_targets: unknown buffer, layout, or texture");
             return false;
         }
+        if (buffer->second.bind != 1)
+        {
+            set_last_error("igpu_draw_to_render_targets: the vertex buffer was not created with IgpuBufferBind.Vertex");
+            return false;
+        }
         if (first_vertex < 0 || vertex_count <= 0 ||
             (first_vertex + vertex_count) * buffer->second.stride > buffer->second.size)
         {

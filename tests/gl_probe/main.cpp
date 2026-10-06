@@ -295,6 +295,16 @@ int main()
     {
         return fail("red shader rebound failed");
     }
+    if (igpu_draw_to_render_targets(static_cast<std::uint64_t>(indexed_index_buffer), static_cast<std::uint64_t>(layout), 4, 0, 6,
+                                    as_array(indexed_target), as_array(zero_bytes), as_array(zero_bytes), 0, 0, 0, 0))
+    {
+        return fail("index buffer was accepted as a vertex buffer");
+    }
+    if (igpu_texture_read(static_cast<std::uint64_t>(indexed_texture), 1, 4, 0, 0) != 16711680 ||
+        igpu_texture_read(static_cast<std::uint64_t>(indexed_texture), 6, 4, 0, 0) != 16711680)
+    {
+        return fail("drawing an index buffer as vertices changed a pixel");
+    }
 
     std::int32_t saved_fbo = 0;
     std::int32_t held_viewport[4] = {};
