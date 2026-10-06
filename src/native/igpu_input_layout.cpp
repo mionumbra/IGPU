@@ -13,6 +13,8 @@
 
 namespace igpu
 {
+namespace d3d11_impl
+{
     namespace
     {
         // Maps a GameMaker vertex usage to the HLSL semantic name that shader
@@ -96,55 +98,67 @@ namespace igpu
         bool read_int(const gm::wire::GMArrayView& array, std::size_t index, std::int32_t& out)
         {
             const auto value = array[index];
-            if (!value.is<double>() && !value.is<std::int32_t>())
+            if (value.is<std::int32_t>())
             {
-                return false;
+                out = value.as<std::int32_t>();
+                return true;
             }
-            out = value.is<std::int32_t>() ? value.as<std::int32_t>()
-                                           : static_cast<std::int32_t>(value.as<double>());
-            return true;
+            if (value.is<double>())
+            {
+                out = static_cast<std::int32_t>(value.as<double>());
+                return true;
+            }
+            if (value.is<std::uint64_t>())
+            {
+                out = static_cast<std::int32_t>(value.as<std::uint64_t>());
+                return true;
+            }
+            return false;
         }
     }
 
-    std::int64_t input_layout_create(
+    std::int64_t input_layout_create_impl(
         std::int64_t shader,
         const gm::wire::GMArrayView& usage,
         const gm::wire::GMArrayView& type,
+        const std::int32_t* steps,
         std::int32_t element_count,
-        std::int32_t stride)
+        std::int32_t vertex_stride,
+        std::int32_t instance_stride,
+        const char* api)
     {
         clear_last_error();
 
-        auto& s = state();
-        if (!s.initialised || s.device == nullptr)
+        if (!require_device(api))
         {
-            set_last_error("igpu_input_layout_create: call igpu_init() first");
             return 0;
         }
+
+        auto& s = state();
 
         // The layout is validated against a vertex shader's input signature, so
         // a missing shader is fatal rather than something to work around.
         auto* shader_entry = find_shader(static_cast<std::uint64_t>(shader));
         if (shader_entry == nullptr)
         {
-            set_last_error("igpu_input_layout_create: unknown shader handle");
+            set_last_error(std::string(api) + ": unknown shader handle");
             return 0;
         }
         if (shader_entry->bytecode == nullptr)
         {
-            set_last_error("igpu_input_layout_create: shader has no bytecode to read a signature from");
+            set_last_error(std::string(api) + ": shader has no bytecode to read a signature from");
             return 0;
         }
 
         if (element_count <= 0)
         {
-            set_last_error("igpu_input_layout_create: element_count must be positive");
+            set_last_error(std::string(api) + ": element_count must be positive");
             return 0;
         }
         if (static_cast<std::size_t>(element_count) > usage.size() ||
             static_cast<std::size_t>(element_count) > type.size())
         {
-            set_last_error("igpu_input_layout_create: element_count exceeds the usage/type arrays");
+            set_last_error(std::string(api) + ": element_count exceeds the usage/type arrays");
             return 0;
         }
 
@@ -158,7 +172,8 @@ namespace igpu
         std::vector<std::string> semantic_storage;
         semantic_storage.reserve(static_cast<std::size_t>(element_count));
 
-        std::uint32_t offset = 0;
+        std::uint32_t vertex_offset = 0;
+        std::uint32_t instance_offset = 0;
 
         for (std::int32_t i = 0; i < element_count; ++i)
         {
@@ -168,9 +183,20 @@ namespace igpu
                 !read_int(type, static_cast<std::size_t>(i), raw_type))
             {
                 set_last_error(
-                    "igpu_input_layout_create: usage/type entries must be numbers "
+                    std::string(api) + ": usage/type entries must be numbers "
                     "(use the vertex_usage_* / vertex_type_* constants)");
                 return 0;
+            }
+            std::int32_t step = 0;
+            if (steps != nullptr)
+            {
+                step = steps[i];
+                if (step != 0 && step != 1)
+                {
+                    set_last_error(
+                        std::string(api) + ": step must be IgpuVertexStep.Vertex or IgpuVertexStep.Instance");
+                    return 0;
+                }
             }
 
             VertexUsage parsed_usage{};
@@ -178,14 +204,14 @@ namespace igpu
             if (!usage_from_int(raw_usage, parsed_usage))
             {
                 set_last_error(
-                    "igpu_input_layout_create: unknown vertex usage value " +
+                    std::string(api) + ": unknown vertex usage value " +
                     std::to_string(raw_usage));
                 return 0;
             }
             if (!type_from_int(raw_type, parsed_type))
             {
                 set_last_error(
-                    "igpu_input_layout_create: unknown vertex type value " +
+                    std::string(api) + ": unknown vertex type value " +
                     std::to_string(raw_type));
                 return 0;
             }
@@ -198,16 +224,19 @@ namespace igpu
             // reallocation cannot invalidate what we hand to CreateInputLayout.
             semantic_storage.emplace_back(semantic_name(parsed_usage));
 
+            const bool per_instance = step == 1;
+            std::uint32_t& cursor = per_instance ? instance_offset : vertex_offset;
+
             D3D11_INPUT_ELEMENT_DESC desc{};
             desc.SemanticName = semantic_storage.back().c_str();
             desc.SemanticIndex = index;
             desc.Format = info.format;
-            desc.InputSlot = 0;
-            desc.AlignedByteOffset = offset;
-            desc.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
-            desc.InstanceDataStepRate = 0;
+            desc.InputSlot = per_instance ? 1u : 0u;
+            desc.AlignedByteOffset = cursor;
+            desc.InputSlotClass = per_instance ? D3D11_INPUT_PER_INSTANCE_DATA : D3D11_INPUT_PER_VERTEX_DATA;
+            desc.InstanceDataStepRate = per_instance ? 1u : 0u;
 
-            offset += info.size;
+            cursor += info.size;
             elements.push_back(desc);
         }
 
@@ -219,11 +248,19 @@ namespace igpu
         //
         // A stride of 0 (or any negative value) means "tightly packed", which
         // is what the GML helper's -1 default sends, so both must be accepted.
-        if (stride > 0 && static_cast<std::uint32_t>(stride) < offset)
+        if (vertex_stride > 0 && static_cast<std::uint32_t>(vertex_stride) < vertex_offset)
         {
             set_last_error(
-                "igpu_input_layout_create: stride " + std::to_string(stride) +
-                " is smaller than the element size " + std::to_string(offset));
+                std::string(api) + ": stride " + std::to_string(vertex_stride) +
+                " is smaller than the element size " + std::to_string(vertex_offset));
+            return 0;
+        }
+        if (instance_offset > 0 && instance_stride > 0 &&
+            static_cast<std::uint32_t>(instance_stride) < instance_offset)
+        {
+            set_last_error(
+                std::string(api) + ": instance stride " + std::to_string(instance_stride) +
+                " is smaller than the element size " + std::to_string(instance_offset));
             return 0;
         }
 
@@ -240,8 +277,8 @@ namespace igpu
             char hex[16] = {};
             std::snprintf(hex, sizeof(hex), "%08lX", static_cast<unsigned long>(hr));
             set_last_error(
-                std::string("igpu_input_layout_create: the vertex shader's input "
-                            "signature does not match the requested elements (hr=0x") +
+                std::string(api) +
+                ": the vertex shader's input signature does not match the requested elements (hr=0x" +
                 hex + ")");
             if (layout != nullptr)
             {
@@ -253,6 +290,47 @@ namespace igpu
         const std::uint64_t id = s.next_input_layout_id++;
         s.input_layouts.emplace(id, layout);
         return static_cast<std::int64_t>(id);
+    }
+
+    std::int64_t input_layout_create(
+        std::int64_t shader,
+        const gm::wire::GMArrayView& usage,
+        const gm::wire::GMArrayView& type,
+        std::int32_t element_count,
+        std::int32_t stride)
+    {
+        return input_layout_create_impl(
+            shader, usage, type, nullptr, element_count, stride, 0, "igpu_input_layout_create");
+    }
+
+    std::int64_t input_layout_create_step(
+        std::int64_t shader,
+        const gm::wire::GMArrayView& usage,
+        const gm::wire::GMArrayView& type,
+        const gm::wire::GMArrayView& step,
+        std::int32_t element_count,
+        std::int32_t vertex_stride,
+        std::int32_t instance_stride)
+    {
+        if (element_count <= 0 || static_cast<std::size_t>(element_count) > step.size())
+        {
+            clear_last_error();
+            set_last_error("igpu_input_layout_create: element_count exceeds the step array");
+            return 0;
+        }
+        std::vector<std::int32_t> steps(static_cast<std::size_t>(element_count));
+        for (std::int32_t i = 0; i < element_count; ++i)
+        {
+            if (!read_int(step, static_cast<std::size_t>(i), steps[static_cast<std::size_t>(i)]))
+            {
+                clear_last_error();
+                set_last_error("igpu_input_layout_create: step entries must be numbers");
+                return 0;
+            }
+        }
+        return input_layout_create_impl(
+            shader, usage, type, steps.data(), element_count, vertex_stride, instance_stride,
+            "igpu_input_layout_create");
     }
 
     bool input_layout_release(std::uint64_t layout)
@@ -272,4 +350,5 @@ namespace igpu
         s.input_layouts.erase(it);
         return true;
     }
+}
 }

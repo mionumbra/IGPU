@@ -57,6 +57,13 @@ function igpu_version() : string;
 [global, bind = typed_gml]
 function igpu_is_available() : bool;
 
+// True after the borrowed graphics device has been removed or reset.
+// IGPU drops that device when it notices: later calls fail until igpu_init()
+// is given the new pointers, and handles created on the old device are gone.
+// A clean igpu_shutdown() is not loss. False when no device was ever bound.
+[global, bind = typed_gml]
+function igpu_device_lost() : bool;
+
 // ---------------------------------------------------------------------------
 // Device info
 // ---------------------------------------------------------------------------
@@ -101,6 +108,16 @@ function igpu_supports(capability : int32) : bool;
 [global, bind = typed_gml]
 function igpu_get_shader_dialect() : string;
 
+// Records the graphics strings GameMaker returns from os_get_info() on
+// platforms that do not hand over a device (gl_vendor_string / GL_VENDOR,
+// gl_version_string / GL_VERSION, the renderer string, the shading-language
+// string, and GL_MAX_TEXTURE_SIZE). An empty version clears the note.
+//
+// This does not enable drawing or shader compilation. While a device is
+// bound, igpu_get_capabilities() keeps reporting that device.
+[global, bind = typed_gml]
+function igpu_set_graphics_info(vendor : string, version : string, renderer : string, shading_language : string, max_texture_size : int32) : bool;
+
 // ---------------------------------------------------------------------------
 // Runtime shader compilation
 // ---------------------------------------------------------------------------
@@ -112,17 +129,6 @@ function igpu_get_shader_dialect() : string;
 // Returns a shader handle, or 0 on failure (see igpu_get_last_error()).
 [global, bind = typed_gml]
 function igpu_shader_compile(source : string, entry : string, stage : int32, [type_hint = `string`] dialect) : int64;
-
-// Convenience wrappers over igpu_shader_compile(). Kept because they read
-// better at call sites and cost nothing; they carry no backend assumptions.
-[global, bind = typed_gml]
-function igpu_shader_compile_vertex(source : string, entry : string, [type_hint = `string`] dialect) : int64;
-
-[global, bind = typed_gml]
-function igpu_shader_compile_pixel(source : string, entry : string, [type_hint = `string`] dialect) : int64;
-
-[global, bind = typed_gml]
-function igpu_shader_compile_compute(source : string, entry : string, [type_hint = `string`] dialect) : int64;
 
 [global, bind = typed_gml]
 function igpu_shader_release([type_hint = `uint64`] shader) : bool;
@@ -194,15 +200,21 @@ function igpu_get_last_error() : string;
 //
 // `element_count` is how many entries to read from the arrays.
 //
-// `stride` is the size in bytes of one whole vertex. It is validated (a stride
-// smaller than the declared elements is rejected) but not stored on the layout,
-// because the vertex stride is supplied when the buffer is bound at draw time.
-// Pass 0, or any negative value (which is what the GML helper's default of -1
-// sends), to mean "tightly packed" - the elements are then assumed contiguous.
+// `step[i]` is IgpuVertexStep. Vertex advances once per vertex. Instance
+// advances once per copy. `vertex_stride` and `instance_stride` of 0 or a
+// negative value mean tightly packed. An element list with no Instance steps
+// passes 0 for instance_stride. `step` must have `element_count` entries.
 //
 // Returns a layout handle, or 0 on failure (see igpu_get_last_error()).
 [global, bind = typed_gml]
-function igpu_input_layout_create(shader : int64, usage : array, type : array, [type_hint = `int32`] element_count, [type_hint = `int32`] stride) : int64;
+enum IgpuVertexStep
+{
+    Vertex = 0,
+    Instance = 1
+}
+
+[global, bind = typed_gml]
+function igpu_input_layout_create(shader : int64, usage : array, type : array, step : array, [type_hint = `int32`] element_count, [type_hint = `int32`] vertex_stride, [type_hint = `int32`] instance_stride) : int64;
 
 [global, bind = typed_gml]
 function igpu_input_layout_release([type_hint = `uint64`] layout) : bool;
@@ -228,11 +240,11 @@ function igpu_input_layout_release([type_hint = `uint64`] layout) : bool;
 //
 // Returns a buffer handle, or 0 on failure (see igpu_get_last_error()).
 //
-// `stride` is the size in bytes of ONE VERTEX and is only meaningful when
-// `bind` includes IgpuBufferBind.Vertex; the backend needs it to work out how
-// many vertices the buffer holds, which a draw call must know. Pass 0 (the
-// default) for non-vertex buffers. It is not the same thing as the stride
-// accepted by igpu_input_layout_create, which only validates its own elements.
+// `stride` is the size in bytes of one record. A vertex buffer needs it so a
+// draw can count vertices. A storage buffer needs it as the structure size
+// (a multiple of 4, from 4 to 2048) and `size` must be a whole number of
+// records. Pass 0 for every other bind. It is not the stride checked by
+// igpu_input_layout_create.
 [global, bind = typed_gml]
 function igpu_buffer_create(size : int64, usage : int32, bind : int32, [type_hint = `int32`] stride) : int64;
 
@@ -272,20 +284,132 @@ function igpu_buffer_size([type_hint = `uint64`] buffer) : int64;
 [global, bind = typed_gml]
 function igpu_buffer_release([type_hint = `uint64`] buffer) : bool;
 
+// Binds a storage buffer for shader reads at `slot` on `stage`. Pass buffer 0
+// to put back whatever was bound there before the first bind. GameMaker may
+// not replace a vertex-shader resource slot on its next draw, so unbind
+// before returning to it.
+[global, bind = typed_gml]
+function igpu_storage_bind([type_hint = `uint64`] buffer, stage : int32, slot : int32) : bool;
+
+// ---------------------------------------------------------------------------
+// Uniform blocks
+// ---------------------------------------------------------------------------
+//
+// A compiled shader's constant blocks (HLSL cbuffer, GLSL uniform block, a
+// Metal/Vulkan uniform buffer) are read back from the compiled shader. Callers
+// name a block and a member; they do not supply byte offsets or packing rules.
+//
+// The numbers are the backend's own packing. A float3 followed by a float2
+// does not sit on a tightly packed byte stream, and the gap is not something
+// the caller calculates.
+//
+// `igpu_uniform_write` stores one member into a uniform buffer. The buffer
+// must have been created with IgpuBufferBind.Uniform and be at least as large
+// as the block (`IgpuUniformBlock.size`). Values are a flat array of numbers:
+//
+//     scalar     one number
+//     vector     one number per component (a float4 is 4)
+//     matrix     column-major, one number per element (a float4x4 is 16)
+//     array      that many numbers, repeated per element
+//
+// Bool members are 0 or 1. Integer members are written as 32-bit values.
+// Writing a whole struct fails; write the fields the reflection lists.
+//
+// `igpu_uniform_bind` attaches the buffer to a stage slot for later draws.
+// `IgpuUniformBlock.slot` is the slot the shader asked for. Pass buffer 0 to
+// put back whatever was bound there before the first bind on that slot.
+// GameMaker does not rebind its constant buffers on every draw, so leaving
+// one of its slots replaced changes its next draw. Bind, draw, then pass 0.
+
+// Scalar kind of a uniform member. The shape is rows/columns/elements, not a
+// separate enum: a float is 1x1, a float4 is 1x4, a float4x4 is 4x4.
+[global, bind = typed_gml]
+enum IgpuUniformType
+{
+    Float = 0,
+    Int = 1,
+    Uint = 2,
+    Bool = 3,
+    Struct = 4,
+    Unknown = 5
+}
+
+// One member of a uniform block. `type` is IgpuUniformType. A float is 1x1,
+// a float4 is 1x4, a float4x4 is 4x4. `elements` is 0 when the member is not
+// an array. Fields are concrete types so the generator emits a readable struct.
+[global]
+class `[[IgpuUniformMember]]` prototype Object
+{
+    [field]
+    property name : string { get; set; }
+
+    [field]
+    property offset : int32 { get; set; }
+
+    [field]
+    property size : int32 { get; set; }
+
+    [field]
+    property type : int32 { get; set; }
+
+    [field]
+    property rows : int32 { get; set; }
+
+    [field]
+    property columns : int32 { get; set; }
+
+    [field]
+    property elements : int32 { get; set; }
+}
+
+// One constant block. `slot` is -1 when the shader did not request one.
+[global]
+class `[[IgpuUniformBlock]]` prototype Object
+{
+    [field]
+    property name : string { get; set; }
+
+    [field]
+    property size : int32 { get; set; }
+
+    [field]
+    property slot : int32 { get; set; }
+
+    [field, type_hint = `IgpuUniformMember[]`]
+    property members : gmval { get; set; }
+}
+
+// Empty array when the shader has no blocks and the last error is empty.
+// Empty array and a non-empty error when the handle is unknown.
+[global, bind = typed_gml, type_hint = `IgpuUniformBlock[]`]
+function igpu_shader_reflect(shader : int64) : gmval;
+
+[global, bind = typed_gml]
+function igpu_uniform_write([type_hint = `uint64`] buffer, shader : int64, block : string, member : string, values : array) : bool;
+
+// buffer 0 restores the slot. The binding stays until then, including across
+// igpu_draw calls.
+[global, bind = typed_gml]
+function igpu_uniform_bind([type_hint = `uint64`] buffer, stage : int32, slot : int32) : bool;
+
 // ---------------------------------------------------------------------------
 // Drawing
 // ---------------------------------------------------------------------------
 
 // Binds a vertex buffer and its input layout, then issues a draw call.
 //
-// This is deliberately ONE function rather than the bind-then-draw pair the
-// backend uses. IGPU has to save and restore the input-assembler state around
-// the draw, because GameMaker exposes NO way for extensions to read or write
-// it - gpu_get_state()/gpu_set_state() cover blend, depth, stencil, cull,
-// scissor, alphatest and samplers, but nothing about vertex buffers, input
-// layouts or primitive topology. A bind/draw pair would therefore leak IGPU's
-// state into GameMaker's own drawing, and no GML-level call could undo it.
-// Doing both in one call keeps that contract enforceable.
+// This is deliberately ONE function rather than a bind-then-draw pair.
+// GameMaker's GML state functions do not read or write input-assembler state
+// (the save table is blend, depth, stencil, cull, fog, colour write, alpha
+// test and samplers), so a caller cannot put that state back. IGPU reads it
+// from the device and restores it before returning.
+//
+// GameMaker's own draws already rebind the vertex buffer, input layout and
+// topology, and do not cache them. The restore is not what keeps the next
+// sprite off IGPU's buffer. It puts back the index buffer, which GameMaker
+// never rebinds, and it leaves the device consistent for anything that reads
+// the assembler before GameMaker's next draw. If GameMaker later caches
+// assembler state, the restore becomes load-bearing.
 //
 // `primitive` is a GameMaker pr_* constant (pr_pointlist / pr_linelist /
 // pr_linestrip / pr_trianglelist / pr_trianglestrip). pr_trianglefan is
@@ -297,16 +421,24 @@ function igpu_buffer_release([type_hint = `uint64`] buffer) : bool;
 //
 // The caller is responsible for having set a shader and any render target.
 // Returns true if the draw was issued.
+// A state handle of 0 leaves that stage alone. `instance_buffer` 0 and
+// `instance_count` 1 is a single draw. `instance_count` below 1 fails.
 [global, bind = typed_gml]
 function igpu_draw(
     [type_hint = `uint64`] vertex_buffer,
+    [type_hint = `uint64`] instance_buffer,
     [type_hint = `uint64`] layout,
     primitive : int32,
     [type_hint = `int64`] first_vertex,
-    [type_hint = `int64`] vertex_count) : bool;
+    [type_hint = `int64`] vertex_count,
+    [type_hint = `int64`] instance_count,
+    [type_hint = `int64`] blend_state,
+    [type_hint = `int64`] depth_state,
+    [type_hint = `int64`] raster_state,
+    [type_hint = `int64`] sampler_state) : bool;
 
 // Draws using an index buffer as well. `index_count` is the number of indices,
-// not the number of triangles.
+// not the number of triangles. There is no instance parameter on this call.
 [global, bind = typed_gml]
 function igpu_draw_indexed(
     [type_hint = `uint64`] vertex_buffer,
@@ -314,34 +446,326 @@ function igpu_draw_indexed(
     [type_hint = `uint64`] index_buffer,
     primitive : int32,
     [type_hint = `int64`] first_index,
-    [type_hint = `int64`] index_count) : bool;
+    [type_hint = `int64`] index_count,
+    [type_hint = `int64`] blend_state,
+    [type_hint = `int64`] depth_state,
+    [type_hint = `int64`] raster_state,
+    [type_hint = `int64`] sampler_state) : bool;
 
-// Reports how many times IGPU has issued a draw, and how many of those left
-// the input-assembler state restored successfully. Both are diagnostics for
-// confirming the save/restore contract holds in a real game loop.
+// Draws from an argument buffer instead of CPU counts. `args` was created
+// with IgpuBufferBind.Indirect. `args_offset` is the byte where a 16-byte
+// record starts: vertex count, instance count, first vertex, first instance.
+// `instance_buffer` is 0 when the shader only needs the instance number.
 [global, bind = typed_gml]
-function igpu_get_draw_count() : int32;
+function igpu_draw_indirect(
+    [type_hint = `uint64`] vertex_buffer,
+    [type_hint = `uint64`] instance_buffer,
+    [type_hint = `uint64`] layout,
+    primitive : int32,
+    [type_hint = `uint64`] args,
+    [type_hint = `int64`] args_offset,
+    [type_hint = `int64`] blend_state,
+    [type_hint = `int64`] depth_state,
+    [type_hint = `int64`] raster_state,
+    [type_hint = `int64`] sampler_state) : bool;
 
+// Draws one or more patches. `control_points` is how many vertices make one
+// patch, from 1 to 32. `vertex_count` must be a whole number of patches, or
+// -1 to draw through the end of the buffer when that length is whole.
+// A hull shader and a domain shader must already be bound. The previous
+// assembler state is put back before return. On a backend that stores the
+// patch size as device state rather than in the draw itself, that size is
+// restored too.
 [global, bind = typed_gml]
-function igpu_get_draw_restore_failures() : int32;
+function igpu_draw_patch(
+    [type_hint = `uint64`] vertex_buffer,
+    [type_hint = `uint64`] layout,
+    control_points : int32,
+    [type_hint = `int64`] first_vertex,
+    [type_hint = `int64`] vertex_count,
+    [type_hint = `int64`] blend_state,
+    [type_hint = `int64`] depth_state,
+    [type_hint = `int64`] raster_state,
+    [type_hint = `int64`] sampler_state) : bool;
 
-// Diagnostic: reports whether a given handle is CURRENTLY bound to the input
-// assembler, read back from the device rather than from IGPU's own bookkeeping.
+// Indexed form. The record is 20 bytes: index count, instance count, first
+// index, base vertex, first instance.
+[global, bind = typed_gml]
+function igpu_draw_indexed_indirect(
+    [type_hint = `uint64`] vertex_buffer,
+    [type_hint = `uint64`] instance_buffer,
+    [type_hint = `uint64`] layout,
+    [type_hint = `uint64`] index_buffer,
+    primitive : int32,
+    [type_hint = `uint64`] args,
+    [type_hint = `int64`] args_offset,
+    [type_hint = `int64`] blend_state,
+    [type_hint = `int64`] depth_state,
+    [type_hint = `int64`] raster_state,
+    [type_hint = `int64`] sampler_state) : bool;
+
+// ---------------------------------------------------------------------------
+// Pipeline state objects
+// ---------------------------------------------------------------------------
 //
-// This exists because "the draw function returned true" does not prove the
-// state was really restored - it only proves the call was made. Querying the
-// device shows what is actually bound right now. Returns true if `buffer` is
-// the vertex buffer in slot 0, false otherwise (including for a released or
-// unknown handle).
+// Immutable objects applied for a single igpu_draw_with_state() /
+// igpu_draw_indexed_with_state() call. Pass 0 for a stage to leave the
+// device's current setting alone. The previous blend, depth, rasteriser and
+// sampler settings are put back before the call returns.
 //
-// Intended for tests and for diagnosing interference with GameMaker's own
-// drawing; not needed in normal use, because igpu_draw restores state itself.
-[global, bind = typed_gml]
-function igpu_is_vertex_buffer_bound([type_hint = `uint64`] buffer) : bool;
+// That restore is required. GameMaker caches these and will not re-apply them
+// on its next draw unless its own shadow copy is dirty. Unlike the input
+// assembler, leaving one of these bound would change GameMaker's drawing.
+//
+// Factors, comparisons, cull modes, stencil ops and filters are GameMaker's
+// own constants: bm_*, bm_eq_*, cmpfunc_*, cull_*, stencilop_*, tf_*.
+// `repeat` matches gpu_set_texrepeat (true repeats, false clamps).
 
+// `write_*` are the four channels, matching gpu_set_colourwriteenable.
+// Returns a handle, or 0 on failure.
+[global, bind = typed_gml]
+function igpu_blend_state_create(
+    enabled : bool,
+    src : int32,
+    dest : int32,
+    equation : int32,
+    src_alpha : int32,
+    dest_alpha : int32,
+    equation_alpha : int32,
+    write_red : bool,
+    write_green : bool,
+    write_blue : bool,
+    write_alpha : bool) : int64;
+
+// Depth test plus stencil. Stencil arguments are validated even when stencil
+// is disabled, so a bad constant is reported rather than stored.
+[global, bind = typed_gml]
+function igpu_depth_state_create(
+    depth_test : bool,
+    depth_write : bool,
+    depth_func : int32,
+    stencil_enable : bool,
+    stencil_func : int32,
+    stencil_fail : int32,
+    stencil_depth_fail : int32,
+    stencil_pass : int32,
+    stencil_ref : int32,
+    stencil_read_mask : int32,
+    stencil_write_mask : int32) : int64;
+
+// `fill` is IgpuFill. Scissor uses the rectangle already set on the device
+// (GameMaker's viewport sets one). `depth_clip` drops fragments outside the
+// depth range.
+[global, bind = typed_gml]
+function igpu_raster_state_create(
+    cull : int32,
+    fill : int32,
+    scissor : bool,
+    depth_clip : bool) : int64;
+
+// One sampler. magnification, minification and mip are tf_point or tf_linear.
+// anisotropy is 1..16. Above 1, all three filters must be tf_linear.
+// address_* is IgpuAddressMode. border is an opaque GameMaker colour and is
+// used only when an axis is Border. compare 0 is an ordinary sample. 1..8 is
+// cmpfunc_* (cmpfunc_never is 1). Comparison together with Border fails.
+// level_offset is a number of levels; positive is coarser. finest is the
+// minimum level, 0 is the base. coarsest below 0 means no upper limit.
+// A shader-specified level ignores the offset and still stays inside the range.
+[global, bind = typed_gml]
+enum IgpuAddressMode
+{
+    Clamp = 0,
+    Repeat = 1,
+    Mirror = 2,
+    Border = 3
+}
+
+[global, bind = typed_gml]
+function igpu_sampler_state_create(
+    magnification : int32,
+    minification : int32,
+    mip : int32,
+    address_u : int32,
+    address_v : int32,
+    address_w : int32,
+    anisotropy : int32,
+    border : int32,
+    compare : int32,
+    level_offset : float,
+    finest : float,
+    coarsest : float) : int64;
+
+[global, bind = typed_gml]
+function igpu_state_release([type_hint = `uint64`] state) : bool;
+
+// ---------------------------------------------------------------------------
+// Textures
+// ---------------------------------------------------------------------------
+
+// kind is IgpuTextureKind. depth is 1 for TwoD, the slice count for ThreeD,
+// the layer count for Array, and 6 for Cube (which must be square).
+// Face 0 is +X, then -X, +Y, -Y, +Z, -Z.
+// mip_count 1 is a single level. 0 allocates the full chain down to 1x1.
+// Any other count must be from 1 to that chain. A chain can be a render target.
+// storage allocates a texture a compute shader can write. One level only when
+// storage is true is allowed; a chain may also be storage when the backend
+// accepts it. Platforms without writable images fail this flag cleanly.
+[global, bind = typed_gml]
+function igpu_texture_create(
+    kind : int32,
+    width : int32,
+    height : int32,
+    depth : int32,
+    format : int32,
+    render_target : bool,
+    storage : bool,
+    mip_count : int32) : int64;
+
+[global, bind = typed_gml]
+function igpu_texture_generate_mips([type_hint = `uint64`] texture) : bool;
+
+// Reads one surface_rgba8unorm pixel. Alpha is dropped, matching surface_getpixel.
+// layer selects a slice or cube face. mip selects the level.
+[global, bind = typed_gml]
+function igpu_texture_read(
+    [type_hint = `uint64`] texture,
+    x : int32,
+    y : int32,
+    layer : int32,
+    mip : int32) : int64;
+
+[global, bind = typed_gml]
+function igpu_texture_release([type_hint = `uint64`] texture) : bool;
+
+// ---------------------------------------------------------------------------
+// Compute
+// ---------------------------------------------------------------------------
+
+[global, bind = typed_gml]
+enum IgpuWriteTarget
+{
+    Texture = 0,
+    Buffer = 1
+}
+
+// kinds, targets, layers and mips are the same length, from 1 to 8.
+// Slot i is that entry. A buffer entry must have layer 0 and mip 0.
+// A texture entry's mip selects the level. The view covers every slice of
+// that level; the shader chooses the slice. A texture entry's layer must be 0.
+// The same texture or buffer cannot be listed twice. Slots are restored.
+// Group counts are work groups, from 1 to 65535.
+[global, bind = typed_gml]
+function igpu_dispatch(
+    groups_x : int32,
+    groups_y : int32,
+    groups_z : int32,
+    kinds : array,
+    targets : array,
+    layers : array,
+    mips : array) : bool;
+
+// ---------------------------------------------------------------------------
+// Queries and fences
+// ---------------------------------------------------------------------------
+
+[global, bind = typed_gml]
+enum IgpuQueryKind
+{
+    Occlusion = 0,
+    Timestamp = 1
+}
+
+[global, bind = typed_gml]
+function igpu_query_create(kind : int32) : int64;
+
+[global, bind = typed_gml]
+function igpu_query_begin([type_hint = `uint64`] query) : bool;
+
+[global, bind = typed_gml]
+function igpu_query_end([type_hint = `uint64`] query) : bool;
+
+[global, bind = typed_gml]
+function igpu_query_ready([type_hint = `uint64`] query) : bool;
+
+[global, bind = typed_gml]
+function igpu_query_result([type_hint = `uint64`] query) : int64;
+
+[global, bind = typed_gml]
+function igpu_query_release([type_hint = `uint64`] query) : bool;
+
+[global, bind = typed_gml]
+function igpu_timestamp_frequency() : int64;
+
+[global, bind = typed_gml]
+function igpu_fence_create() : int64;
+
+[global, bind = typed_gml]
+function igpu_fence_signal([type_hint = `uint64`] fence) : bool;
+
+[global, bind = typed_gml]
+function igpu_fence_signaled([type_hint = `uint64`] fence) : bool;
+
+[global, bind = typed_gml]
+function igpu_fence_release([type_hint = `uint64`] fence) : bool;
+
+// ---------------------------------------------------------------------------
+// Draw targets and sampling
+// ---------------------------------------------------------------------------
+
+// targets, layers and mips are the same length, from 1 to 4.
+// A 2D level-0 draw puts the texture in targets and 0 in layers and mips.
+// State handles of 0 leave that stage alone.
+[global, bind = typed_gml]
+function igpu_draw_to_render_targets(
+    [type_hint = `uint64`] vertex_buffer,
+    [type_hint = `uint64`] layout,
+    primitive : int32,
+    [type_hint = `int64`] first_vertex,
+    [type_hint = `int64`] vertex_count,
+    targets : array,
+    layers : array,
+    mips : array,
+    [type_hint = `int64`] blend_state,
+    [type_hint = `int64`] depth_state,
+    [type_hint = `int64`] raster_state,
+    [type_hint = `int64`] sampler_state) : bool;
+
+// Samples `texture` from slot 0. texture 0 fails. The previous texture binding
+// is put back before return. sampler_state 0 leaves the sampler alone.
+[global, bind = typed_gml]
+function igpu_draw_sampled(
+    [type_hint = `uint64`] vertex_buffer,
+    [type_hint = `uint64`] layout,
+    primitive : int32,
+    [type_hint = `int64`] first_vertex,
+    [type_hint = `int64`] vertex_count,
+    [type_hint = `uint64`] texture,
+    [type_hint = `int64`] blend_state,
+    [type_hint = `int64`] depth_state,
+    [type_hint = `int64`] raster_state,
+    [type_hint = `int64`] sampler_state) : bool;
 // ---------------------------------------------------------------------------
 // Enums
 // ---------------------------------------------------------------------------
+
+// Texture shapes shared by the backends. Not every backend implements every
+// shape; ask igpu_supports before using ThreeD, Array, or Cube.
+[global, bind = typed_gml]
+enum IgpuTextureKind
+{
+    TwoD = 0,
+    ThreeD = 1,
+    Array = 2,
+    Cube = 3
+}
+
+// Fill mode for igpu_raster_state_create. GameMaker has no constant for this.
+[global, bind = typed_gml]
+enum IgpuFill
+{
+    Solid = 0,
+    Wireframe = 1
+}
 
 [global, bind = typed_gml]
 enum IgpuFeatureLevel
@@ -413,7 +837,15 @@ enum IgpuBufferBind
     Vertex = 1,
     Index = 2,
     Uniform = 4,
-    Storage = 8
+    Storage = 8,
+
+    // Holds draw arguments, not vertices. The record is four unsigned values
+    // for igpu_draw_indirect (vertex count, instance count, first vertex,
+    // first instance) or five for igpu_draw_indexed_indirect (index count,
+    // instance count, first index, base vertex, first instance). The same
+    // record is what the other backends read. Do not combine this with
+    // another bind flag. Create it with IgpuBufferUsage.Static.
+    Indirect = 16
 }
 
 // How a vertex range is assembled into primitives. These values mirror
@@ -457,6 +889,7 @@ enum IgpuCapability
     StructuredBuffer = 23,
     UnorderedAccess = 24,
     MultipleRenderTargets = 25,
+    Texture2D = 26,
 
     // Pipeline features
     Instancing = 40,
@@ -483,8 +916,18 @@ enum IgpuCapability
     // False would mean drawing is unsafe to interleave with GM's own.
     DrawStateRestore = 55,
 
+    // Immutable pipeline state objects applied for one draw, then restored.
+    BlendState = 56,
+    DepthState = 57,
+    RasterState = 58,
+    SamplerState = 59,
+
     // Platform info availability
     AdapterInfo = 60,
     VideoMemory = 61,
-    BackbufferSize = 62
+    BackbufferSize = 62,
+
+    // The compiled shader can be asked for its uniform-block layout, and a
+    // uniform buffer can be filled by member name.
+    UniformReflection = 63
 }

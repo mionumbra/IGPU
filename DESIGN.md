@@ -218,7 +218,7 @@ function igpu_shader_compile(
 | Linux/Android (GL/GLES) | GLSL | 无运行时编译（无 `EGLContext`） | ❌ 不可行 |
 | HTML5 (WebGL) | GLSL ES | 扩展只能用 `.js` | ❌ 不可行 |
 
-**残酷的现实**：§4.4 表明，运行时着色器编译**在非 Windows/Xbox 平台上根本无法实现**，因为我们拿不到图形上下文。
+**2026-10-06 更正**：上表里「拿不到上下文所以无法编译」只对「`os_get_info` 不交指针」成立。Linux、macOS、Android、iOS、tvOS 的游戏步进和 GL 上下文在同一条线程上，运行时编译在这些 extgen 平台上做得到。Windows 这份运行时没有 OpenGL。HTML5 / WASM 不能用 extgen，主机排在它之后。现状写在 `superpowers/specs/2026-10-06-slim-api-design.md`。
 
 **但这不改变接口设计**。因为：
 1. `igpu_shader_compile` 在那些平台返回 `0` 并设错误信息
@@ -415,21 +415,24 @@ backbuffer 会变，但那里永远返回旧值。
 11. ✅ **输入布局**（`ID3D11InputLayout`）+ 顶点格式
 12. ✅ 缓冲区（`ID3D11Buffer`）+ 上传 / 读回
 13. ✅ 绘制调用（`Draw` / `DrawIndexed`）+ **IA 状态自动保存恢复**
-14. ⬜ 渲染目标绑定（`OMSetRenderTargets`）← 像素级验证的前提
-15. ⬜ 状态对象（depth-stencil / rasterizer / blend / sampler）
-16. ⬜ MRT
-17. ⬜ 纹理 / SRV / RTV / UAV
-18. ⬜ 查询 / 时间戳 / fence
-19. ⬜ 常量缓冲区反射（`D3DReflect`），自动打包 `cbuffer` 布局
+14. ⬜ 渲染目标绑定（`OMSetRenderTargets`）—— 像素读回已用 GM 的 `surface_set_target` 完成，不再堵在这条上
+15. ✅ 状态对象（depth-stencil / rasterizer / blend / sampler）
+16. ✅ MRT —— 一次最多 4 张颜色目标（`igpu_draw_to_render_targets`）
+17. ✅ 纹理形状与存储纹理 —— `IgpuTextureKind`（二维 / 三维 / 数组 / 立方体）+ 二维 `storage`，用 `igpu_dispatch` 写入
+18. ✅ 查询 / 时间戳 / fence，以及绘制、纹理、管线状态 —— 走 `Backend`，不把某个图形 API 写进入口
+19. ✅ 常量缓冲区反射 —— 按成员名字打包进 uniform 块，读布局和绑槽走 `Backend`
 
 > **关于第 13 步（已完成）——设计约束第 5 条需要升级**：
 > 本文档 §设计约束写的是"改完用 `gpu_get_state`/`gpu_set_state` 恢复"。
-> **实测证明这条对绘制行不通**：GM 的状态函数只覆盖 blend/depth/stencil/
-> cull/scissor/alphatest/sampler，**完全不包含 IA 阶段**（顶点缓冲区、输入布局、
-> 拓扑），而且既不能读也不能写。
+> 那张保存表覆盖 blend、depth、stencil、cull、fog、colour write、alpha test
+> 和采样器，**不包含**顶点缓冲、输入布局、拓扑。GML 既不能读也不能写它们，
+> 所以 IGPU 用 `IAGet*` 从设备读回，绘制后 `IASet*` 设回去。
 >
-> 所以正确的做法是：IGPU 用 `ID3D11DeviceContext` 的 `IAGet*` **从设备读回真实状态**，
-> 绘制后 `IASet*` 设回去。见 `igpu_draw.cpp` 的 `IaStateGuard` 与 HANDOVER §7.15。
+> GameMaker 自己的绘制会无条件重设顶点缓冲、布局和拓扑，并且不缓存
+> （`StateManagerM.h` 写着这些 "aren't included yet"）。恢复不是为了防止
+> 下一张精灵用到 IGPU 的缓冲；它把索引缓冲设回去（引擎从不重设索引缓冲），
+> 并让返回前的设备状态和进入时一致。见 `igpu_draw.cpp` 的 `IaStateGuard`
+> 与 HANDOVER §7.15。
 
 > **关于第 10 步（已完成）**：`DeviceState::shaders` 原先只存 `ID3D11DeviceChild*`，
 > **丢弃了 `ID3DBlob`**。而 `CreateInputLayout` 必须用编译产物里的 signature，
@@ -442,15 +445,14 @@ backbuffer 会变，但那里永远返回旧值。
 
 ## 9. 设计约束（务必遵守）
 
-1. **绝不 Release GM 的设备** —— `DeviceState::reset()` 已正确注释，继续保持。
+1. **只 Release 自己 AddRef 的那一次** —— GameMaker 的原始引用不能多放。`bind_device()` 各加一次引用，`reset()` 各放一次。
 2. **接口零 D3D 术语** —— 审查任何新 API，GML 层面不得出现 `d3d`/`dxgi`/`_5_0`/`ID3D` 等字样。
 3. **复用 GM 词汇表** —— 格式、usage、比较函数等，用 GM 已有的中立常量名。
 4. **能力可查，降级优雅** —— 任何非 Windows 平台调用 IGPU 必须返回失败而非 crash。
 5. **不与 GM 状态机打架** —— 改变全局管线状态后应恢复。
-   ⚠️ **但 `gpu_get_state`/`gpu_set_state` 只覆盖 blend/depth/stencil/cull/scissor/
-   alphatest/sampler，不包含 IA 阶段**（顶点缓冲区、输入布局、拓扑），实测确认
-   那些状态 GM 既不暴露读也不暴露写。改 IA 状态时必须用 `ID3D11DeviceContext`
-   的 `IAGet*`/`IASet*` 自己保存恢复，见 `igpu_draw.cpp` 与 HANDOVER §7.15。
+   `gpu_get_state`/`gpu_set_state` 不包含输入装配。改那些状态时用
+   `IAGet*`/`IASet*` 自己保存恢复，见 `igpu_draw.cpp` 与 HANDOVER §7.15。
+   GameMaker 的下一次绘制会重设顶点缓冲、布局和拓扑；索引缓冲要靠这次恢复。
 6. **句柄模式统一** —— 延续 `unordered_map<uint64, 资源*>` + 自增 ID。
 
 ---

@@ -4,6 +4,8 @@
 ///       video_d3d11_device / video_d3d11_context / video_d3d11_swapchain
 ///       pointers which we forward to the native extension.
 ///       Call this once after the game window exists (e.g. a Create event).
+///       If igpu_device_lost() becomes true, call it again: the previous
+///       handles were created on the old device and are no longer valid.
 ///
 ///       NOTE: only Windows exposes real device pointers. Xbox returns
 ///       video_d3d12_* instead, every OpenGL platform returns driver strings
@@ -61,6 +63,7 @@ function igpu_log_capabilities()
     show_debug_message($"igpu :: stages={_caps.shader_stages}");
     show_debug_message($"igpu :: runtime_compile={_caps.runtime_compile} compute={_caps.compute} geometry={_caps.geometry} tess={_caps.tessellation}");
     show_debug_message($"igpu :: texture3d={_caps.texture_3d} array={_caps.texture_array} cubemap={_caps.texture_cubemap} uav={_caps.uav} mrt={_caps.max_render_targets}");
+    show_debug_message($"igpu :: rgba8={_caps.formats.surface_rgba8unorm} rgba4={_caps.formats.surface_rgba4unorm} r8={_caps.formats.surface_r8unorm}");
 
     return _caps;
 }
@@ -132,7 +135,8 @@ function igpu_vertex_format(_shader, _elements, _stride = -1)
         _type[_i] = _element[1];
     }
 
-    return igpu_input_layout_create(_shader, _usage, _type, _count, _stride);
+    var _step = array_create(_count, IgpuVertexStep.Vertex);
+    return igpu_input_layout_create(_shader, _usage, _type, _step, _count, _stride, 0);
 }
 
 /// @func igpu_buffer_upload(_buffer, _data, _offset)
@@ -224,7 +228,7 @@ function igpu_buffer_create_from_array(_values, _usage, _bind, _stride = 0)
 /// @returns {Bool} True if the draw was issued.
 function igpu_draw_buffer(_buffer, _layout, _primitive, _first = 0, _count = -1)
 {
-    var _ok = igpu_draw(_buffer, _layout, _primitive, _first, _count);
+    var _ok = igpu_draw(_buffer, 0, _layout, _primitive, _first, _count, 1, 0, 0, 0, 0);
     if (!_ok)
     {
         show_debug_message($"igpu_draw_buffer :: {igpu_get_last_error()}");

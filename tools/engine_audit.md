@@ -32,6 +32,9 @@
 
 ## 1. IA 状态保存/恢复:前提对,理由错
 
+> 2026-09-23 后续:措辞已改到 `spec.gmidl`、`igpu_draw.cpp`、`igpu_draw.h`、
+> `HANDOVER.md` §7.15 和 `DESIGN.md`。实现没动。下面是当时指出的问题。
+
 ### 前提 ✅
 
 `gpu_get_state` / `gpu_set_state` 确实**不含**任何 IA 状态。
@@ -43,7 +46,7 @@
 
 ### 理由 ⚠️ 夸大
 
-扩展在 `spec.gmidl:244-253` 与 `igpu_draw.h:19-20` 写:
+扩展当时在 `spec.gmidl` 与 `igpu_draw.cpp` 写(原文已替换):
 
 > "A bind/draw pair would therefore leak IGPU's state into GameMaker's own drawing,
 > and no GML-level call could undo it."
@@ -258,6 +261,10 @@ IGPU 编译出的 `ID3D11VertexShader*` 绑到管线上。
 
 ## 5. 设备丢失:use-after-free 风险
 
+> 2026-09-23 后续：已补检测。`bind_device` 对 device/context/swapchain 各 AddRef 一次，
+> `GetDeviceRemovedReason()` 非 `S_OK` 时 `reset()` 放下这一次引用和旧句柄，
+> `igpu_device_lost()` 返回 true。调用方需要再 `igpu_init()`。下面是当时的分析。
+
 `igpu_device.cpp:47-50` 有意不释放 device/context("borrowed, never release")。
 但引擎的 `HandleDeviceLost()`(`Graphics_DisplayM.cpp:1225-1258`)会
 **释放并重建**两者,`InvalidateD3DResources():1291-1292` 明确置空:
@@ -306,11 +313,14 @@ Graphics::SetRenderTarget(_stage, pTexture, nullptr);
 
 ## 建议的下一步(按优先级)
 
-1. **补 `igpu_shader_bind`**(或明确文档化其缺失)—— 否则 draw 链路是断的,§3
-2. **修能力表虚报** —— 6 个能力报 false,并把"能力↔API 一致性"加进自检脚本,§4
-3. **设备丢失处理** —— 至少检测 + 置错,不要求立刻做完整重建,§5
-4. **像素级验证**(§9 第 5 项)—— 现在有了引擎源码,路径完全清晰,§6
-5. **修正 IA 保存/恢复的文档措辞**(实现不动),§1
+> 2026-09-23 后续：第 1、2、4 项已完成（`igpu_shader_bind`、能力表改 false、
+> 离屏 surface 像素读回）。仍开放的是第 3、5、6 项。
+
+1. ✅ **补 `igpu_shader_bind`** —— 否则 draw 链路是断的,§3
+2. ✅ **修能力表虚报** —— 6 个能力报 false,并把"能力↔API 一致性"加进自检脚本,§4
+3. ✅ **设备丢失检测** —— `igpu_device_lost()` 置错并丢掉旧句柄。完整重建仍由调用方重新 `igpu_init()`,§5
+4. ✅ **像素级验证** —— 画到 `surface_set_target` 绑好的离屏表面,`surface_getpixel` 读回,§6
+5. ✅ **修正 IA 保存/恢复的文档措辞**(实现未动),§1
 6. **spec 里点明 usage 10–14 的有意不支持**,§2
 
 **关于顺序的说明**:第 1 项我之前完全没意识到 —— 我此前的报告都说

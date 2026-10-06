@@ -23,7 +23,9 @@ set(EXT_PUBLIC_HEADERS_TVOS
 # User implementation sources per platform (editable template)
 # =============================================================================
 if(WIN32)
-  file(GLOB TARGET_SRCS CONFIGURE_DEPENDS "${SRC_DIR}/native/*.cpp")
+  file(GLOB TARGET_SRCS CONFIGURE_DEPENDS
+      "${SRC_DIR}/native/*.cpp"
+      "${SRC_DIR}/native/d3d11/*.cpp")
 
 elseif(APPLE)
   if(CMAKE_OSX_SYSROOT MATCHES "iphone")
@@ -50,6 +52,47 @@ target_include_directories(${PROJECT_NAME} PRIVATE "${SRC_DIR}")
 # GameMaker owns the D3D11 device; we borrow it and use the runtime HLSL
 # compiler (d3dcompiler_47) to compile shaders on the fly.
 if(WIN32)
-  target_link_libraries(${PROJECT_NAME} PRIVATE d3d11 dxgi d3dcompiler)
+  include(FetchContent)
+
+  set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+  set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+  set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+  set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
+  set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+  set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
+  set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+  set(SPIRV_CROSS_ENABLE_MSL OFF CACHE BOOL "" FORCE)
+  set(SPIRV_CROSS_ENABLE_CPP OFF CACHE BOOL "" FORCE)
+  set(SPIRV_CROSS_ENABLE_REFLECT OFF CACHE BOOL "" FORCE)
+  set(SPIRV_CROSS_ENABLE_C_API OFF CACHE BOOL "" FORCE)
+  set(SPIRV_CROSS_ENABLE_UTIL OFF CACHE BOOL "" FORCE)
+  set(SPIRV_CROSS_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+
+  # These libraries are linked into IGPU.dll. The project builds shared
+  # libraries, so force the dependencies to stay static.
+  set(_igpu_build_shared ${BUILD_SHARED_LIBS})
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+  FetchContent_Declare(
+    glslang
+    URL https://github.com/KhronosGroup/glslang/archive/refs/tags/16.6.0.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_Declare(
+    spirv_cross
+    GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Cross.git
+    GIT_TAG aa217aeb6c9f0ace7a0ab233b28807edf45eb165)
+  FetchContent_MakeAvailable(glslang spirv_cross)
+
+  set(BUILD_SHARED_LIBS ${_igpu_build_shared} CACHE BOOL "" FORCE)
+
+  target_include_directories(${PROJECT_NAME} PRIVATE ${glslang_SOURCE_DIR})
+  target_link_libraries(${PROJECT_NAME} PRIVATE
+    d3d11 dxgi d3dcompiler dxguid
+    glslang
+    SPIRV
+    glslang-default-resource-limits
+    spirv-cross-core
+    spirv-cross-glsl
+    spirv-cross-hlsl)
 endif()
 

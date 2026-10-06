@@ -102,17 +102,18 @@ $specFuncs = Select-String -Path $spec -Pattern '^function\s+(\w+)' |
 
 # 能力名 -> 它需要的 API 词根（必须能在某个 spec 函数名里找到）
 $capNeedsApi = @{
+    'Texture2D'            = 'texture'
     'Texture3D'            = 'texture'
     'TextureArray'         = 'texture'
     'TextureCubemap'       = 'texture'
     'MultipleRenderTargets'= 'render_target'
-    'Instancing'           = 'instanc'
+    'Instancing'           = 'igpu_draw$'
     'IndirectDraw'         = 'indirect'
     'Queries'              = 'query'
     'Timestamps'           = 'timestamp'
     'OcclusionQuery'       = 'occlusion'
     'Fence'                = 'fence'
-    'Wireframe'            = 'fill_mode'
+    'Wireframe'            = 'raster'
     'InputLayout'          = 'input_layout'
     'VertexBuffer'         = 'buffer'
     'IndexBuffer'          = 'buffer'
@@ -126,6 +127,7 @@ $capNeedsApi = @{
     'ShaderStageVertex'    = 'shader_compile'
     'ShaderStagePixel'     = 'shader_compile'
     'ShaderStageCompute'   = 'shader_compile'
+    'UniformReflection'    = 'uniform'
 }
 $unbacked = @()
 $checkedCaps = 0

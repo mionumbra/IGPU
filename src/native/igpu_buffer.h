@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include "core/GMExtWire.h"
@@ -23,7 +24,8 @@ namespace igpu
         Vertex = 1,
         Index = 2,
         Uniform = 4,
-        Storage = 8
+        Storage = 8,
+        Indirect = 16
     };
 
     // `stride` is bytes per vertex and is required (non-zero) for a buffer that
@@ -47,4 +49,10 @@ namespace igpu
     std::int64_t buffer_size(std::uint64_t buffer);
 
     bool buffer_release(std::uint64_t buffer);
+    bool storage_bind(std::uint64_t buffer, std::int32_t stage, std::int32_t slot);
+
+    // Patches `size` bytes at `offset` inside a uniform buffer and uploads the
+    // whole block. The buffer keeps a CPU copy so other members stay put.
+    bool buffer_patch(std::uint64_t buffer, std::int64_t offset, const void* data,
+                      std::size_t size, const char* entry);
 }

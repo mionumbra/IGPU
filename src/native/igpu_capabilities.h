@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <string>
 #include <vector>
 
 #include "core/GMExtWire.h"
@@ -53,6 +55,7 @@ namespace igpu
         StructuredBuffer = 23,
         UnorderedAccess = 24,
         MultipleRenderTargets = 25,
+        Texture2D = 26,
 
         Instancing = 40,
         IndirectDraw = 41,
@@ -73,15 +76,32 @@ namespace igpu
         DrawIndexed = 54,
         DrawStateRestore = 55,
 
+        BlendState = 56,
+        DepthState = 57,
+        RasterState = 58,
+        SamplerState = 59,
+
         AdapterInfo = 60,
         VideoMemory = 61,
-        BackbufferSize = 62
+        BackbufferSize = 62,
+
+        UniformReflection = 63
     };
 
     // Backend identifiers reported to GML. Deliberately stringly-typed so a new
     // backend can be added without touching the wire format.
     const char* backend_name();
     const char* shader_dialect();
+
+    // Records os_get_info() graphics strings for platforms with no device.
+    // Empty version clears the note. A bound device still wins in the
+    // capability struct.
+    bool set_graphics_info(std::string_view vendor, std::string_view version, std::string_view renderer,
+                           std::string_view shading_language, std::int32_t max_texture_size);
+    const char* probed_backend();
+    const char* probed_dialect();
+    std::string probed_device_name();
+    bool probed_format(std::int32_t format);
 
     bool supports(Capability capability);
 

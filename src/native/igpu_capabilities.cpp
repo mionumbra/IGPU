@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "igpu_backend.h"
 #include "igpu_device.h"
 #include "igpu_error.h"
 
@@ -49,13 +50,166 @@ namespace igpu
     {
         bool has_backend()
         {
-            return state().initialised && state().device != nullptr;
+            refresh_device_status();
+            const auto& s = state();
+            return s.initialised && s.device != nullptr && !s.device_lost;
         }
 
         // Feature level of the borrowed device; gates the optional states.
         bool device_at_least(D3D_FEATURE_LEVEL level)
         {
             return has_backend() && state().device->GetFeatureLevel() >= level;
+        }
+
+        struct GraphicsProbe
+        {
+            bool active = false;
+            std::string device_name;
+            const char* backend = "";
+            const char* dialect = "";
+            int major = 0;
+            int minor = 0;
+            std::int32_t max_texture = 0;
+        };
+
+        GraphicsProbe g_probe;
+
+        bool parse_gl_number(std::string_view text, int& major, int& minor)
+        {
+            for (std::size_t i = 0; i < text.size(); ++i)
+            {
+                if (text[i] < '0' || text[i] > '9')
+                {
+                    continue;
+                }
+                major = 0;
+                std::size_t j = i;
+                while (j < text.size() && text[j] >= '0' && text[j] <= '9')
+                {
+                    major = major * 10 + (text[j] - '0');
+                    ++j;
+                    if (major > 9)
+                    {
+                        return false;
+                    }
+                }
+                minor = 0;
+                if (j < text.size() && text[j] == '.')
+                {
+                    ++j;
+                    while (j < text.size() && text[j] >= '0' && text[j] <= '9')
+                    {
+                        minor = minor * 10 + (text[j] - '0');
+                        ++j;
+                    }
+                }
+                return major > 0;
+            }
+            return false;
+        }
+
+        bool classify_graphics(std::string_view version, std::string_view shading, GraphicsProbe& probe)
+        {
+            const auto es = version.find("OpenGL ES");
+            const auto web = version.find("WebGL");
+            std::string_view number = version;
+            if (web != std::string_view::npos)
+            {
+                probe.backend = "webgl";
+                probe.dialect = "glsl_es";
+                number = version.substr(web + 5);
+            }
+            else if (es != std::string_view::npos)
+            {
+                probe.backend = "gles";
+                probe.dialect = "glsl_es";
+                number = version.substr(es + 9);
+            }
+            else
+            {
+                probe.backend = "opengl";
+                probe.dialect = "glsl";
+            }
+            if (!parse_gl_number(number, probe.major, probe.minor))
+            {
+                return false;
+            }
+            if (probe.backend == std::string_view("opengl") && shading.find("ES") != std::string_view::npos)
+            {
+                probe.dialect = "glsl_es";
+            }
+            return true;
+        }
+    }
+
+    bool set_graphics_info(std::string_view vendor, std::string_view version, std::string_view renderer,
+                           std::string_view shading_language, std::int32_t max_texture_size)
+    {
+        clear_last_error();
+        if (version.empty())
+        {
+            g_probe = {};
+            return true;
+        }
+        if (max_texture_size < 0)
+        {
+            set_last_error("igpu_set_graphics_info: max_texture_size must not be negative");
+            return false;
+        }
+        GraphicsProbe next;
+        if (!classify_graphics(version, shading_language, next))
+        {
+            set_last_error("igpu_set_graphics_info: the version string is not an OpenGL, OpenGL ES, or WebGL version");
+            return false;
+        }
+        next.active = true;
+        next.max_texture = max_texture_size;
+        if (!renderer.empty())
+        {
+            next.device_name = std::string(renderer);
+        }
+        else
+        {
+            next.device_name = std::string(vendor);
+        }
+        g_probe = std::move(next);
+        return true;
+    }
+
+    const char* probed_backend()
+    {
+        return g_probe.active ? g_probe.backend : "";
+    }
+
+    const char* probed_dialect()
+    {
+        return g_probe.active ? g_probe.dialect : "";
+    }
+
+    std::string probed_device_name()
+    {
+        return g_probe.active ? g_probe.device_name : std::string{};
+    }
+
+    bool probed_format(std::int32_t format)
+    {
+        if (!g_probe.active)
+        {
+            return false;
+        }
+        const bool modern = (std::string_view(g_probe.backend) == "webgl" && g_probe.major >= 2) ||
+                            (std::string_view(g_probe.backend) != "webgl" && g_probe.major >= 3);
+        switch (format)
+        {
+        case 11: return true;                         // surface_rgba4unorm
+        case 6:                                        // surface_rgba8unorm
+        case 9:                                        // surface_r16float
+        case 10:                                       // surface_r32float
+        case 12:                                       // surface_r8unorm
+        case 13:                                       // surface_rg8unorm
+        case 14:                                       // surface_rgba16float
+        case 15: return modern;                        // surface_rgba32float
+        default: return false;
         }
     }
 
@@ -64,12 +218,22 @@ namespace igpu
         // Only the Windows D3D11 backend exists today. Reporting "none" on
         // every other platform is the honest answer and lets callers branch on
         // it instead of probing individual capabilities.
-        return has_backend() ? "d3d11" : "none";
+        if (has_backend())
+        {
+            return "d3d11";
+        }
+        const char* probed = probed_backend();
+        return probed[0] != '\0' ? probed : "none";
     }
 
     const char* shader_dialect()
     {
-        return has_backend() ? "hlsl" : "";
+        if (has_backend())
+        {
+            return "hlsl";
+        }
+        const char* probed = probed_dialect();
+        return probed[0] != '\0' ? probed : "";
     }
 
     bool supports(Capability capability)
@@ -101,30 +265,30 @@ namespace igpu
         case Capability::ShaderStageMesh: return false;
 
         // ---- resources ----
-        // 注意：以下 11 项曾一律 return native（Windows 恒 true），但 spec 里
-        // **没有任何对应函数**。这违反 spec 开头的核心约束"能力可查、降级优雅"：
-        // 调用方看到 igpu_supports(Instancing) == true，就会去调
-        // igpu_draw_instanced() —— 而那个函数不存在。虚报 true 比报 false 更糟，
-        // 因为它主动误导调用方。
-        //
-        // 现在的规则：**能力位只反映已经可以调用的 API**。实现某一项时，
-        // 连同它的 API 一起把这里翻成 true（并补测试断言）。
-        // 这条规则由 tools/verify_handover.ps1 第 3b 组强制检查。
-        case Capability::Texture3D:             return false;  // 待 igpu_texture_create
-        case Capability::TextureArray:          return false;  // 待 igpu_texture_create
-        case Capability::TextureCubemap:        return false;  // 待 igpu_texture_create
+        // These stay false until an API exists. Reporting true with no function
+        // sends callers to a call that does not exist. verify_handover.ps1
+        // checks the ones that return native.
+        // Keep this comment ASCII: MSVC reads the file as code page 936, and a
+        // UTF-8 byte of 0x5C in a comment escapes the newline and deletes the
+        // next line. That is how Texture2D was compiled out.
+        case Capability::Texture2D:             return native;
+        case Capability::Texture3D:             return native;
+        case Capability::TextureArray:          return native;
+        case Capability::TextureCubemap:        return native;
         case Capability::StructuredBuffer:      return device_at_least(D3D_FEATURE_LEVEL_11_0);
+        // Writable images need a compute shader. Feature level 11.0 has them.
         case Capability::UnorderedAccess:       return device_at_least(D3D_FEATURE_LEVEL_11_0);
-        case Capability::MultipleRenderTargets: return false;  // 待 igpu_render_target_*
+        case Capability::MultipleRenderTargets: return native;
 
         // ---- pipeline ----
-        case Capability::Instancing:     return false;  // 待 igpu_draw_instanced
-        case Capability::IndirectDraw:   return false;  // 待 igpu_draw_indirect
-        case Capability::Queries:        return false;  // 待 igpu_query_*
-        case Capability::Timestamps:     return false;  // 待 igpu_timestamp_*
-        case Capability::OcclusionQuery: return false;  // 待 igpu_occlusion_*
-        case Capability::Fence:          return false;  // 待 igpu_fence_*
-        case Capability::Wireframe:      return false;  // 待 igpu_set_fill_mode
+        case Capability::Instancing:     return native;
+        case Capability::IndirectDraw:   return device_at_least(D3D_FEATURE_LEVEL_11_0);
+        case Capability::Queries:        return active_backend() != nullptr &&
+                   (active_backend()->occlusion() || active_backend()->timestamps());
+        case Capability::Timestamps:     return active_backend() != nullptr && active_backend()->timestamps();
+        case Capability::OcclusionQuery: return active_backend() != nullptr && active_backend()->occlusion();
+        case Capability::Fence:          return active_backend() != nullptr && active_backend()->fences();
+        case Capability::Wireframe:      return native;  // IgpuFill.Wireframe on igpu_raster_state_create
 
         // ---- geometry submission ----
         // The input layout and buffer APIs are implemented, so these report
@@ -137,15 +301,20 @@ namespace igpu
         case Capability::BufferReadback: return native;
 
         // ---- drawing ----
-        // DrawStateRestore reports whether IGPU can put GameMaker's input
-        // assembler state back after a draw. It is true here because the
-        // backend reads that state back through the context's IAGet* methods
-        // rather than assuming it. A backend that could not read it would have
-        // to report false, which tells callers not to interleave IGPU draws
-        // with GameMaker's own.
+        // DrawStateRestore reports whether IGPU puts the input assembler back
+        // after a draw, by reading it from the device rather than guessing.
+        // GameMaker's next draw rebinds its own vertex buffer, layout and
+        // topology; the restore still matters for the index buffer, which
+        // GameMaker never rebinds, and for any reader of the device in between.
+        // A backend that could not read the assembler would report false.
         case Capability::Draw:             return native;
         case Capability::DrawIndexed:      return native;
         case Capability::DrawStateRestore: return native;
+        case Capability::BlendState:       return native;
+        case Capability::DepthState:       return native;
+        case Capability::RasterState:      return native;
+        case Capability::SamplerState:     return native;
+        case Capability::UniformReflection: return native;
 
         case Capability::None:
         default:
@@ -180,11 +349,12 @@ namespace igpu
         // string (observed at runtime as the number 1).
         // ---- backend identity ----
         caps.add("backend", std::string_view(backend_name()));
-        caps.add("tier", static_cast<std::int32_t>(native ? 1 : 3));
-        caps.add("device_name",
-                 state().adapter_desc_valid
-                     ? igpu::narrow(state().adapter_desc.Description)
-                     : std::string{});
+        const int tier = native ? 1 : (probed_backend()[0] != '\0' ? 2 : 3);
+        caps.add("tier", static_cast<std::int32_t>(tier));
+        std::string device_name = state().adapter_desc_valid
+            ? igpu::narrow(state().adapter_desc.Description)
+            : probed_device_name();
+        caps.add("device_name", std::string_view(device_name));
         caps.add("shader_dialect", std::string_view(shader_dialect()));
 
         // ---- shader capability ----
@@ -196,16 +366,16 @@ namespace igpu
         caps.add("mesh_shader", supports(Capability::ShaderStageMesh));
 
         // ---- resource capability ----
+        caps.add("texture_2d", supports(Capability::Texture2D));
         caps.add("texture_3d", supports(Capability::Texture3D));
         caps.add("texture_array", supports(Capability::TextureArray));
         caps.add("texture_cubemap", supports(Capability::TextureCubemap));
         caps.add("structured_buffer", supports(Capability::StructuredBuffer));
         caps.add("uav", supports(Capability::UnorderedAccess));
+        // Four, matching the engine's own simultaneous colour targets.
+        // D3D11 allows eight; this API stops at four.
         caps.add("max_render_targets",
-                 static_cast<std::int32_t>(
-                     supports(Capability::MultipleRenderTargets)
-                         ? D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT
-                         : 0));
+                 static_cast<std::int32_t>(supports(Capability::MultipleRenderTargets) ? 4 : 0));
 
         // ---- pipeline capability ----
         caps.add("instancing", supports(Capability::Instancing));
@@ -224,6 +394,31 @@ namespace igpu
         caps.add("draw", supports(Capability::Draw));
         caps.add("draw_indexed", supports(Capability::DrawIndexed));
         caps.add("draw_state_restore", supports(Capability::DrawStateRestore));
+        caps.add("blend_state", supports(Capability::BlendState));
+        caps.add("depth_state", supports(Capability::DepthState));
+        caps.add("raster_state", supports(Capability::RasterState));
+        caps.add("sampler_state", supports(Capability::SamplerState));
+        caps.add("uniform_reflection", supports(Capability::UniformReflection));
+
+        // GameMaker's eight colour surface formats, in the engine's own order.
+        // The key is always present. The value is whether this device can
+        // create a texture of that format. surface_rgba4unorm can be created
+        // and still be rejected as a render target.
+        gm::wire::StructStream formats;
+        const Backend* backend = active_backend();
+        const auto add_format = [&](const char* name, std::int32_t id) {
+            const bool supported = backend != nullptr ? backend->texture_format(id) : probed_format(id);
+            formats.add(name, supported);
+        };
+        add_format("surface_rgba8unorm", 6);
+        add_format("surface_r16float", 9);
+        add_format("surface_r32float", 10);
+        add_format("surface_rgba4unorm", 11);
+        add_format("surface_r8unorm", 12);
+        add_format("surface_rg8unorm", 13);
+        add_format("surface_rgba16float", 14);
+        add_format("surface_rgba32float", 15);
+        caps.add("formats", formats);
 
         // Serialise through StructStream::writeTo(), which is the only thing
         // that knows both the entry count and the raw-header encoding, then

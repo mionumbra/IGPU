@@ -5,12 +5,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <malloc.h>
 #include <string>
 
 #include "igpu_device.h"
 #include "igpu_error.h"
 
 namespace igpu
+{
+namespace d3d11_impl
 {
     namespace
     {
@@ -59,7 +62,18 @@ namespace igpu
             if (bind & static_cast<std::int32_t>(BufferBind::Vertex))  flags |= D3D11_BIND_VERTEX_BUFFER;
             if (bind & static_cast<std::int32_t>(BufferBind::Index))   flags |= D3D11_BIND_INDEX_BUFFER;
             if (bind & static_cast<std::int32_t>(BufferBind::Uniform)) flags |= D3D11_BIND_CONSTANT_BUFFER;
-            if (bind & static_cast<std::int32_t>(BufferBind::Storage)) flags |= D3D11_BIND_SHADER_RESOURCE;
+            if (bind & static_cast<std::int32_t>(BufferBind::Storage))
+            {
+                flags |= D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+            }
+
+            // An argument buffer is not bound as a vertex or constant input.
+            // It is only legal on its own; mixing it with another use is rejected.
+            const bool indirect = (bind & static_cast<std::int32_t>(BufferBind::Indirect)) != 0;
+            if (indirect && bind != static_cast<std::int32_t>(BufferBind::Indirect))
+            {
+                return false;
+            }
 
             // Reject unknown bits rather than silently dropping them: a caller
             // that passes a typo would otherwise get a buffer missing a use it
@@ -68,7 +82,8 @@ namespace igpu
                 static_cast<std::int32_t>(BufferBind::Vertex) |
                 static_cast<std::int32_t>(BufferBind::Index) |
                 static_cast<std::int32_t>(BufferBind::Uniform) |
-                static_cast<std::int32_t>(BufferBind::Storage);
+                static_cast<std::int32_t>(BufferBind::Storage) |
+                static_cast<std::int32_t>(BufferBind::Indirect);
 
             if ((bind & ~known) != 0)
             {
@@ -76,7 +91,50 @@ namespace igpu
             }
 
             out = flags;
-            return flags != 0;
+            return indirect || flags != 0;
+        }
+
+        // Uploads the CPU copy of a uniform buffer. A partial box update is not
+        // reliable for this kind of buffer, so the whole block goes across.
+        bool upload_uniform_shadow(DeviceState::BufferEntry& entry, const char* entry_name)
+        {
+            if (entry.shadow.size() != static_cast<std::size_t>(entry.size) || entry.object == nullptr)
+            {
+                set_last_error(std::string(entry_name) + ": the uniform buffer is missing its CPU copy");
+                return false;
+            }
+
+            auto& s = state();
+            if (entry.usage == static_cast<std::int32_t>(BufferUsage::Dynamic))
+            {
+                D3D11_MAPPED_SUBRESOURCE mapped{};
+                const HRESULT hr = s.context->Map(entry.object, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+                if (FAILED(hr) || mapped.pData == nullptr)
+                {
+                    set_last_error(std::string(entry_name) + ": could not map the uniform buffer");
+                    return false;
+                }
+                std::memcpy(mapped.pData, entry.shadow.data(), entry.shadow.size());
+                s.context->Unmap(entry.object, 0);
+                return true;
+            }
+
+            if (entry.usage == static_cast<std::int32_t>(BufferUsage::Staging))
+            {
+                set_last_error(std::string(entry_name) + ": a staging buffer cannot hold uniforms");
+                return false;
+            }
+
+            void* aligned = _aligned_malloc(entry.shadow.size(), 16);
+            if (aligned == nullptr)
+            {
+                set_last_error(std::string(entry_name) + ": could not upload the uniform buffer");
+                return false;
+            }
+            std::memcpy(aligned, entry.shadow.data(), entry.shadow.size());
+            s.context->UpdateSubresource(entry.object, 0, nullptr, aligned, 0, 0);
+            _aligned_free(aligned);
+            return true;
         }
     }
 
@@ -85,12 +143,12 @@ namespace igpu
     {
         clear_last_error();
 
-        auto& s = state();
-        if (!s.initialised || s.device == nullptr)
+        if (!require_device("igpu_buffer_create"))
         {
-            set_last_error("igpu_buffer_create: call igpu_init() first");
             return 0;
         }
+
+        auto& s = state();
 
         if (size <= 0)
         {
@@ -145,7 +203,16 @@ namespace igpu
         // many vertices exist and would have to trust the caller's count.
         const bool is_vertex =
             (bind & static_cast<std::int32_t>(BufferBind::Vertex)) != 0;
+        const bool is_storage =
+            (bind & static_cast<std::int32_t>(BufferBind::Storage)) != 0;
 
+        if (is_storage && bind != static_cast<std::int32_t>(BufferBind::Storage))
+        {
+            set_last_error(
+                "igpu_buffer_create: a storage buffer cannot also be a vertex, "
+                "index, uniform or argument buffer");
+            return 0;
+        }
         if (is_vertex && stride <= 0)
         {
             set_last_error(
@@ -153,19 +220,26 @@ namespace igpu
                 "(bytes per vertex) so draws can derive the vertex count");
             return 0;
         }
-        if (!is_vertex && stride != 0)
+        if (is_storage && (stride < 4 || stride > 2048 || (stride % 4) != 0))
         {
             set_last_error(
-                "igpu_buffer_create: stride is only meaningful for a vertex "
-                "buffer; pass 0 for this one");
+                "igpu_buffer_create: a storage buffer stride must be a multiple "
+                "of 4, from 4 to 2048 bytes");
             return 0;
         }
-        if (is_vertex && (size % stride) != 0)
+        if (!is_vertex && !is_storage && stride != 0)
+        {
+            set_last_error(
+                "igpu_buffer_create: stride is only meaningful for a vertex or "
+                "storage buffer; pass 0 for this one");
+            return 0;
+        }
+        if ((is_vertex || is_storage) && (size % stride) != 0)
         {
             set_last_error(
                 "igpu_buffer_create: size " + std::to_string(size) +
                 " is not a whole number of " + std::to_string(stride) +
-                "-byte vertices");
+                "-byte records");
             return 0;
         }
 
@@ -179,6 +253,25 @@ namespace igpu
             return 0;
         }
 
+        const bool is_indirect = bind == static_cast<std::int32_t>(BufferBind::Indirect);
+        if (is_indirect)
+        {
+            if (parsed_usage != BufferUsage::Static)
+            {
+                set_last_error(
+                    "igpu_buffer_create: an argument buffer is uploaded as a whole; "
+                    "create it with IgpuBufferUsage.Static");
+                return 0;
+            }
+            if ((size % 4) != 0 || size < 16)
+            {
+                set_last_error(
+                    "igpu_buffer_create: an argument buffer's size must be a multiple "
+                    "of 4 and at least 16 bytes");
+                return 0;
+            }
+        }
+
         D3D11_BUFFER_DESC desc{};
         desc.ByteWidth = static_cast<UINT>(size);
         desc.Usage = to_d3d_usage(parsed_usage);
@@ -186,6 +279,15 @@ namespace igpu
         desc.CPUAccessFlags = 0;
         desc.MiscFlags = 0;
         desc.StructureByteStride = 0;
+        if (is_indirect)
+        {
+            desc.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS;
+        }
+        else if (is_storage)
+        {
+            desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+            desc.StructureByteStride = static_cast<UINT>(stride);
+        }
 
         if (parsed_usage == BufferUsage::Dynamic)
         {
@@ -216,6 +318,37 @@ namespace igpu
             return 0;
         }
 
+        ID3D11ShaderResourceView* view = nullptr;
+        ID3D11UnorderedAccessView* writable = nullptr;
+        if (is_storage)
+        {
+            D3D11_SHADER_RESOURCE_VIEW_DESC view_desc{};
+            view_desc.Format = DXGI_FORMAT_UNKNOWN;
+            view_desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+            view_desc.Buffer.FirstElement = 0;
+            view_desc.Buffer.NumElements = static_cast<UINT>(size / stride);
+            const HRESULT view_hr = s.device->CreateShaderResourceView(object, &view_desc, &view);
+            if (FAILED(view_hr) || view == nullptr)
+            {
+                object->Release();
+                set_last_error("igpu_buffer_create: the storage buffer could not be made readable by a shader");
+                return 0;
+            }
+            D3D11_UNORDERED_ACCESS_VIEW_DESC write_desc{};
+            write_desc.Format = DXGI_FORMAT_UNKNOWN;
+            write_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+            write_desc.Buffer.FirstElement = 0;
+            write_desc.Buffer.NumElements = view_desc.Buffer.NumElements;
+            const HRESULT write_hr = s.device->CreateUnorderedAccessView(object, &write_desc, &writable);
+            if (FAILED(write_hr) || writable == nullptr)
+            {
+                view->Release();
+                object->Release();
+                set_last_error("igpu_buffer_create: the storage buffer could not be made writable by a shader");
+                return 0;
+            }
+        }
+
         const std::uint64_t id = s.next_buffer_id++;
         DeviceState::BufferEntry entry{};
         entry.object = object;
@@ -223,14 +356,25 @@ namespace igpu
         entry.usage = usage;
         entry.bind = bind;
         entry.stride = stride;
+        entry.shader_view = view;
+        entry.unordered_view = writable;
+        if ((bind & static_cast<std::int32_t>(BufferBind::Uniform)) != 0)
+        {
+            entry.shadow.assign(static_cast<std::size_t>(size), std::byte{0});
+        }
         s.buffers.emplace(id, entry);
 
         return static_cast<std::int64_t>(id);
     }
 
-    bool buffer_write(std::uint64_t buffer, std::int64_t offset, gm::wire::GMBuffer data)
+    bool buffer_write(std::uint64_t buffer, std::int64_t offset, const gm::wire::GMBuffer& data)
     {
         clear_last_error();
+
+        if (!require_device("igpu_buffer_write"))
+        {
+            return false;
+        }
 
         auto* entry = find_buffer(buffer);
         if (entry == nullptr)
@@ -264,6 +408,36 @@ namespace igpu
         }
 
         auto& s = state();
+
+        if (!entry->shadow.empty())
+        {
+            std::memcpy(
+                entry->shadow.data() + static_cast<std::size_t>(offset),
+                data.data(),
+                static_cast<std::size_t>(source_size));
+            return upload_uniform_shadow(*entry, "igpu_buffer_write");
+        }
+
+        if ((entry->bind & static_cast<std::int32_t>(BufferBind::Indirect)) != 0)
+        {
+            if (offset != 0 || source_size != entry->size)
+            {
+                set_last_error(
+                    "igpu_buffer_write: an argument buffer is updated as a whole "
+                    "(offset 0 and the full size)");
+                return false;
+            }
+            void* aligned = _aligned_malloc(static_cast<std::size_t>(source_size), 16);
+            if (aligned == nullptr)
+            {
+                set_last_error("igpu_buffer_write: could not upload the argument buffer");
+                return false;
+            }
+            std::memcpy(aligned, data.data(), static_cast<std::size_t>(source_size));
+            s.context->UpdateSubresource(entry->object, 0, nullptr, aligned, 0, 0);
+            _aligned_free(aligned);
+            return true;
+        }
 
         if (entry->usage == static_cast<std::int32_t>(BufferUsage::Dynamic))
         {
@@ -314,6 +488,11 @@ namespace igpu
     bool buffer_resize(std::uint64_t buffer, std::int64_t size)
     {
         clear_last_error();
+
+        if (!require_device("igpu_buffer_resize"))
+        {
+            return false;
+        }
 
         auto* entry = find_buffer(buffer);
         if (entry == nullptr)
@@ -390,12 +569,54 @@ namespace igpu
         entry->object->Release();
         entry->object = replacement;
         entry->size = size;
+        if (!entry->shadow.empty())
+        {
+            entry->shadow.resize(static_cast<std::size_t>(size), std::byte{0});
+            if (!upload_uniform_shadow(*entry, "igpu_buffer_resize"))
+            {
+                return false;
+            }
+        }
         return true;
     }
 
-    bool buffer_read(std::uint64_t buffer, std::int64_t offset, gm::wire::GMBuffer dest)
+    bool buffer_patch(std::uint64_t buffer, std::int64_t offset, const void* data,
+                      std::size_t size, const char* entry_name)
     {
         clear_last_error();
+        if (!require_device(entry_name))
+        {
+            return false;
+        }
+        auto* entry = find_buffer(buffer);
+        if (entry == nullptr)
+        {
+            set_last_error(std::string(entry_name) + ": unknown buffer handle");
+            return false;
+        }
+        if (entry->shadow.empty())
+        {
+            set_last_error(std::string(entry_name) + ": the buffer was not created with IgpuBufferBind.Uniform");
+            return false;
+        }
+        if (data == nullptr || offset < 0 ||
+            static_cast<std::uint64_t>(offset) + size > static_cast<std::uint64_t>(entry->size))
+        {
+            set_last_error(std::string(entry_name) + ": the member does not fit in the buffer");
+            return false;
+        }
+        std::memcpy(entry->shadow.data() + static_cast<std::size_t>(offset), data, size);
+        return upload_uniform_shadow(*entry, entry_name);
+    }
+
+    bool buffer_read(std::uint64_t buffer, std::int64_t offset, const gm::wire::GMBuffer& dest)
+    {
+        clear_last_error();
+
+        if (!require_device("igpu_buffer_read"))
+        {
+            return false;
+        }
 
         auto* entry = find_buffer(buffer);
         if (entry == nullptr)
@@ -426,22 +647,40 @@ namespace igpu
             return false;
         }
 
-        // Only a staging buffer can be mapped for reading. Any other usage
-        // would require a copy into a staging buffer first, which is a caller
-        // visible decision rather than something to do silently here.
-        if (entry->usage != static_cast<std::int32_t>(BufferUsage::Staging))
+        auto& s = state();
+        ID3D11Buffer* source = entry->object;
+        ID3D11Buffer* staging = nullptr;
+        const bool copy_first = entry->usage != static_cast<std::int32_t>(BufferUsage::Staging);
+        if (copy_first)
         {
-            set_last_error(
-                "igpu_buffer_read: only a Staging buffer can be read back; this "
-                "buffer uses a different usage");
-            return false;
+            if ((entry->bind & static_cast<std::int32_t>(BufferBind::Storage)) == 0)
+            {
+                set_last_error(
+                    "igpu_buffer_read: only a Staging buffer or a storage buffer "
+                    "can be read back");
+                return false;
+            }
+            D3D11_BUFFER_DESC copy_desc{};
+            copy_desc.ByteWidth = static_cast<UINT>(entry->size);
+            copy_desc.Usage = D3D11_USAGE_STAGING;
+            copy_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            if (FAILED(s.device->CreateBuffer(&copy_desc, nullptr, &staging)) || staging == nullptr)
+            {
+                set_last_error("igpu_buffer_read: could not copy the storage buffer");
+                return false;
+            }
+            s.context->CopyResource(staging, entry->object);
+            source = staging;
         }
 
-        auto& s = state();
         D3D11_MAPPED_SUBRESOURCE mapped{};
-        const HRESULT hr = s.context->Map(entry->object, 0, D3D11_MAP_READ, 0, &mapped);
+        const HRESULT hr = s.context->Map(source, 0, D3D11_MAP_READ, 0, &mapped);
         if (FAILED(hr) || mapped.pData == nullptr)
         {
+            if (staging != nullptr)
+            {
+                staging->Release();
+            }
             set_last_error("igpu_buffer_read: could not map the staging buffer for reading");
             return false;
         }
@@ -450,7 +689,11 @@ namespace igpu
             dest.data(),
             static_cast<const std::byte*>(mapped.pData) + offset,
             static_cast<std::size_t>(dest_size));
-        s.context->Unmap(entry->object, 0);
+        s.context->Unmap(source, 0);
+        if (staging != nullptr)
+        {
+            staging->Release();
+        }
         return true;
     }
 
@@ -470,6 +713,14 @@ namespace igpu
             return false;
         }
 
+        if (it->second.shader_view != nullptr)
+        {
+            it->second.shader_view->Release();
+        }
+        if (it->second.unordered_view != nullptr)
+        {
+            it->second.unordered_view->Release();
+        }
         if (it->second.object != nullptr)
         {
             it->second.object->Release();
@@ -477,4 +728,5 @@ namespace igpu
         s.buffers.erase(it);
         return true;
     }
+}
 }

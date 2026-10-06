@@ -1,19 +1,22 @@
 #include "IGPU_native.h"
 
-#include <d3d11.h>
-#include <d3dcompiler.h>
-
 #include <cstdint>
-#include <cstdio>
 #include <string>
 #include <string_view>
+#include <vector>
 
+#include "igpu_backend.h"
 #include "igpu_buffer.h"
 #include "igpu_device.h"
 #include "igpu_capabilities.h"
 #include "igpu_draw.h"
 #include "igpu_error.h"
 #include "igpu_input_layout.h"
+#include "igpu_query.h"
+#include "igpu_reflect.h"
+#include "igpu_shader.h"
+#include "igpu_state.h"
+#include "igpu_texture.h"
 
 using namespace gm::wire;
 using namespace gm_structs;
@@ -21,332 +24,8 @@ using namespace gm_enums;
 
 namespace
 {
-    constexpr const char* kIgpuVersion = "0.3.0";
+    constexpr const char* kIgpuVersion = "0.4.0";
 
-    // Shader stages are backend-neutral (see spec.gmidl). This mirrors the
-    // IgpuShaderStage enum; the numeric values must stay in sync with it.
-    enum class ShaderStage : std::int32_t
-    {
-        Vertex = 0,
-        Pixel = 1,
-        Compute = 2,
-        Geometry = 3,
-        Hull = 4,
-        Domain = 5,
-        Mesh = 6,
-        Amplification = 7
-    };
-
-    bool stage_from_int(std::int32_t raw, ShaderStage& out)
-    {
-        switch (raw)
-        {
-        case 0: out = ShaderStage::Vertex;        return true;
-        case 1: out = ShaderStage::Pixel;         return true;
-        case 2: out = ShaderStage::Compute;       return true;
-        case 3: out = ShaderStage::Geometry;      return true;
-        case 4: out = ShaderStage::Hull;          return true;
-        case 5: out = ShaderStage::Domain;        return true;
-        case 6: out = ShaderStage::Mesh;          return true;
-        case 7: out = ShaderStage::Amplification; return true;
-        default: return false;
-        }
-    }
-
-    // Default compilation profile per stage. This is the ONE place where
-    // backend-specific terminology is allowed, because IGPU is the thing that
-    // translates a neutral request into a backend profile - callers never see it.
-    const char* entry_target_for(ShaderStage stage)
-    {
-        switch (stage)
-        {
-        case ShaderStage::Vertex:        return "vs_5_0";
-        case ShaderStage::Pixel:         return "ps_5_0";
-        case ShaderStage::Compute:       return "cs_5_0";
-        case ShaderStage::Geometry:      return "gs_5_0";
-        case ShaderStage::Hull:          return "hs_5_0";
-        case ShaderStage::Domain:        return "ds_5_0";
-        case ShaderStage::Mesh:
-        case ShaderStage::Amplification:
-            // SM 6.5 mesh/amplification shaders are not available on the D3D11
-            // path; reported as unsupported rather than silently mistranslated.
-            return nullptr;
-        }
-        return nullptr;
-    }
-
-    const char* stage_name(ShaderStage stage)
-    {
-        switch (stage)
-        {
-        case ShaderStage::Vertex:        return "vertex";
-        case ShaderStage::Pixel:         return "pixel";
-        case ShaderStage::Compute:       return "compute";
-        case ShaderStage::Geometry:      return "geometry";
-        case ShaderStage::Hull:          return "hull";
-        case ShaderStage::Domain:        return "domain";
-        case ShaderStage::Mesh:          return "mesh";
-        case ShaderStage::Amplification: return "amplification";
-        }
-        return "unknown";
-    }
-
-    // ShaderEntry stores the stage as a plain int32 so the header does not have
-    // to expose this local enum. Error messages still need a readable name, so
-    // this converts back, treating anything unrecognised as "unknown" rather
-    // than asserting.
-    const char* stored_stage_name(std::int32_t raw)
-    {
-        ShaderStage stage{};
-        return stage_from_int(raw, stage) ? stage_name(stage) : "unknown";
-    }
-
-    // Maps a neutral capability back to the stage it refers to, so
-    // compile_shader() can fail with the right message on unsupported stages.
-    bool stage_supported(ShaderStage stage)
-    {
-        switch (stage)
-        {
-        case ShaderStage::Vertex:   return igpu::supports(igpu::Capability::ShaderStageVertex);
-        case ShaderStage::Pixel:    return igpu::supports(igpu::Capability::ShaderStagePixel);
-        case ShaderStage::Compute:  return igpu::supports(igpu::Capability::ShaderStageCompute);
-        case ShaderStage::Geometry: return igpu::supports(igpu::Capability::ShaderStageGeometry);
-        case ShaderStage::Hull:
-        case ShaderStage::Domain:   return igpu::supports(igpu::Capability::ShaderStageTessellation);
-        case ShaderStage::Mesh:
-        case ShaderStage::Amplification:
-            return igpu::supports(igpu::Capability::ShaderStageMesh);
-        }
-        return false;
-    }
-
-    std::string build_error_message(
-        ShaderStage stage,
-        ID3DBlob* errors,
-        HRESULT hr)
-    {
-        std::string message = "igpu_shader_compile_";
-        message += stage_name(stage);
-        message += " failed (hr=0x";
-
-        char hex[16] = {};
-        std::snprintf(hex, sizeof(hex), "%08lX", static_cast<unsigned long>(hr));
-        message += hex;
-        message += ")";
-
-        if (errors != nullptr && errors->GetBufferPointer() != nullptr)
-        {
-            message += ": ";
-            message += static_cast<const char*>(errors->GetBufferPointer());
-        }
-
-        return message;
-    }
-
-    std::int64_t create_shader_handle(
-        ID3D11DeviceChild* shader, ID3DBlob* bytecode, ShaderStage stage)
-    {
-        auto& s = igpu::state();
-        const std::uint64_t id = s.next_shader_id++;
-        s.shaders.emplace(
-            id,
-            igpu::DeviceState::ShaderEntry{
-                shader, bytecode, static_cast<std::int32_t>(stage) });
-        return static_cast<std::int64_t>(id);
-    }
-
-    std::int64_t compile_shader(
-        ShaderStage stage,
-        std::string_view source,
-        std::string_view entry,
-        std::string_view target)
-    {
-        igpu::clear_last_error();
-
-        auto& s = igpu::state();
-        if (!s.initialised || s.device == nullptr)
-        {
-            igpu::set_last_error("igpu_shader_compile: call igpu_init() first");
-            return 0;
-        }
-
-        if (source.empty() || entry.empty())
-        {
-            igpu::set_last_error("igpu_shader_compile: source and entry must not be empty");
-            return 0;
-        }
-
-        // Check the backend can actually do this stage BEFORE reaching the
-        // compiler, so the caller gets a capability message rather than an
-        // opaque HLSL error.
-        if (!stage_supported(stage))
-        {
-            std::string message = "igpu_shader_compile: stage '";
-            message += stage_name(stage);
-            message += "' is not supported by the '";
-            message += igpu::backend_name();
-            message += "' backend (check igpu_supports)";
-            igpu::set_last_error(std::move(message));
-            return 0;
-        }
-
-        const char* default_target = entry_target_for(stage);
-        if (target.empty() && default_target == nullptr)
-        {
-            igpu::set_last_error("igpu_shader_compile: no default profile for this stage");
-            return 0;
-        }
-
-        const std::string target_profile =
-            target.empty() ? std::string(default_target) : std::string(target);
-
-        const std::string entry_point(entry);
-        const std::string source_text(source);
-
-        UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
-#if defined(_DEBUG)
-        flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#else
-        flags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
-#endif
-
-        ID3DBlob* bytecode = nullptr;
-        ID3DBlob* errors = nullptr;
-        const HRESULT hr = ::D3DCompile(
-            source_text.data(),
-            source_text.size(),
-            nullptr,
-            nullptr,
-            nullptr,
-            entry_point.c_str(),
-            target_profile.c_str(),
-            flags,
-            0,
-            &bytecode,
-            &errors);
-
-        if (FAILED(hr) || bytecode == nullptr)
-        {
-            igpu::set_last_error(build_error_message(stage, errors, hr));
-            if (errors != nullptr)
-            {
-                errors->Release();
-            }
-            if (bytecode != nullptr)
-            {
-                bytecode->Release();
-            }
-            return 0;
-        }
-
-        if (errors != nullptr)
-        {
-            errors->Release();
-        }
-
-        ID3D11DeviceChild* shader = nullptr;
-        switch (stage)
-        {
-        case ShaderStage::Vertex:
-        {
-            ID3D11VertexShader* vs = nullptr;
-            if (SUCCEEDED(s.device->CreateVertexShader(
-                    bytecode->GetBufferPointer(),
-                    bytecode->GetBufferSize(),
-                    nullptr,
-                    &vs)))
-            {
-                shader = vs;
-            }
-            break;
-        }
-        case ShaderStage::Pixel:
-        {
-            ID3D11PixelShader* ps = nullptr;
-            if (SUCCEEDED(s.device->CreatePixelShader(
-                    bytecode->GetBufferPointer(),
-                    bytecode->GetBufferSize(),
-                    nullptr,
-                    &ps)))
-            {
-                shader = ps;
-            }
-            break;
-        }
-        case ShaderStage::Compute:
-        {
-            ID3D11ComputeShader* cs = nullptr;
-            if (SUCCEEDED(s.device->CreateComputeShader(
-                    bytecode->GetBufferPointer(),
-                    bytecode->GetBufferSize(),
-                    nullptr,
-                    &cs)))
-            {
-                shader = cs;
-            }
-            break;
-        }
-        case ShaderStage::Geometry:
-        {
-            ID3D11GeometryShader* gs = nullptr;
-            if (SUCCEEDED(s.device->CreateGeometryShader(
-                    bytecode->GetBufferPointer(),
-                    bytecode->GetBufferSize(),
-                    nullptr,
-                    &gs)))
-            {
-                shader = gs;
-            }
-            break;
-        }
-        case ShaderStage::Hull:
-        {
-            ID3D11HullShader* hs = nullptr;
-            if (SUCCEEDED(s.device->CreateHullShader(
-                    bytecode->GetBufferPointer(),
-                    bytecode->GetBufferSize(),
-                    nullptr,
-                    &hs)))
-            {
-                shader = hs;
-            }
-            break;
-        }
-        case ShaderStage::Domain:
-        {
-            ID3D11DomainShader* ds = nullptr;
-            if (SUCCEEDED(s.device->CreateDomainShader(
-                    bytecode->GetBufferPointer(),
-                    bytecode->GetBufferSize(),
-                    nullptr,
-                    &ds)))
-            {
-                shader = ds;
-            }
-            break;
-        }
-        case ShaderStage::Mesh:
-        case ShaderStage::Amplification:
-            // Unreachable: stage_supported() already rejected these. Kept so
-            // the switch stays exhaustive under strict warnings.
-            break;
-        }
-
-        if (shader == nullptr)
-        {
-            // The device object was never created, so the bytecode has no owner
-            // to hand it to and must be released here.
-            bytecode->Release();
-            igpu::set_last_error(
-                std::string("igpu_shader_compile_") + stage_name(stage) +
-                ": CreateShader failed");
-            return 0;
-        }
-
-        // Ownership of the blob transfers to the shader entry: an input layout
-        // needs the vertex signature that lives inside it.
-        return create_shader_handle(shader, bytecode, stage);
-    }
 }
 
 bool igpu_init(
@@ -384,7 +63,14 @@ std::string igpu_version()
 
 bool igpu_is_available()
 {
-    return igpu::state().initialised;
+    igpu::refresh_device_status();
+    const auto& s = igpu::state();
+    return s.initialised && !s.device_lost;
+}
+
+bool igpu_device_lost()
+{
+    return igpu::device_was_removed();
 }
 
 std::int32_t igpu_get_feature_level()
@@ -411,11 +97,17 @@ std::int32_t igpu_get_feature_level()
 std::string igpu_get_adapter_description()
 {
     const auto& s = igpu::state();
-    if (!s.adapter_desc_valid)
+    if (s.adapter_desc_valid)
     {
-        return {};
+        return igpu::narrow(s.adapter_desc.Description);
     }
-    return igpu::narrow(s.adapter_desc.Description);
+    return igpu::probed_device_name();
+}
+
+bool igpu_set_graphics_info(std::string_view vendor, std::string_view version, std::string_view renderer,
+                            std::string_view shading_language, std::int32_t max_texture_size)
+{
+    return igpu::set_graphics_info(vendor, version, renderer, shading_language, max_texture_size);
 }
 
 std::int64_t igpu_get_video_memory()
@@ -467,29 +159,7 @@ std::int64_t igpu_shader_compile(
     std::int32_t stage,
     std::string_view dialect)
 {
-    ShaderStage resolved{};
-    if (!stage_from_int(stage, resolved))
-    {
-        igpu::set_last_error("igpu_shader_compile: unknown shader stage");
-        return 0;
-    }
-
-    // Only HLSL is available on the current backend. An explicit conflicting
-    // dialect is a caller error worth reporting rather than silently ignoring.
-    if (!dialect.empty() && dialect != "hlsl")
-    {
-        std::string message = "igpu_shader_compile: dialect '";
-        message += std::string(dialect);
-        message += "' is not supported by the '";
-        message += igpu::backend_name();
-        message += "' backend (it compiles '";
-        message += igpu::shader_dialect();
-        message += "')";
-        igpu::set_last_error(std::move(message));
-        return 0;
-    }
-
-    return compile_shader(resolved, source, entry, {});
+    return igpu::shader_compile(source, entry, stage, dialect);
 }
 
 std::int64_t igpu_shader_compile_vertex(
@@ -497,7 +167,7 @@ std::int64_t igpu_shader_compile_vertex(
     std::string_view entry,
     std::string_view dialect)
 {
-    return igpu_shader_compile(source, entry, static_cast<std::int32_t>(ShaderStage::Vertex), dialect);
+    return igpu_shader_compile(source, entry, 0, dialect);
 }
 
 std::int64_t igpu_shader_compile_pixel(
@@ -505,7 +175,7 @@ std::int64_t igpu_shader_compile_pixel(
     std::string_view entry,
     std::string_view dialect)
 {
-    return igpu_shader_compile(source, entry, static_cast<std::int32_t>(ShaderStage::Pixel), dialect);
+    return igpu_shader_compile(source, entry, 1, dialect);
 }
 
 std::int64_t igpu_shader_compile_compute(
@@ -513,151 +183,22 @@ std::int64_t igpu_shader_compile_compute(
     std::string_view entry,
     std::string_view dialect)
 {
-    return igpu_shader_compile(source, entry, static_cast<std::int32_t>(ShaderStage::Compute), dialect);
+    return igpu_shader_compile(source, entry, 2, dialect);
 }
 
 bool igpu_shader_release(std::uint64_t shader)
 {
-    auto* entry = igpu::find_shader(shader);
-    if (entry == nullptr)
-    {
-        igpu::set_last_error("igpu_shader_release: unknown shader handle");
-        return false;
-    }
-
-    if (entry->object != nullptr)
-    {
-        entry->object->Release();
-    }
-    if (entry->bytecode != nullptr)
-    {
-        entry->bytecode->Release();
-    }
-
-    // Drop any binding that points at this handle. Otherwise
-    // igpu_get_bound_shader() would keep reporting a handle that no longer
-    // exists, so a caller asking "is my shader still bound" would be told yes
-    // about a shader that has been released.
-    auto& s = igpu::state();
-    for (auto it = s.bound_shaders.begin(); it != s.bound_shaders.end();)
-    {
-        it = (it->second == shader) ? s.bound_shaders.erase(it) : std::next(it);
-    }
-
-    s.shaders.erase(shader);
-    return true;
+    return igpu::shader_release(shader);
 }
 
 bool igpu_shader_bind(std::int64_t shader, std::int32_t stage_raw)
 {
-    igpu::clear_last_error();
-
-    auto& s = igpu::state();
-    if (!s.initialised || s.context == nullptr)
-    {
-        igpu::set_last_error("igpu_shader_bind: call igpu_init() first");
-        return false;
-    }
-
-    ShaderStage stage{};
-    if (!stage_from_int(stage_raw, stage))
-    {
-        igpu::set_last_error(
-            "igpu_shader_bind: unknown stage value " + std::to_string(stage_raw) +
-            " (use an IgpuShaderStage constant)");
-        return false;
-    }
-
-    // shader = 0 unbinds. That is a deliberate operation rather than an error,
-    // so a caller can hand the stage back without releasing the shader.
-    if (shader == 0)
-    {
-        switch (stage)
-        {
-        case ShaderStage::Vertex:   s.context->VSSetShader(nullptr, nullptr, 0); break;
-        case ShaderStage::Pixel:    s.context->PSSetShader(nullptr, nullptr, 0); break;
-        case ShaderStage::Compute:  s.context->CSSetShader(nullptr, nullptr, 0); break;
-        case ShaderStage::Geometry: s.context->GSSetShader(nullptr, nullptr, 0); break;
-        case ShaderStage::Hull:     s.context->HSSetShader(nullptr, nullptr, 0); break;
-        case ShaderStage::Domain:   s.context->DSSetShader(nullptr, nullptr, 0); break;
-        default:
-            igpu::set_last_error(
-                std::string("igpu_shader_bind: stage '") + stage_name(stage) +
-                "' has no backend stage to unbind");
-            return false;
-        }
-
-        s.bound_shaders.erase(static_cast<std::int32_t>(stage));
-        return true;
-    }
-
-    auto* entry = igpu::find_shader(static_cast<std::uint64_t>(shader));
-    if (entry == nullptr)
-    {
-        igpu::set_last_error("igpu_shader_bind: unknown shader handle");
-        return false;
-    }
-
-    // The stage must match what the handle was compiled for. Passing a pixel
-    // shader to VSSetShader is a type error the backend would report only much
-    // later, if at all, so it is caught here where the message can name both
-    // stages.
-    if (entry->stage != static_cast<std::int32_t>(stage))
-    {
-        igpu::set_last_error(
-            std::string("igpu_shader_bind: the handle was compiled for stage '") +
-            stored_stage_name(entry->stage) + "' but was bound to '" +
-            stage_name(stage) + "'");
-        return false;
-    }
-
-    switch (stage)
-    {
-    case ShaderStage::Vertex:
-        s.context->VSSetShader(static_cast<ID3D11VertexShader*>(entry->object), nullptr, 0);
-        break;
-    case ShaderStage::Pixel:
-        s.context->PSSetShader(static_cast<ID3D11PixelShader*>(entry->object), nullptr, 0);
-        break;
-    case ShaderStage::Compute:
-        s.context->CSSetShader(static_cast<ID3D11ComputeShader*>(entry->object), nullptr, 0);
-        break;
-    case ShaderStage::Geometry:
-        s.context->GSSetShader(static_cast<ID3D11GeometryShader*>(entry->object), nullptr, 0);
-        break;
-    case ShaderStage::Hull:
-        s.context->HSSetShader(static_cast<ID3D11HullShader*>(entry->object), nullptr, 0);
-        break;
-    case ShaderStage::Domain:
-        s.context->DSSetShader(static_cast<ID3D11DomainShader*>(entry->object), nullptr, 0);
-        break;
-    default:
-        igpu::set_last_error(
-            std::string("igpu_shader_bind: stage '") + stage_name(stage) +
-            "' has no backend stage object");
-        return false;
-    }
-
-    s.bound_shaders[static_cast<std::int32_t>(stage)] =
-        static_cast<std::uint64_t>(shader);
-    return true;
+    return igpu::shader_bind(shader, stage_raw);
 }
 
 std::int64_t igpu_get_bound_shader(std::int32_t stage_raw)
 {
-    igpu::clear_last_error();
-
-    ShaderStage stage{};
-    if (!stage_from_int(stage_raw, stage))
-    {
-        igpu::set_last_error(
-            "igpu_get_bound_shader: unknown stage value " + std::to_string(stage_raw));
-        return 0;
-    }
-
-    const auto& bound = igpu::state().bound_shaders;
-    const auto it = bound.find(static_cast<std::int32_t>(stage));
-    return it == bound.end() ? 0 : static_cast<std::int64_t>(it->second);
+    return igpu::get_bound_shader(stage_raw);
 }
 
 std::string igpu_get_last_error()
@@ -673,10 +214,26 @@ std::int64_t igpu_input_layout_create(
     std::int64_t shader,
     const gm::wire::GMArrayView& usage,
     const gm::wire::GMArrayView& type,
+    const gm::wire::GMArrayView& step,
     std::int32_t element_count,
-    std::int32_t stride)
+    std::int32_t vertex_stride,
+    std::int32_t instance_stride)
 {
-    return igpu::input_layout_create(shader, usage, type, element_count, stride);
+    return igpu::input_layout_create_step(
+        shader, usage, type, step, element_count, vertex_stride, instance_stride);
+}
+
+std::int64_t igpu_input_layout_create_step(
+    std::int64_t shader,
+    const gm::wire::GMArrayView& usage,
+    const gm::wire::GMArrayView& type,
+    const gm::wire::GMArrayView& step,
+    std::int32_t element_count,
+    std::int32_t vertex_stride,
+    std::int32_t instance_stride)
+{
+    return igpu::input_layout_create_step(
+        shader, usage, type, step, element_count, vertex_stride, instance_stride);
 }
 
 bool igpu_input_layout_release(std::uint64_t layout)
@@ -719,18 +276,115 @@ bool igpu_buffer_release(std::uint64_t buffer)
     return igpu::buffer_release(buffer);
 }
 
+bool igpu_storage_bind(std::uint64_t buffer, std::int32_t stage, std::int32_t slot)
+{
+    return igpu::storage_bind(buffer, stage, slot);
+}
+
 // ---------------------------------------------------------------------------
 // Drawing
 // ---------------------------------------------------------------------------
 
 bool igpu_draw(
     std::uint64_t vertex_buffer,
+    std::uint64_t instance_buffer,
     std::uint64_t layout,
     std::int32_t primitive,
     std::int64_t first_vertex,
-    std::int64_t vertex_count)
+    std::int64_t vertex_count,
+    std::int64_t instance_count,
+    std::int64_t blend_state,
+    std::int64_t depth_state,
+    std::int64_t raster_state,
+    std::int64_t sampler_state)
 {
-    return igpu::draw(vertex_buffer, layout, primitive, first_vertex, vertex_count);
+    if (instance_count == 1 && instance_buffer == 0)
+    {
+        return igpu::draw(
+            vertex_buffer, layout, primitive, first_vertex, vertex_count,
+            blend_state, depth_state, raster_state, sampler_state);
+    }
+    if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
+    {
+        igpu::set_last_error("igpu_draw: instanced draws do not take pipeline state yet");
+        return false;
+    }
+    return igpu::draw_instanced(
+        vertex_buffer, instance_buffer, layout, primitive, first_vertex, vertex_count, instance_count);
+}
+
+bool igpu_draw_instanced(
+    std::uint64_t vertex_buffer,
+    std::uint64_t instance_buffer,
+    std::uint64_t layout,
+    std::int32_t primitive,
+    std::int64_t first_vertex,
+    std::int64_t vertex_count,
+    std::int64_t instance_count)
+{
+    return igpu::draw_instanced(
+        vertex_buffer, instance_buffer, layout, primitive, first_vertex, vertex_count, instance_count);
+}
+
+bool igpu_draw_indirect(
+    std::uint64_t vertex_buffer,
+    std::uint64_t instance_buffer,
+    std::uint64_t layout,
+    std::int32_t primitive,
+    std::uint64_t args,
+    std::int64_t args_offset,
+    std::int64_t blend_state,
+    std::int64_t depth_state,
+    std::int64_t raster_state,
+    std::int64_t sampler_state)
+{
+    if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
+    {
+        igpu::set_last_error("igpu_draw_indirect: pipeline state on an indirect draw is not wired yet");
+        return false;
+    }
+    return igpu::draw_indirect(vertex_buffer, instance_buffer, layout, primitive, args, args_offset);
+}
+
+bool igpu_draw_patch(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::int32_t control_points,
+    std::int64_t first_vertex,
+    std::int64_t vertex_count,
+    std::int64_t blend_state,
+    std::int64_t depth_state,
+    std::int64_t raster_state,
+    std::int64_t sampler_state)
+{
+    if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
+    {
+        igpu::set_last_error("igpu_draw_patch: pipeline state on a patch draw is not wired yet");
+        return false;
+    }
+    return igpu::draw_patch(vertex_buffer, layout, control_points, first_vertex, vertex_count);
+}
+
+bool igpu_draw_indexed_indirect(
+    std::uint64_t vertex_buffer,
+    std::uint64_t instance_buffer,
+    std::uint64_t layout,
+    std::uint64_t index_buffer,
+    std::int32_t primitive,
+    std::uint64_t args,
+    std::int64_t args_offset,
+    std::int64_t blend_state,
+    std::int64_t depth_state,
+    std::int64_t raster_state,
+    std::int64_t sampler_state)
+{
+    if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
+    {
+        igpu::set_last_error("igpu_draw_indexed_indirect: pipeline state on an indirect draw is not wired yet");
+        return false;
+    }
+    return igpu::draw_indexed_indirect(
+        vertex_buffer, instance_buffer, layout, index_buffer, primitive, args, args_offset);
 }
 
 bool igpu_draw_indexed(
@@ -739,10 +393,560 @@ bool igpu_draw_indexed(
     std::uint64_t index_buffer,
     std::int32_t primitive,
     std::int64_t first_index,
-    std::int64_t index_count)
+    std::int64_t index_count,
+    std::int64_t blend_state,
+    std::int64_t depth_state,
+    std::int64_t raster_state,
+    std::int64_t sampler_state)
 {
     return igpu::draw_indexed(
-        vertex_buffer, layout, index_buffer, primitive, first_index, index_count);
+        vertex_buffer, layout, index_buffer, primitive, first_index, index_count,
+        blend_state, depth_state, raster_state, sampler_state);
+}
+
+std::int64_t igpu_blend_state_create(
+    bool enabled,
+    std::int32_t src,
+    std::int32_t dest,
+    std::int32_t equation,
+    std::int32_t src_alpha,
+    std::int32_t dest_alpha,
+    std::int32_t equation_alpha,
+    bool write_red,
+    bool write_green,
+    bool write_blue,
+    bool write_alpha)
+{
+    return igpu::blend_state_create(
+        enabled, src, dest, equation, src_alpha, dest_alpha, equation_alpha,
+        write_red, write_green, write_blue, write_alpha);
+}
+
+std::int64_t igpu_depth_state_create(
+    bool depth_test,
+    bool depth_write,
+    std::int32_t depth_func,
+    bool stencil_enable,
+    std::int32_t stencil_func,
+    std::int32_t stencil_fail,
+    std::int32_t stencil_depth_fail,
+    std::int32_t stencil_pass,
+    std::int32_t stencil_ref,
+    std::int32_t stencil_read_mask,
+    std::int32_t stencil_write_mask)
+{
+    return igpu::depth_state_create(
+        depth_test, depth_write, depth_func, stencil_enable, stencil_func,
+        stencil_fail, stencil_depth_fail, stencil_pass, stencil_ref,
+        stencil_read_mask, stencil_write_mask);
+}
+
+std::int64_t igpu_raster_state_create(
+    std::int32_t cull,
+    std::int32_t fill,
+    bool scissor,
+    bool depth_clip)
+{
+    return igpu::raster_state_create(cull, fill, scissor, depth_clip);
+}
+
+std::int64_t igpu_sampler_state_create(
+    std::int32_t magnification,
+    std::int32_t minification,
+    std::int32_t mip,
+    std::int32_t address_u,
+    std::int32_t address_v,
+    std::int32_t address_w,
+    std::int32_t anisotropy,
+    std::int32_t border,
+    std::int32_t compare,
+    float level_offset,
+    float finest,
+    float coarsest)
+{
+    return igpu::sampler_state_create_full(
+        magnification, minification, mip, address_u, address_v, address_w,
+        anisotropy, border, compare, level_offset, finest, coarsest);
+}
+
+std::int64_t igpu_sampler_state_create_address(std::int32_t filter, std::int32_t address, std::int32_t anisotropy)
+{
+    return igpu::sampler_state_create_address(filter, address, anisotropy);
+}
+
+std::int64_t igpu_sampler_state_create_border(std::int32_t filter, std::int32_t anisotropy, std::int32_t border)
+{
+    return igpu::sampler_state_create_border(filter, anisotropy, border);
+}
+
+std::int64_t igpu_sampler_state_create_axes(
+    std::int32_t filter,
+    std::int32_t address_u,
+    std::int32_t address_v,
+    std::int32_t address_w,
+    std::int32_t anisotropy)
+{
+    return igpu::sampler_state_create_axes(filter, address_u, address_v, address_w, anisotropy);
+}
+
+std::int64_t igpu_sampler_state_create_axes_border(
+    std::int32_t filter,
+    std::int32_t address_u,
+    std::int32_t address_v,
+    std::int32_t address_w,
+    std::int32_t anisotropy,
+    std::int32_t border)
+{
+    return igpu::sampler_state_create_axes_border(filter, address_u, address_v, address_w, anisotropy, border);
+}
+
+std::int64_t igpu_sampler_state_create_axes_range(
+    std::int32_t filter,
+    std::int32_t address_u,
+    std::int32_t address_v,
+    std::int32_t address_w,
+    std::int32_t anisotropy,
+    float level_offset,
+    float finest,
+    float coarsest)
+{
+    return igpu::sampler_state_create_axes_range(
+        filter, address_u, address_v, address_w, anisotropy, level_offset, finest, coarsest);
+}
+
+std::int64_t igpu_sampler_state_create_axes_border_range(
+    std::int32_t filter,
+    std::int32_t address_u,
+    std::int32_t address_v,
+    std::int32_t address_w,
+    std::int32_t anisotropy,
+    std::int32_t border,
+    float level_offset,
+    float finest,
+    float coarsest)
+{
+    return igpu::sampler_state_create_axes_border_range(
+        filter, address_u, address_v, address_w, anisotropy, border, level_offset, finest, coarsest);
+}
+
+std::int64_t igpu_sampler_state_create_filters(
+    std::int32_t magnification,
+    std::int32_t minification,
+    std::int32_t mip,
+    std::int32_t address_u,
+    std::int32_t address_v,
+    std::int32_t address_w)
+{
+    return igpu::sampler_state_create_filters(magnification, minification, mip, address_u, address_v, address_w);
+}
+
+std::int64_t igpu_sampler_state_create_filters_border(
+    std::int32_t magnification,
+    std::int32_t minification,
+    std::int32_t mip,
+    std::int32_t address_u,
+    std::int32_t address_v,
+    std::int32_t address_w,
+    std::int32_t border)
+{
+    return igpu::sampler_state_create_filters_border(
+        magnification, minification, mip, address_u, address_v, address_w, border);
+}
+
+std::int64_t igpu_sampler_state_create_filters_offset(
+    std::int32_t magnification,
+    std::int32_t minification,
+    std::int32_t mip,
+    std::int32_t address_u,
+    std::int32_t address_v,
+    std::int32_t address_w,
+    float level_offset)
+{
+    return igpu::sampler_state_create_filters_offset(
+        magnification, minification, mip, address_u, address_v, address_w, level_offset);
+}
+
+std::int64_t igpu_sampler_state_create_filters_range(
+    std::int32_t magnification,
+    std::int32_t minification,
+    std::int32_t mip,
+    std::int32_t address_u,
+    std::int32_t address_v,
+    std::int32_t address_w,
+    float level_offset,
+    float finest,
+    float coarsest)
+{
+    return igpu::sampler_state_create_filters_range(
+        magnification, minification, mip, address_u, address_v, address_w, level_offset, finest, coarsest);
+}
+
+std::int64_t igpu_sampler_state_create_filters_border_range(
+    std::int32_t magnification,
+    std::int32_t minification,
+    std::int32_t mip,
+    std::int32_t address_u,
+    std::int32_t address_v,
+    std::int32_t address_w,
+    std::int32_t border,
+    float level_offset,
+    float finest,
+    float coarsest)
+{
+    return igpu::sampler_state_create_filters_border_range(
+        magnification, minification, mip, address_u, address_v, address_w, border, level_offset, finest, coarsest);
+}
+
+std::int64_t igpu_sampler_state_create_compare(
+    std::int32_t compare,
+    std::int32_t magnification,
+    std::int32_t minification,
+    std::int32_t mip,
+    std::int32_t address_u,
+    std::int32_t address_v,
+    std::int32_t address_w)
+{
+    return igpu::sampler_state_create_compare(
+        compare, magnification, minification, mip, address_u, address_v, address_w);
+}
+
+bool igpu_state_release(std::uint64_t state)
+{
+    return igpu::state_release(state);
+}
+
+bool igpu_draw_with_state(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::int32_t primitive,
+    std::int64_t first_vertex,
+    std::int64_t vertex_count,
+    std::int64_t blend_state,
+    std::int64_t depth_state,
+    std::int64_t raster_state,
+    std::int64_t sampler_state)
+{
+    return igpu::draw(
+        vertex_buffer, layout, primitive, first_vertex, vertex_count,
+        blend_state, depth_state, raster_state, sampler_state);
+}
+
+bool igpu_draw_indexed_with_state(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::uint64_t index_buffer,
+    std::int32_t primitive,
+    std::int64_t first_index,
+    std::int64_t index_count,
+    std::int64_t blend_state,
+    std::int64_t depth_state,
+    std::int64_t raster_state,
+    std::int64_t sampler_state)
+{
+    return igpu::draw_indexed(
+        vertex_buffer, layout, index_buffer, primitive, first_index, index_count,
+        blend_state, depth_state, raster_state, sampler_state);
+}
+
+std::int64_t igpu_texture_create(
+    std::int32_t kind,
+    std::int32_t width,
+    std::int32_t height,
+    std::int32_t depth,
+    std::int32_t format,
+    bool render_target,
+    bool storage,
+    std::int32_t mip_count)
+{
+    if (mip_count == 1)
+    {
+        return igpu::texture_create_kind(kind, width, height, depth, format, render_target, storage);
+    }
+    return igpu::texture_create_mips(kind, width, height, depth, format, storage, mip_count);
+}
+
+bool igpu_texture_release(std::uint64_t texture)
+{
+    return igpu::texture_release(texture);
+}
+
+std::int64_t igpu_texture_get_pixel(std::uint64_t texture, std::int32_t x, std::int32_t y)
+{
+    return igpu::texture_get_pixel(texture, x, y);
+}
+
+std::int64_t igpu_texture_create_kind(
+    std::int32_t kind,
+    std::int32_t width,
+    std::int32_t height,
+    std::int32_t depth,
+    std::int32_t format,
+    bool render_target,
+    bool storage)
+{
+    return igpu::texture_create_kind(kind, width, height, depth, format, render_target, storage);
+}
+
+std::int64_t igpu_texture_create_mips(
+    std::int32_t kind,
+    std::int32_t width,
+    std::int32_t height,
+    std::int32_t depth,
+    std::int32_t format,
+    bool storage,
+    std::int32_t mip_count)
+{
+    return igpu::texture_create_mips(kind, width, height, depth, format, storage, mip_count);
+}
+
+bool igpu_texture_generate_mips(std::uint64_t texture)
+{
+    return igpu::texture_generate_mips(texture);
+}
+
+std::int64_t igpu_texture_read(std::uint64_t texture, std::int32_t x, std::int32_t y, std::int32_t layer, std::int32_t mip)
+{
+    return igpu::texture_read_level(texture, x, y, layer, mip);
+}
+
+std::int64_t igpu_texture_read_level(std::uint64_t texture, std::int32_t x, std::int32_t y, std::int32_t layer, std::int32_t mip)
+{
+    return igpu::texture_read_level(texture, x, y, layer, mip);
+}
+
+bool igpu_draw_to_texture_layer(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::int32_t primitive,
+    std::int64_t first_vertex,
+    std::int64_t vertex_count,
+    std::uint64_t texture,
+    std::int32_t layer)
+{
+    return igpu::draw_to_texture_layer(
+        vertex_buffer, layout, primitive, first_vertex, vertex_count, texture, layer);
+}
+
+bool igpu_draw_to_texture_level(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::int32_t primitive,
+    std::int64_t first_vertex,
+    std::int64_t vertex_count,
+    std::uint64_t texture,
+    std::int32_t layer,
+    std::int32_t mip)
+{
+    return igpu::draw_to_texture_level(
+        vertex_buffer, layout, primitive, first_vertex, vertex_count, texture, layer, mip);
+}
+
+bool igpu_dispatch(
+    std::int32_t groups_x,
+    std::int32_t groups_y,
+    std::int32_t groups_z,
+    const gm::wire::GMArrayView& kinds,
+    const gm::wire::GMArrayView& targets,
+    const gm::wire::GMArrayView& layers,
+    const gm::wire::GMArrayView& mips)
+{
+    const std::size_t count = kinds.size();
+    if (count < 1 || count > 8 || targets.size() != count || layers.size() != count || mips.size() != count)
+    {
+        igpu::set_last_error("igpu_dispatch: pass 1 to 8 entries, with equal array lengths");
+        return false;
+    }
+    bool mip_set = false;
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        if (layers.as<std::int32_t>(i) != 0)
+        {
+            igpu::set_last_error("igpu_dispatch: a texture write rejects a non-zero layer");
+            return false;
+        }
+        if (mips.as<std::int32_t>(i) != 0)
+        {
+            mip_set = true;
+        }
+    }
+    if (!mip_set)
+    {
+        return igpu::dispatch_writes(groups_x, groups_y, groups_z, kinds, targets);
+    }
+    if (count == 1 && kinds.as<std::int32_t>(0) == 0)
+    {
+        return igpu::dispatch_level(
+            groups_x, groups_y, groups_z, targets.as<std::uint64_t>(0), mips.as<std::int32_t>(0));
+    }
+    igpu::set_last_error("igpu_dispatch: a mip level is only accepted for a single texture write");
+    return false;
+}
+
+bool igpu_dispatch_level(std::int32_t groups_x, std::int32_t groups_y, std::int32_t groups_z, std::uint64_t storage_texture, std::int32_t mip)
+{
+    return igpu::dispatch_level(groups_x, groups_y, groups_z, storage_texture, mip);
+}
+
+bool igpu_dispatch_buffer(std::int32_t groups_x, std::int32_t groups_y, std::int32_t groups_z, std::uint64_t storage_buffer)
+{
+    return igpu::dispatch_buffer(groups_x, groups_y, groups_z, storage_buffer);
+}
+
+bool igpu_dispatch_both(
+    std::int32_t groups_x,
+    std::int32_t groups_y,
+    std::int32_t groups_z,
+    std::uint64_t storage_texture,
+    std::uint64_t storage_buffer)
+{
+    return igpu::dispatch_both(groups_x, groups_y, groups_z, storage_texture, storage_buffer);
+}
+
+bool igpu_dispatch_writes(
+    std::int32_t groups_x,
+    std::int32_t groups_y,
+    std::int32_t groups_z,
+    const gm::wire::GMArrayView& kinds,
+    const gm::wire::GMArrayView& targets)
+{
+    return igpu::dispatch_writes(groups_x, groups_y, groups_z, kinds, targets);
+}
+
+std::int64_t igpu_query_create(std::int32_t kind)
+{
+    return static_cast<std::int64_t>(igpu::query_create(kind));
+}
+
+bool igpu_query_begin(std::uint64_t query)
+{
+    return igpu::query_begin(query);
+}
+
+bool igpu_query_end(std::uint64_t query)
+{
+    return igpu::query_end(query);
+}
+
+bool igpu_query_ready(std::uint64_t query)
+{
+    return igpu::query_ready(query);
+}
+
+std::int64_t igpu_query_result(std::uint64_t query)
+{
+    return igpu::query_result(query);
+}
+
+bool igpu_query_release(std::uint64_t query)
+{
+    return igpu::query_release(query);
+}
+
+std::int64_t igpu_timestamp_frequency()
+{
+    return igpu::timestamp_frequency();
+}
+
+std::int64_t igpu_fence_create()
+{
+    return static_cast<std::int64_t>(igpu::fence_create());
+}
+
+bool igpu_fence_signal(std::uint64_t fence)
+{
+    return igpu::fence_signal(fence);
+}
+
+bool igpu_fence_signaled(std::uint64_t fence)
+{
+    return igpu::fence_signaled(fence);
+}
+
+bool igpu_fence_release(std::uint64_t fence)
+{
+    return igpu::fence_release(fence);
+}
+
+bool igpu_draw_to_texture(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::int32_t primitive,
+    std::int64_t first_vertex,
+    std::int64_t vertex_count,
+    std::uint64_t texture)
+{
+    return igpu::draw_to_texture(vertex_buffer, layout, primitive, first_vertex, vertex_count, texture);
+}
+
+bool igpu_draw_to_render_targets(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::int32_t primitive,
+    std::int64_t first_vertex,
+    std::int64_t vertex_count,
+    const gm::wire::GMArrayView& targets,
+    const gm::wire::GMArrayView& layers,
+    const gm::wire::GMArrayView& mips,
+    std::int64_t blend_state,
+    std::int64_t depth_state,
+    std::int64_t raster_state,
+    std::int64_t sampler_state)
+{
+    if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
+    {
+        igpu::set_last_error("igpu_draw_to_render_targets: pipeline state on an offscreen draw is not wired yet");
+        return false;
+    }
+    return igpu::draw_to_render_targets_layer(
+        vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips);
+}
+
+bool igpu_draw_to_render_targets_level(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::int32_t primitive,
+    std::int64_t first_vertex,
+    std::int64_t vertex_count,
+    const gm::wire::GMArrayView& targets,
+    const gm::wire::GMArrayView& mips)
+{
+    return igpu::draw_to_render_targets_level(
+        vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, mips);
+}
+
+bool igpu_draw_to_render_targets_layer(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::int32_t primitive,
+    std::int64_t first_vertex,
+    std::int64_t vertex_count,
+    const gm::wire::GMArrayView& targets,
+    const gm::wire::GMArrayView& layers,
+    const gm::wire::GMArrayView& mips)
+{
+    return igpu::draw_to_render_targets_layer(
+        vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips);
+}
+
+bool igpu_draw_sampled(
+    std::uint64_t vertex_buffer,
+    std::uint64_t layout,
+    std::int32_t primitive,
+    std::int64_t first_vertex,
+    std::int64_t vertex_count,
+    std::uint64_t texture,
+    std::int64_t blend_state,
+    std::int64_t depth_state,
+    std::int64_t raster_state,
+    std::int64_t sampler_state)
+{
+    if (blend_state != 0 || depth_state != 0 || raster_state != 0)
+    {
+        igpu::set_last_error("igpu_draw_sampled: only the sampler state is applied on this draw");
+        return false;
+    }
+    return igpu::draw_sampled(
+        vertex_buffer, layout, primitive, first_vertex, vertex_count, texture, sampler_state);
 }
 
 std::int32_t igpu_get_draw_count()
@@ -758,4 +962,114 @@ std::int32_t igpu_get_draw_restore_failures()
 bool igpu_is_vertex_buffer_bound(std::uint64_t buffer)
 {
     return igpu::is_vertex_buffer_bound(buffer);
+}
+
+std::int32_t igpu_shader_block_count(std::int64_t shader)
+{
+    return igpu::shader_block_count(shader);
+}
+
+std::string igpu_shader_block_name(std::int64_t shader, std::int32_t index)
+{
+    return igpu::shader_block_name(shader, index);
+}
+
+std::int32_t igpu_shader_block_size(std::int64_t shader, std::string_view block)
+{
+    return igpu::shader_block_size(shader, block);
+}
+
+std::int32_t igpu_shader_block_slot(std::int64_t shader, std::string_view block)
+{
+    return igpu::shader_block_slot(shader, block);
+}
+
+std::int32_t igpu_shader_member_count(std::int64_t shader, std::string_view block)
+{
+    return igpu::shader_member_count(shader, block);
+}
+
+std::string igpu_shader_member_name(std::int64_t shader, std::string_view block, std::int32_t index)
+{
+    return igpu::shader_member_name(shader, block, index);
+}
+
+std::int32_t igpu_shader_member_offset(std::int64_t shader, std::string_view block, std::string_view member)
+{
+    return igpu::shader_member_offset(shader, block, member);
+}
+
+std::int32_t igpu_shader_member_size(std::int64_t shader, std::string_view block, std::string_view member)
+{
+    return igpu::shader_member_size(shader, block, member);
+}
+
+std::int32_t igpu_shader_member_type(std::int64_t shader, std::string_view block, std::string_view member)
+{
+    return igpu::shader_member_type(shader, block, member);
+}
+
+std::int32_t igpu_shader_member_rows(std::int64_t shader, std::string_view block, std::string_view member)
+{
+    return igpu::shader_member_rows(shader, block, member);
+}
+
+std::int32_t igpu_shader_member_columns(std::int64_t shader, std::string_view block, std::string_view member)
+{
+    return igpu::shader_member_columns(shader, block, member);
+}
+
+std::int32_t igpu_shader_member_elements(std::int64_t shader, std::string_view block, std::string_view member)
+{
+    return igpu::shader_member_elements(shader, block, member);
+}
+
+std::vector<gm_structs::IgpuUniformBlock> igpu_shader_reflect(std::int64_t shader)
+{
+    igpu::clear_last_error();
+    const std::int32_t blocks = igpu::shader_block_count(shader);
+    if (!igpu::last_error().empty())
+    {
+        return {};
+    }
+    std::vector<gm_structs::IgpuUniformBlock> out;
+    out.reserve(static_cast<std::size_t>(blocks));
+    for (std::int32_t i = 0; i < blocks; ++i)
+    {
+        gm_structs::IgpuUniformBlock block;
+        block.name = igpu::shader_block_name(shader, i);
+        if (!igpu::last_error().empty())
+        {
+            return {};
+        }
+        block.size = igpu::shader_block_size(shader, block.name);
+        block.slot = igpu::shader_block_slot(shader, block.name);
+        const std::int32_t members = igpu::shader_member_count(shader, block.name);
+        block.members.reserve(static_cast<std::size_t>(members));
+        for (std::int32_t m = 0; m < members; ++m)
+        {
+            gm_structs::IgpuUniformMember member;
+            member.name = igpu::shader_member_name(shader, block.name, m);
+            member.offset = igpu::shader_member_offset(shader, block.name, member.name);
+            member.size = igpu::shader_member_size(shader, block.name, member.name);
+            member.type = igpu::shader_member_type(shader, block.name, member.name);
+            member.rows = igpu::shader_member_rows(shader, block.name, member.name);
+            member.columns = igpu::shader_member_columns(shader, block.name, member.name);
+            member.elements = igpu::shader_member_elements(shader, block.name, member.name);
+            block.members.push_back(std::move(member));
+        }
+        out.push_back(std::move(block));
+    }
+    return out;
+}
+
+bool igpu_uniform_write(std::uint64_t buffer, std::int64_t shader, std::string_view block,
+                        std::string_view member, const gm::wire::GMArrayView& values)
+{
+    return igpu::uniform_write(buffer, shader, block, member, values);
+}
+
+bool igpu_uniform_bind(std::uint64_t buffer, std::int32_t stage, std::int32_t slot)
+{
+    return igpu::uniform_bind(buffer, stage, slot);
 }

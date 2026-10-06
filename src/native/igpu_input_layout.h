@@ -45,5 +45,14 @@ namespace igpu
         std::int32_t element_count,
         std::int32_t stride);
 
+    std::int64_t input_layout_create_step(
+        std::int64_t shader,
+        const gm::wire::GMArrayView& usage,
+        const gm::wire::GMArrayView& type,
+        const gm::wire::GMArrayView& step,
+        std::int32_t element_count,
+        std::int32_t vertex_stride,
+        std::int32_t instance_stride);
+
     bool input_layout_release(std::uint64_t layout);
 }

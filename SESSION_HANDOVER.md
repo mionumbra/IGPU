@@ -1,12 +1,84 @@
-# 会话交接 — 2026-09-23
+# 会话交接 — 2026-10-06 — 版本 0.4.0
 
-> 本文件是**本次会话的交接单**。项目本身的长期文档是 `HANDOVER.md`，
-> 本文件只讲"这次会话做了什么、现在处于什么状态、下一步从哪开始"。
-> 读完本文件后，**请去读 `HANDOVER.md` 的 §0.0**，那里有更完整的背景。
+> 先读这一节。`HANDOVER.md` 是长文档，开头版本号是 0.4.0，正文里 9 月的叙述已经过时。文末仍保留 2026-09-23 审计记录。
+>
+> 比较采样的像素结果还在：参考值 0.5，左纹素 0.25、右纹素 0.75，小于比较是左黑右红，大于比较对调，线性比较在交界处是红 128。
+
+## 这一版是什么
+
+`0.4.0` 把公开函数从 105 个收到 59 个。一个概念一个函数。Windows D3D11 上集成测试 `checks failed : 0`，当前检查项 **827** 项。`igpu_version()` 返回 `0.4.0`。
+
+`igpu_init(device, context, swapchain)` 仍是三个 `gmval` 指针。不要把指针塞进 GMIDL 类的 `gmval` 字段：本机 extgen `v1.d8c68bd` 会把那种字段生成成 `DataStream`，而 `readValue<DataStream>` 编不过。要让它编过就得改生成文件，下次跑 extgen 会盖掉。反射用的是具体字段的类 `IgpuUniformMember` / `IgpuUniformBlock`，那个能生成可读的 C++ 结构体。
+
+生成物只由 extgen 重写：`code_gen/`、`project/scripts/IGPU_API/IGPU_API.gml`、`project/extensions/IGPU/IGPU.yy`、根上的 `docs` 文件。不要手改它们。
+
+## 下一轮做什么
+
+按这个顺序，不要跳：
+
+1. **OpenGL / OpenGL ES 后端。** extgen 的桌面和移动目标：Linux、macOS、Android、iOS、tvOS。`config.json` 现在只开了 Windows。Runtime 源码在 `D:\Users\User\Documents\gml_ext\OpenGM\runtime\GMS2-Runner-Main\VC_Runner`。这些平台的 `os_get_info` 不交上下文指针。游戏步进和 GL 上下文在同一条线程上，上下文当时已经 current。Android / iOS / tvOS 这份源码建的是 OpenGL ES 2。macOS 请求 Legacy profile。Linux 是不请求版本的旧式 GLX。Windows 这份运行时没有 OpenGL。
+2. **HTML5 / WASM**（含 GX.games）。不能用 extgen，要单独写 JavaScript。排在本机后端之后。
+3. **主机**（Xbox、PS4、PS5、Switch）。排在 HTML5 / WASM 之后。extgen schema 里有槽位，现在不启用。
+
+做 OpenGL 之前，这几条公开绘制还拒绝非零的混合、深度或光栅状态：实例化、间接绘制、面片、画进纹理。`igpu_draw_sampled` 只应用采样器。比较采样要求各向异性 1、偏移 0、不限制最粗（`coarsest < 0`）。边框色 `0` 是黑色，不是「没给颜色」。比较值 `0` 是普通采样。
+
+## 必须守住的结构
+
+## 必须守住的结构
+
+这是整个扩展的规则，不是某一条功能的规则。
+
+- 公开接口是跨后端的。`spec.gmidl`、公共头和 GML 里不出现 d3d、dxgi、hlsl、`_5_0`、ID3D。方言提示字符串 `hlsl` / `glsl` / `glsl_es` / `msl` / `spirv` 除外。复用 GameMaker 已有的名字：`bm_*`、`cmpfunc_*`、`cull_*`、`tf_*`、`surface_*`、`IgpuAddressMode`。
+- 调用链是 `spec.gmidl` → extgen 生成的 `code_gen` → `src/native/IGPU_native.cpp` 的薄包装 → `igpu::` 门面（`igpu_gpu.cpp`）→ `Backend` 虚函数 → `d3d11/igpu_d3d11_backend.cpp` → `namespace igpu::d3d11_impl`。唯一选择具体后端的地方是 `bind_device()` 里的 `make_d3d11_backend`。
+- 门面在虚函数调用之前执行 `require_device`。虚函数不写默认参数。公共头可以有默认参数。
+- GameMaker 颜色是 BGR（`c_red` 是 255，`c_lime` 是 65280，`c_blue` 是 16711680，`c_fuchsia` 是 16711935）。拆通道在 `igpu_gpu.cpp` 的 `gm_colour_channels()`，后端只收到 0 到 1 的红、绿、蓝。后端做不到的值让这次调用失败，不要改成别的值。
+- `d3d11_impl` 内部的无限定调用必须解析到 `d3d11_impl`，否则会递归回门面。
+- MSVC 按代码页 936 读 cpp。中文注释里的字节 `0x5C` 会吃掉下一行。编译进 MSVC 的 cpp 注释只用 ASCII。C4819 是已知噪声。
+- 不要手改 `.yy`、`.yyp`、`code_gen`。改了 `spec.gmidl` 的签名就跑 `D:\GM-ExtensionGenerator\extgen.exe --config config.json`。注释改动可以不跑，签名改动必须跑，而且生成的 `IGPUInternal_native.h` 必须和 `IGPU_native.cpp` 的包装一致。
+- 能力只有真有 API 才为 true。键数保持 35。键清单代码块里不要写 `surface_*`。文档里不要为无关列表写「N 个键」，验证脚本会把那句话当成键数。
+- 断言数是 `_igpu_check(` 的调用点，去掉函数定义那一行。文档里的「当前检查项 **N 项**」必须落在验证脚本打印的区间里。
+- GML 数组字面量里不要写裸负数。数组里的句柄和枚举经常以 `uint64` 到达，读取时接受 `uint64`、`int32` 和 `double`。
+- OpenGL 后端是下一阶段，不是这一版。做的时候用调用线程上已经 current 的上下文，不创建、不销毁它。不要引入 ANGLE。不要手改生成文件来传递指针。
+- 借用 GameMaker 的设备：AddRef 一次，只 Release 这一次。`reset()` 先 `set_active_backend(nullptr)`。
+
+## 当前数字
+
+| 项 | 值 |
+|---|---|
+| 版本 | 0.4.0 |
+| 检查 | **827** 项，`checks failed: 0` |
+| spec 函数 | 59 |
+| 能力键 | 35 |
+| `tools\verify_handover.ps1` | exit 0 |
+| 测试 GPU | AMD Radeon Vega 8，功能级别 11_0 |
+| Git | `main`。0.4.0 已推到 GitHub。文档里的 HEAD 允许落后于包含它自己的那次提交 |
+
+构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
+
+集成测试：在 `project\` 下执行
+
+```
+node "D:\node.js\node_cache\_npx\166e0ec5f4c2d768\node_modules\@gamemaker\gm-cli\dist\cli.js" run --no-errors-only
+```
+
+已知无害输出：`Failed to load Options from local_settings.json`。
+
+## 调用链上刚加过的采样器
+
+都走上面的 Backend 链。Direct3D 的过滤、寻址、各向异性和比较只出现在 `d3d11_impl`。
+
+- 分开过滤的偏移和范围：`igpu_sampler_state_create_filters_offset`、`igpu_sampler_state_create_filters_range`
+- 分轴和各向异性的范围：`igpu_sampler_state_create_axes_range`
+- 带边框色的范围：`igpu_sampler_state_create_filters_border_range`、`igpu_sampler_state_create_axes_border_range`。颜色在门面拆开。
+- 比较：`igpu_sampler_state_create_compare`。通过是 1，不通过是 0。
+
+各向异性足迹很宽时会把边框色掺进旁边的纹素。边框色加级数的像素证明因此用了点采样；16 倍各向异性带边框色和级数范围可以建出来。
 
 ---
 
-## 0. 三十秒版本
+## 0. 三十秒版本（2026-09-23 审计，已过期）
+
+下面到文末是审计会话的原始记录。断言 152、工作区干净、能力位恒 false 都已过期。当前数字以上面的表为准。
 
 用户给了 **GMS2 引擎去混淆源码**，要求"根据源码重新认真审视我们的扩展"。
 
@@ -115,11 +187,11 @@ L186 的反向断言证明该校验真的有鉴别力。两个审计子代理都
 1. **像素级验证仍然缺失**（**下一优先级**）
 2. **设备丢失无恢复路径**：`HandleDeviceLost()` 会释放并重建 device/context
    （`Graphics_DisplayM.cpp:1225-1258`），IGPU 仍持旧指针 → use-after-free 风险
-3. **`IaStateGuard` 的文档理由不成立**（**实现正确，不要改代码，改措辞**）：
-   引擎每次绘制都**无条件重设** IA 状态且**不缓存**
-   （`StateManagerM.h:27-28` 明说 IA 状态"not included yet"），
-   所以"防止污染 GM 绘制"是错的 —— 引擎自己会修好。它仍有价值
-   （状态自洽 + 未来 GM 若引入缓存时的保护），但理由要改写。
+3. ✅ **`IaStateGuard` 的文档理由**已按这里的结论改写（实现未动）。
+   引擎每次绘制都无条件重设顶点缓冲、布局和拓扑，且不缓存
+   （`StateManagerM.h:27-28`，"not included yet"）。
+   “防止污染 GM 绘制”是错的。保留实现的理由是索引缓冲、绘制之间的设备一致性，
+   以及将来引擎若缓存输入装配。见 `HANDOVER.md` §7.15。
 
 ### 4.2 新增 `igpu_shader_bind` / `igpu_get_bound_shader`
 
@@ -184,15 +256,10 @@ IGPU 的绑定 → 应在需要的 `igpu_draw` **紧前**绑定。这条已写�
 
 按优先级：
 
-1. **像素级验证**（§9 第 5 项）—— 绑定缺口已补，**现在可以做了**：
-   渲染到离屏 surface → `surface_getpixel` 读回 → 断言颜色。
-   链路已被引擎源码逐环验证：`surface_id → GR_Surface_Get → RSurface::tex →
-   GR_Texture_Get → RTexture::tex → Graphics::SetRenderTarget(0, tex, NULL)`，
-   且 `Graphics_Surface.cpp:687,712` 引擎自己就是这么做的。
-   **引擎持有 RTV，无需手动 `CreateRenderTargetView`。**
-2. **设备丢失检测** —— 至少检测 `DXGI_ERROR_DEVICE_REMOVED` 并置错，
-   不要求立刻做完整重建。
-3. **修正 §4.1 第 3 条的文档措辞**（实现不动）。
+1. ✅ **像素级验证** —— 已完成。离屏 surface + `surface_getpixel`，
+   左半边 `c_red`、右半边保持清屏色。见 `HANDOVER.md` §6 第五批。
+2. ✅ **设备丢失检测** —— `igpu_device_lost()`。发现移除、重置、挂起或驱动故障后置错并丢掉旧句柄。不自动重建。
+3. **修正 §4.1 第 3 条的文档措辞**（实现不动）。**这是当前的第一项。**
 
 > 顺带：`surface_set_target_ext(stage, id, depth_id)` **已是 GML 内置函数**，
 > `MAX_MRTS = 4`（`Graphics.h:8`）—— §9 第 7 项（MRT）**可能不需要新 API**。
@@ -215,7 +282,7 @@ IGPU 的绑定 → 应在需要的 `igpu_draw` **紧前**绑定。这条已写�
 
 ## 8. 诚实声明：没做到的事
 
-1. **没有像素级证据** —— 从头到尾，**没有任何一次运行证明过屏幕上出现了什么**
+1. **当时没有像素级证据** —— 本会话结束时还没有。后续已补上，见 `HANDOVER.md` §6 第五批
 2. **设备丢失行为是源码推断**，未做运行时插桩验证引用计数
 3. **`OpenGM` 是去混淆派生源码，不是官方** —— 结论已用 `YoYo.lib`
    符号交叉验证（一致），但源码反映的是"某个 GM 版本"，未必是

@@ -1,8 +1,8 @@
 # IGPU — 交接文档
 
-> 最后更新：2026-09-23
-> 状态：**阶段 D 进行中**（shader blob / 输入布局 / 缓冲区 / 绘制 / **着色器绑定**已跑通）
-> 版本：`0.3.0`（API 有新增，版本号尚未提升）
+> 最后更新：2026-10-06
+> 状态：**0.4.0**。公开函数 59 个。Windows D3D11 已跑通像素测试。OpenGL 后端还没写。
+> 版本：`0.4.0`
 > Git：`main` 分支，HEAD `add3cf2`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）
 > **接手第一件事：跑 `pwsh -File tools\verify_handover.ps1`** —— 见 §0
 >
@@ -42,14 +42,10 @@
 2. **`igpu_draw` 根本无法绑着色器** —— 最严重的一项。已新增
    `igpu_shader_bind()` / `igpu_get_bound_shader()`，补 13 项断言。
 
-**⚠️ 仍待解决**（**下一个人的第一优先级**）：
-- **像素级验证仍然缺失** —— 绑定修好只是让"画得出东西"成为**可能**。
-  证明它需要 §9 第 5 项（渲染目标 API）配合 `surface_getpixel` 读回。
-- **设备丢失无恢复路径** —— `HandleDeviceLost()` 会释放并重建
-  device/context，IGPU 仍持旧指针，有 use-after-free 风险。
-- **`IaStateGuard` 的文档理由不成立**（实现本身正确，无害）——
-  引擎每次绘制都**无条件重设** IA 状态且**不缓存**，所以"防止污染 GM 绘制"
-  这个说法是错的。建议改措辞，不要改实现。
+**⚠️ 已知限制**：
+- **设备丢失不会自动重绑** —— 检测到移除后会置错并丢掉旧句柄，
+  调用方要自己再调 `igpu_init()`。没有完整的资源重建。
+
 
 ### 一个重要副产品：extgen 必须手动跑
 
@@ -110,31 +106,29 @@ extgen --config config.json
 ### 当前进度一句话总结
 
 **能编译着色器、把着色器绑到管线上、建输入布局、建缓冲区、发出绘制调用，
-并且绘制后自动把 GameMaker 的输入装配状态恢复原样。**
+绘制后把输入装配状态设回绘制前的样子，并且能把三角形光栅化进
+一张离屏 surface，再用 `surface_getpixel` 读回预期颜色。**
 
-> ⚠️ **2026-09-23 用引擎源码审计后，这句话的边界要说清楚**：
-> "发出绘制调用"是真的，但**仍未证明画面上出现了东西**（§6）。
-> 审计发现当时**连着色器都绑不上**（没有 `igpu_shader_bind`），
-> 所以早期的 "draw 返回 true" 只证明调用发出去了 —— 测试从未调用 `shader_set`。
-> **绑定缺口已补**，但这只让"画得出东西"成为**可能**；
-> 证明它需要 §9 第 5 项。详见 `tools/engine_audit.md`。
+> ⚠️ **2026-09-23 用引擎源码审计后补过的边界**：
+> 早期的 "draw 返回 true" 只证明调用发出去了。审计当时发现**连着色器都绑不上**，
+> 该缺口已由 `igpu_shader_bind` 补上。像素是否真的写出来，由 §6 第五批读回证明。
+> 详见 `tools/engine_audit.md`。
 
-**下一步是「渲染目标绑定」**（§9 第 5 项）。它有一个额外的重要性：
-**它是补上像素级验证的前提** —— 现在没有它，我们无法证明"画面上真的出现东西了"
-（详见 §6「这批输出不能证明什么」）。
+**设备丢失会置错并丢掉旧句柄**（`igpu_device_lost()`）。检测到移除、重置、挂起或驱动故障后，IGPU 释放自己持有的引用和在旧设备上创建的资源，后续调用失败，直到再次 `igpu_init()`。不会自动向 GameMaker 要新指针。
+
+正常设备上 `GetDeviceRemovedReason()` 返回成功，测试断言 `igpu_device_lost()` 为 false。把这个判断反转后（把成功也当成丢失），`igpu_is_available` 立刻变成 0，错误是 `the graphics device was unusable (0x00000000)`，退出码 1。真实的设备移除没法在这条测试里触发。
 
 **引擎源码审计的结论**（`OpenGM`，见 `tools/engine_audit.md`）：
 渲染目标链路**已逐环验证可行**（`Graphics_Surface.cpp:687,712` 引擎自己就是这么做的），
-且 `surface_set_target_ext` 已是 GML 内置函数、`MAX_MRTS = 4`
-—— §9 第 7 项（MRT）可能**不需要新 API**。
+且 `surface_set_target_ext` 已是 GML 内置函数、`MAX_MRTS = 4`。
+那条路径只覆盖 GameMaker 自己的 surface。IGPU 自己的纹理用
+`igpu_draw_to_render_targets`，一次最多 4 张。
 
-~~优先建议改为：先补 `igpu_shader_bind`，再做像素级验证。~~
-**✅ `igpu_shader_bind` 已于本次会话补上。** 当前的优先级是：
+当前的优先级是：
 
-1. **像素级验证**（§9 第 5 项）—— 绑定的缺口已补，现在**可以**做真正的
-   "渲染到离屏 surface → `surface_getpixel` 读回 → 断言颜色"测试了
-2. **设备丢失恢复**（见 `tools/engine_audit.md` §5）—— 目前有 use-after-free 风险
-3. 修正 `IaStateGuard` 的文档措辞（实现不动）
+1. 比较采样还不能偏移级数，也不能限制最细和最粗。比较结果已经能读回，但选用的级数仍然固定。
+
+接手时先读 `SESSION_HANDOVER.md` 开头。比较结果已经用 `igpu_sampler_state_create_compare` 读回。下一刀是给它加上和 `igpu_sampler_state_create_filters_range` 一样的级数偏移、最细和最粗，新函数，不改旧签名。现有像素测试用的比较指令不看级数偏移，证明偏移时要换成由采样器自己选级数的比较。
 
 ---
 
@@ -175,7 +169,8 @@ GameMaker 自身不暴露的能力（经 `GmlSpec.xml` 三重验证缺失）：
 
 ### 2.1 借用，而非创建
 
-**GameMaker 拥有 D3D11 设备。IGPU 借用它，绝不 Release。**
+**GameMaker 拥有 D3D11 设备。IGPU 额外 AddRef 一次，并且只 Release 这一次。**
+这样引擎在设备丢失时 Release 掉自己的引用后，对象还活着，IGPU 才能询问移除原因，然后放下自己的引用。多 Release 一次就会拆掉 GameMaker 的设备。
 
 ```
 GML: os_get_info()  →  DS Map（含 video_d3d11_device / _context / _swapchain 指针）
@@ -187,7 +182,7 @@ C++: igpu::bind_device(ID3D11Device*, ID3D11DeviceContext*, IDXGISwapChain*)
 后续所有操作基于借用的句柄
 ```
 
-`igpu_device.cpp` 的 `DeviceState::reset()` 显式**不**释放 device/context/swapchain（注释已标注）。**这个约束守得住，整个项目就不会有生命周期事故。**
+`igpu_device.cpp` 的 `DeviceState::reset()` 释放的是 `bind_device()` 里加上的那一次引用，顺序是先子资源、再 swapchain、context、device。
 
 ### 2.2 为什么不能用其它方式拿设备
 
@@ -213,24 +208,17 @@ C++: igpu::bind_device(ID3D11Device*, ID3D11DeviceContext*, IDXGISwapChain*)
 
 > **注意**：原方案把 Tier 3 描述成需要原生实现，会导致它在 HTML5 上失效。**Tier 3 应该是纯 GML 可用的**，这样才真正实现"所有平台优雅降级"。
 
-### 2.4 跨平台现实（硬约束）
+### 2.4 跨平台现实（2026-10-06 按 Runtime 源码改过）
 
-> **只有 Windows 和 Xbox 暴露真实设备指针。**
+详细记录在 `superpowers/specs/2026-10-06-slim-api-design.md` 的「平台现状」。这里只留结论。旧说法「非 Windows 拿不到上下文，运行时编译物理上不可行」是错的。
 
-| 平台 | 图形 API | 设备句柄可得性 |
-|---|---|---|
-| **Windows** | **D3D11** | ✅ `os_get_info()` → `video_d3d11_device/context/swapchain` |
-| **Xbox One / Series** | **D3D12** | ✅ `video_d3d12_cmdqueue/cmdlist/currentrt`（**无 swapchain**） |
-| macOS / Linux | OpenGL | ❌ 仅 `gl_vendor/version/renderer_string` |
-| Android | OpenGL ES | ❌ 仅 `GL_*` 字符串 |
-| iOS / tvOS | OpenGL ES | ❌ 仅「含 OpenGL 信息的额外键」 |
-| Switch | OpenGL | ❌ `os_get_info()` 返回 `-1`（**非 map**） |
-| HTML5 / GX.games | WebGL | ❌ 返回 `-1`（**非 map**）；扩展只能用 `.js` |
-| PS4 / PS5 | PSSL | ❌ 仅显示信息键，无设备 |
+`os_get_info` 真正交指针的，这份源码里只有 Windows D3D11：`video_d3d11_device`、`video_d3d11_context`、`video_d3d11_swapchain`（`Files\Function\Win32\YoYo_FunctionsM.cpp`）。Windows 运行时没有 WGL。
 
-**推论**：运行时着色器编译在非 Windows/Xbox 上**物理上不可行**——拿不到 `HGLRC`/`EGLContext`/`MTLDevice`。
+Linux、macOS、Android、iOS、tvOS 不交指针。游戏步进和 GL 上下文在同一条线程上，上下文当时已经 current。Android / iOS / tvOS 这份源码建的是 OpenGL ES 2。macOS 请求 Legacy profile。Linux 是不请求版本的旧式 GLX。`MTLDevice` 没有交给 GML。
 
-但这**不改变接口设计**：那些平台上 `igpu_shader_compile` 返回 0 + 设错误，`igpu_supports(ShaderCompileRuntime)` 返回 false，调用方据此走 GM 管线。**接口统一，能力可查，降级优雅。**
+现在的 API 只覆盖 extgen 的桌面和移动目标：Windows、Linux、macOS、Android、iOS、tvOS。`config.json` 只启用了 Windows，实现也只有 D3D11。
+
+HTML5 / WASM（含 GX.games）是更后面的目标。它不能用 extgen，要单独写 JavaScript。主机（Xbox、PS4、PS5、Switch）排在 HTML5 / WASM 之后。extgen schema 里虽有主机槽位，现在不启用。不要把旧文档里的 `video_d3d12_*` 当成已经在源码里核对过。
 
 ---
 
@@ -271,13 +259,14 @@ IGPU/
 
 ---
 
-## 4. 当前 API 清单（spec.gmidl，v0.3.0）
+## 4. 当前 API 清单（spec.gmidl，v0.4.0）
 
 ### 生命周期
 - `igpu_init(device : gmval, context : gmval, swapchain : gmval) : bool`
 - `igpu_shutdown() : unit`
-- `igpu_version() : string` → `"0.3.0"`
+- `igpu_version() : string` → `"0.4.0"`
 - `igpu_is_available() : bool`
+- `igpu_device_lost() : bool` — 设备被移除或重置后为 true；干净的 `igpu_shutdown()` 不是丢失
 
 ### 设备信息
 - `igpu_get_feature_level() : int32`
@@ -287,15 +276,16 @@ IGPU/
 - `igpu_get_backbuffer_height() : int32`
 
 ### 能力查询（Tier 3）
-- `igpu_get_capabilities() : gmval` → **struct，28 个键，永不失败**（清单见 §4 末）
+- `igpu_get_capabilities() : gmval` → **struct，35 个键，永不失败**（清单见 §4 末）。`formats` 的值是嵌套 struct，键是 GameMaker 的 8 个 `surface_*` 颜色格式。
 - `igpu_supports(capability : int32) : bool`
-- `igpu_get_shader_dialect() : string` → `"hlsl"` / `""`
+- `igpu_get_shader_dialect() : string` → `"hlsl"` / `"glsl"` / `"glsl_es"` / `""`
+- `igpu_set_graphics_info(vendor, version, renderer, shading_language, max_texture_size) : bool` — 记下 `os_get_info()` 的显卡字符串。没有设备时能力表变成 tier 2（`opengl` / `gles` / `webgl`），不因此允许绘制或编译。有设备时仍以设备为准。空的 version 清掉这条记录。
 
 ### 运行时着色器编译
 - `igpu_shader_compile(source, entry, stage : int32, dialect : string = "") : int64` ← **统一入口**
-- `igpu_shader_compile_vertex(source, entry, dialect = "") : int64`
-- `igpu_shader_compile_pixel(source, entry, dialect = "") : int64`
-- `igpu_shader_compile_compute(source, entry, dialect = "") : int64`
+- `igpu_shader_compile_vertex source, entry, dialect = "") : int64`
+- `igpu_shader_compile_pixel source, entry, dialect = "") : int64`
+- `igpu_shader_compile_compute source, entry, dialect = "") : int64`
   （上三个是便捷包装）
 - `igpu_shader_release([type_hint = \`uint64\`] shader) : bool`
 - `igpu_get_last_error() : string`
@@ -311,10 +301,9 @@ IGPU/
 - `igpu_buffer_resize([type_hint = \`uint64\`] buffer, size : int64) : bool`
 - `igpu_buffer_size([type_hint = \`uint64\`] buffer) : int64`
 - `igpu_buffer_release([type_hint = \`uint64\`] buffer) : bool`
+- `igpu_storage_bind(buffer, stage, slot) : bool`
 
-> ⚠️ **`stride`（字节/顶点）是必填参数**，顶点缓冲区必须给正数、
-> 非顶点缓冲区必须给 0。绘制要靠 `size / stride` 推算顶点数，
-> 只有创建者知道 stride。**这是破坏性变更**，旧调用需补第 4 个参数。
+> ⚠️ **`stride` 是顶点或存储缓冲的记录大小**。顶点缓冲必须给正数。存储缓冲必须是 4 的倍数，范围 4 到 2048，并且 `size` 是整数个结构体。其它绑定传 0。
 
 `IgpuBufferUsage`（**更新频率**，不是内存位置）：
 
@@ -342,9 +331,100 @@ GML 侧有两个现成辅助函数（`project/scripts/IGPU_helpers/IGPU_helpers.
 
 - `igpu_draw(vertex_buffer, layout, primitive : int32, first_vertex : int64, vertex_count : int64) : bool`
 - `igpu_draw_indexed(vertex_buffer, layout, index_buffer, primitive : int32, first_index : int64, index_count : int64) : bool`
-- `igpu_get_draw_count() : int32`
-- `igpu_get_draw_restore_failures() : int32`
-- `igpu_is_vertex_buffer_bound(buffer) : bool` ← **诊断用**，直接查设备
+- `igpu_input_layout_create_step shader, usage, type, step, element_count, vertex_stride, instance_stride) : int64`
+- `igpu_draw_instanced vertex_buffer, instance_buffer, layout, primitive, first_vertex, vertex_count, instance_count) : bool`
+- `igpu_draw_indirect(vertex_buffer, instance_buffer, layout, primitive, args, args_offset) : bool`
+- `igpu_draw_indexed_indirect(vertex_buffer, instance_buffer, layout, index_buffer, primitive, args, args_offset) : bool` — 20 字节记录：索引数、实例数、起始索引、基顶点、起始实例。起始索引 6 只画右半边，左半边保持清屏色。
+- `igpu_draw_patch(vertex_buffer, layout, control_points, first_vertex, vertex_count) : bool` — 画一个或多个面片。`control_points` 是 1 到 32，顶点数必须是整数个面片。必须先绑外壳着色器和域着色器。装配状态在返回前恢复。
+- `igpu_get_draw_count ) : int32`
+- `igpu_get_draw_restore_failures ) : int32`
+- `igpu_is_vertex_buffer_bound buffer) : bool` ← **诊断用**，直接查设备
+
+### 管线状态对象
+
+只在一次 `igpu_draw_with_state )` / `igpu_draw_indexed_with_state )` 里生效，返回前把设备上原来的混合、深度、光栅和采样器设回去。句柄 0 表示不动该阶段。
+
+- `igpu_blend_state_create(enabled, src, dest, equation, src_alpha, dest_alpha, equation_alpha, write_red, write_green, write_blue, write_alpha) : int64`
+- `igpu_depth_state_create(depth_test, depth_write, depth_func, stencil_enable, stencil_func, stencil_fail, stencil_depth_fail, stencil_pass, stencil_ref, stencil_read_mask, stencil_write_mask) : int64`
+- `igpu_raster_state_create(cull, fill, scissor, depth_clip) : int64`
+- `igpu_sampler_state_create(filter, repeat, anisotropy) : int64` — `repeat` 为 false 是钳制，为 true 是重复。其余行为见下面的寻址枚举。各向异性 1 到 16；在纵向拉长的足迹上，线性采样落到整张纹理的平均色，16 倍各向异性仍停在红色半边。
+- `igpu_sampler_state_create_address filter, address, anisotropy) : int64` — `address` 是 `IgpuAddressMode`。在 `u = 1.6`、左红右蓝的纹理上，钳制和重复都是蓝纹素，镜像折回红纹素。`Border` 在这里会被拒绝，因为没有颜色。
+- `igpu_sampler_state_create_border filter, anisotropy, border) : int64` — 边缘之外读 `border`，一个不透明的 GameMaker 颜色。接口先把它拆成 0 到 1 的红、绿、蓝，后端只收到这三个数。在 `u = -0.5` 时，钳制仍是红纹素，边框色是传入的紫。
+- `igpu_sampler_state_create_axes filter, address_u, address_v, address_w, anisotropy) : int64` — 横向、纵向、深度各一种寻址。某一轴是 `Border` 时会被拒绝。同一点上，横向重复加纵向钳制读到蓝，横向钳制加纵向重复读到绿。体积纹理上只改深度轴时，钳制停在近处的红层，重复绕到远处的蓝层。
+- `igpu_sampler_state_create_axes_border ..., border) : int64` — 同样三个轴，并带边框色。只有走出设成边框的那一轴时才读这个颜色。横向边框、纵向钳制时，读到的是传入的紫。
+- `igpu_sampler_state_create_axes_range filter, address_u, address_v, address_w, anisotropy, level_offset, finest, coarsest) : int64` — 分轴采样再加上级数偏移、最细和最粗，各向异性走这里。各向异性先把拉长的足迹拉回更细的图像，再加偏移，然后留在这两级之间。纵向拉长、16 倍、偏移 0 仍是纯红 `255`。偏移 8 落到整张纹理的平均色 `8388736`（红 128、蓝 128）。同样的偏移把最粗锁在第 0 级时仍是纯红。最细锁在第 4 级时，即使偏移是 0，也是这个平均色。
+- `igpu_sampler_state_create_axes_border_range filter, address_u, address_v, address_w, anisotropy, border, level_offset, finest, coarsest) : int64` — 同样的分轴、各向异性和级数范围，并带边框色。颜色在进入后端前拆成 0 到 1 的通道。偏移 4 时纹理内是绿 `65280`，边缘外是传入的紫 `16711935`。最粗锁在第 0 级时纹理内是红 `255`，边缘外仍是紫。
+- `igpu_sampler_state_create_filters magnification, minification, mip, address_u, address_v, address_w) : int64` — 放大、缩小和多级混合分开，各是 `tf_point` 或 `tf_linear`。各向异性仍走原来的入口。接缝上，点放大是纯红，线性放大是混合；盖住两个纹素时，线性缩小是混合，点缩小是纯红。级数停在 0.5 时，点混合落到绿色的那一级，线性混合是红 128、绿 128。
+- `igpu_sampler_state_create_filters_border ..., border) : int64` — 同样的三种过滤，并带边框色。颜色在进入后端前拆成 0 到 1 的通道。
+- `igpu_sampler_state_create_filters_offset magnification, minification, mip, address_u, address_v, address_w, level_offset) : int64` — 在分开的三种过滤上再加级数偏移。正数往更粗的级走，负数往更细的级走，可以是小数。着色器自己写明级数时不受这个偏移影响。足迹落在第 0 级时，偏移 0 仍是红 `255`，偏移 4 落到绿 `65280`。足迹落在第 1 级时，偏移 -1 回到红。不是有限数的偏移会被拒绝。边框寻址仍然要走带颜色的入口。
+- `igpu_sampler_state_create_filters_range magnification, minification, mip, address_u, address_v, address_w, level_offset, finest, coarsest) : int64` — 在级数偏移之外再限定最细和最粗。偏移先加上，结果再留在这两级之间。着色器自己写明级数时不加偏移，但仍留在这个范围里。最细高于最粗会被拒绝。偏移 4 但最粗停在第 0 级时，左右都是红 `255`。最细停在第 1 级时，原本落在第 0 级的足迹变成绿 `65280`。
+- `igpu_sampler_state_create_filters_border_range magnification, minification, mip, address_u, address_v, address_w, border, level_offset, finest, coarsest) : int64` — 同样的三种过滤和级数范围，并带边框色。颜色在进入后端前拆成 0 到 1 的通道。偏移 4 时纹理内是绿 `65280`，边缘外是传入的紫 `16711935`。最粗锁在第 0 级时纹理内是红，边缘外仍是紫。最细锁在第 1 级时纹理内是绿。
+- `igpu_sampler_state_create_compare compare, magnification, minification, mip, address_u, address_v, address_w) : int64` — 比较采样。`compare` 是 `cmpfunc_*`，和深度测试同一套常量。着色器给出参考值并请求比较；通过是 1，不通过是 0。比较的是参考值对纹素，所以 `cmpfunc_less` 在参考值小于纹素时通过。三种过滤是 `tf_point` 或 `tf_linear`，用来混合这些 0 和 1。左纹素 0.25、右纹素 0.75、参考值 0.5 时，小于比较是左黑右红 `0 / 255`，大于比较对调。线性比较在交界处是红 128。边框寻址会被拒绝。级数偏移是 0，每一级都允许。
+- `igpu_state_release(state) : bool`
+- `igpu_draw_with_state vertex_buffer, layout, primitive, first_vertex, vertex_count, blend_state, depth_state, raster_state, sampler_state) : bool`
+- `igpu_draw_indexed_with_state vertex_buffer, layout, index_buffer, primitive, first_index, index_count, blend_state, depth_state, raster_state, sampler_state) : bool`
+
+### 纹理
+
+`format` 用 GameMaker 的 `surface_*`。`igpu_texture_get_pixel )` 只读 `surface_rgba8unorm`，丢掉 alpha，和 `surface_getpixel` 一样。
+
+- `igpu_texture_create(width, height, format, render_target) : int64` — 二维、非存储的简写
+- `igpu_texture_create_kind kind, width, height, depth, format, render_target, storage) : int64` — `IgpuTextureKind`：`TwoD` / `ThreeD` / `Array` / `Cube`。只有一级。
+- `igpu_texture_create_mips kind, width, height, depth, format, storage, mip_count) : int64` — 同一批形状，带多级。`mip_count` 为 0 时分配到 1×1 的整条链。`storage` 写第 0 级。
+- `igpu_texture_generate_mips(texture) : bool` — 用第 0 级填满更粗的级。只有一级的纹理会被拒绝。二维、体积、数组和立方体都已用像素证明：最细一级的红纹素仍是纯红，更粗的一级是红蓝各半。
+- `igpu_texture_read(texture, x, y, layer) : int64` — 层、切片或立方体面，读第 0 级
+- `igpu_texture_read_level texture, x, y, layer, mip) : int64` — 同一读回，指定级数。坐标是这一级的像素。体积的深度随级数减半，层和面不减。
+- `igpu_draw_to_texture_layer ..., texture, layer) : bool` — 画进第 0 级的一层或一面
+- `igpu_draw_to_texture_level ..., texture, layer, mip) : bool` — 画进指定的一级。视口按这一级的尺寸。二维、体积、数组和立方体都已证明画第 1 级不会改第 0 级。数组和立方体可以只画其中一层或一面。
+- `igpu_dispatch(groups_x, groups_y, groups_z, storage_texture) : bool` — 跑已绑定的计算着色器，写存储纹理的第 0 级
+- `igpu_dispatch_level groups_x, groups_y, groups_z, storage_texture, mip) : bool` — 同一条路径，写指定的一级。着色器看到的图像就是这一级的尺寸。二维、体积、数组和立方体写第 1 级都不会改第 0 级。数组和立方体可以只写其中一层或一面。
+- `igpu_dispatch_buffer groups_x, groups_y, groups_z, storage_buffer) : bool` — 同一条路径写结构化存储缓冲。单独用时占写入槽 0，返回前恢复原来的绑定。缓冲必须是 `IgpuBufferBind.Storage`。
+- `igpu_dispatch_both groups_x, groups_y, groups_z, storage_texture, storage_buffer) : bool` — 一次调度同时写两者。纹理在槽 0，缓冲在槽 1。图像和存储缓冲分成两张表的后端也用这两个号。两个槽都在返回前恢复。
+- `igpu_dispatch_writes groups_x, groups_y, groups_z, kinds, targets) : bool` — 按调用方的顺序写 1 到 8 个目标。`kinds[i]` 是 `IgpuWriteTarget`，槽 i 就是这一项。纹理和缓冲可以交错。两个列表必须等长。同一张纹理或同一个缓冲不能出现两次。用过的槽在返回前恢复。
+
+### Uniform 块
+
+编译着色器时读出常量块布局。调用方按块名和成员名写入，不自己算偏移。矩阵按列主序。`float` 数组每个元素占 16 字节，但成员大小停在最后一个元素末尾（`float[2]` 是 20，不是 32）。整个块的大小仍补到 16 的倍数。
+
+`igpu_uniform_bind` 把缓冲绑到着色器要的槽。传缓冲 0 会把该槽恢复成第一次绑定之前的缓冲。GameMaker 不会每笔绘制都重设常量缓冲，所以画完要恢复。
+
+`dialect` 为 `"glsl"` 或 `"glsl_es"` 时，Direct3D 11 后端用 glslang 和 SPIRV-Cross 把源码译成 HLSL，再走原来的编译和反射。空字符串和 `"hlsl"` 不翻译。其它方言（例如 `"msl"`）仍被拒绝。同一份 Sprite 块的 GLSL ES 里，std140 把 `vec2` 对齐到 8 字节，所以 `scale` 在 24，手写 HLSL 里它在 20。成员名可能带翻译器前缀，写入时用反射出来的名字。对照源码在 `tools/shader_cross/`。
+
+- `IgpuUniformType { Float=0, Int=1, Uint=2, Bool=3, Struct=4, Unknown=5 }`
+- `igpu_shader_block_count shader) : int32`
+- `igpu_shader_block_name shader, index) : string`
+- `igpu_shader_block_size shader, block) : int32`
+- `igpu_shader_block_slot shader, block) : int32`
+- `igpu_shader_member_count shader, block) : int32`
+- `igpu_shader_member_name shader, block, index) : string`
+- `igpu_shader_member_offset shader, block, member) : int32`
+- `igpu_shader_member_size shader, block, member) : int32`
+- `igpu_shader_member_type shader, block, member) : int32`
+- `igpu_shader_member_rows shader, block, member) : int32`
+- `igpu_shader_member_columns shader, block, member) : int32`
+- `igpu_shader_member_elements shader, block, member) : int32` — 不是数组时为 0
+- `igpu_uniform_write(buffer, shader, block, member, values) : bool`
+- `igpu_uniform_bind(buffer, stage, slot) : bool`
+
+### 查询与 fence
+
+入口在 `igpu_query.cpp` 和 `igpu_gpu.cpp`，只调用 `Backend`。设备检查发生在虚函数调用之前。着色器编译、缓冲区、输入布局同样只调用 `Backend`；Direct3D 11 的函数在 `d3d11_impl`。现在唯一的实现是在 `bind_device()` 里装上 `D3D11Backend`。换后端只改那一处选择。
+
+- `IgpuQueryKind { Occlusion=0, Timestamp=1 }`
+- `igpu_query_create(kind) : int64`
+- `igpu_query_begin(query) : bool` / `igpu_query_end(query) : bool`
+- `igpu_query_ready(query) : bool` — 不等待
+- `igpu_query_result(query) : int64` — 遮挡是通过的样本数，时间戳是这段工作的 tick 差
+- `igpu_query_release(query) : bool`
+- `igpu_timestamp_frequency() : int64` — 每秒 tick，完成过一次时间戳查询后才非 0
+- `igpu_fence_create() : int64` / `igpu_fence_signal(fence) : bool` / `igpu_fence_signaled(fence) : bool` / `igpu_fence_release(fence) : bool`
+- `igpu_texture_release(texture) : bool`
+- `igpu_texture_get_pixel texture, x, y) : int64`
+- `igpu_draw_to_texture vertex_buffer, layout, primitive, first_vertex, vertex_count, texture) : bool`
+- `igpu_draw_to_render_targets(vertex_buffer, layout, primitive, first_vertex, vertex_count, targets) : bool` — `targets` 为 1 到 4 张同尺寸的渲染目标，都画第 0 级
+- `igpu_draw_to_render_targets_level ..., targets, mips) : bool` — 两个列表等长。`mips[i]` 是第 i 张的级数。比的是这一级的像素尺寸，所以 4×4 的第 0 级可以和 8×8 的第 1 级画在一起。层固定是第 0 层。
+- `igpu_draw_to_render_targets_layer ..., targets, layers, mips) : bool` — 三个列表等长。`layers[i]` 是切片、层或立方体面。二维只有第 0 层。体积的深度随级数减半。同一张纹理可以列多次，只要层或级数不同。同一层的同一级不能列两次。
+- `igpu_draw_sampled(vertex_buffer, layout, primitive, first_vertex, vertex_count, texture, sampler) : bool` — 计算着色器写过的存储纹理也能采样。二维按左右半边。体积和数组由着色器选层，立方体由方向选面（+X 是面 0）。
 
 `IgpuPrimitive`（**实测数值**，等于 GM 的 `pr_*`）：
 
@@ -390,27 +470,37 @@ GML 侧有两个现成辅助函数（`project/scripts/IGPU_helpers/IGPU_helpers.
 - `IgpuShaderStage { Vertex=0, Pixel=1, Compute=2, Geometry=3, Hull=4, Domain=5, Mesh=6, Amplification=7 }`
 - `IgpuBufferUsage { Static=0, Dynamic=1, Staging=2 }`
 - `IgpuBufferBind { None=0, Vertex=1, Index=2, Uniform=4, Storage=8 }`
-- `IgpuCapability { None=0, ShaderCompileRuntime=1, ShaderStage*=2-7, Texture3D=20…MultipleRenderTargets=25, Instancing=40…Wireframe=46, InputLayout=47, VertexBuffer=48, IndexBuffer=49, UniformBuffer=50, BufferResize=51, BufferReadback=52, AdapterInfo=60…BackbufferSize=62 }`
+- `IgpuTextureKind { TwoD=0, ThreeD=1, Array=2, Cube=3 }`
+- `IgpuWriteTarget { Texture=0, Buffer=1 }`
+- `IgpuAddressMode { Clamp=0, Repeat=1, Mirror=2, Border=3 }`
+- `IgpuFill { Solid=0, Wireframe=1 }`
+- `IgpuUniformType { Float=0, Int=1, Uint=2, Bool=3, Struct=4, Unknown=5 }`
+- `IgpuCapability { None=0, ShaderCompileRuntime=1, ShaderStage*=2-7, Texture3D=20…MultipleRenderTargets=25, Texture2D=26, Instancing=40…Wireframe=46, InputLayout=47, VertexBuffer=48, IndexBuffer=49, UniformBuffer=50, BufferResize=51, BufferReadback=52, Draw=53, DrawIndexed=54, DrawStateRestore=55, BlendState=56, DepthState=57, RasterState=58, SamplerState=59, AdapterInfo=60…BackbufferSize=62, UniformReflection=63 }`
 
-### `igpu_get_capabilities()` 返回的 28 个键
+### `igpu_get_capabilities()` 返回的 35 个键
 
 ```
 backend, tier, device_name, shader_dialect,
 shader_stages, runtime_compile, compute, geometry, tessellation, mesh_shader,
-texture_3d, texture_array, texture_cubemap, structured_buffer, uav, max_render_targets,
+texture_2d, texture_3d, texture_array, texture_cubemap, structured_buffer, uav, max_render_targets,
 instancing, indirect_draw, queries,
 input_layout, vertex_buffer, index_buffer, uniform_buffer, buffer_resize, buffer_readback,
-draw, draw_indexed, draw_state_restore
+draw, draw_indexed, draw_state_restore,
+blend_state, depth_state, raster_state, sampler_state, uniform_reflection, formats
 ```
 
 **所有键永远存在**，调用方可无条件读取。非 Windows 平台返回 `backend="none"`, `tier=3`, 其余全 false。
 
+`formats` 里永远是这八个名字：`surface_rgba8unorm`、`surface_r16float`、`surface_r32float`、`surface_rgba4unorm`、`surface_r8unorm`、`surface_rg8unorm`、`surface_rgba16float`、`surface_rgba32float`。有设备时，true 表示这个设备能创建该格式的纹理。没有设备、也没有 `igpu_set_graphics_info()` 时全是 false。记下 OpenGL / OpenGL ES / WebGL 版本之后，true 只表示这个版本通常能采样该格式，`igpu_texture_create` 仍然失败。`surface_rgba4unorm` 在 Direct3D 11 上可以创建，但不能当渲染目标。WebGL 1 只承诺 `surface_rgba4unorm`。
+
 > ⚠️ 能力位**只在对应 API 真正存在时才允许为 true**。
 > 已实现并返回 true 的：`input_layout`、`vertex_buffer`、`index_buffer`、
 > `uniform_buffer`、`buffer_resize`、`buffer_readback`、`draw`、`draw_indexed`、
-> `draw_state_restore`。
-> 仍恒为 false 的：`texture_3d/array/cubemap`、`structured_buffer`、`uav` 等
-> —— 这些 API 还没写（见 §9）。
+> `draw_state_restore`、`blend_state`、`depth_state`、`raster_state`、
+> `sampler_state`、`uniform_reflection`、`instancing`、`indirect_draw`。`igpu_supports(Wireframe)` 同样为 true（填充模式在光栅状态上）。
+> `structured_buffer` 在功能级别 11.0 及以上为 true。用 `IgpuBufferBind.Storage` 加结构体大小创建，`igpu_buffer_write` / `igpu_buffer_read` 上传和读回，`igpu_storage_bind` 绑给着色器读，`igpu_dispatch_buffer` 让已绑定的计算着色器写入。
+> `texture_3d`、`texture_array`、`texture_cubemap` 在这个后端为 true。
+> `uav` 在功能级别 11.0 及以上为 true，对应二维、三维、数组和立方体存储纹理（`igpu_dispatch`）以及结构化缓冲的写入（`igpu_dispatch_buffer`）。立方体按面索引写，顺序和读回相同。`igpu_dispatch_both` 一次写一张纹理和一个缓冲。`igpu_dispatch_writes` 按调用方的顺序写 1 到 8 个目标，纹理和缓冲可以交错。
 
 ---
 
@@ -499,7 +589,7 @@ bad shader error : igpu_shader_compile_vertex failed (hr=0x80004005): ... error 
 mesh shader error : igpu_shader_compile: stage 'mesh' is not supported by the 'd3d11' backend (check igpu_supports)
 good shader handle: 1
 pixel shader handle: 2
-glsl dialect error : igpu_shader_compile: dialect 'glsl' is not supported by the 'd3d11' backend (it compiles 'hlsl')
+msl dialect error  : igpu_shader_compile: dialect 'msl' is not supported by the 'd3d11' backend (it compiles 'hlsl')
 checks failed    : 0
 PASS
 Game exited
@@ -582,7 +672,7 @@ PASS
    —— 6 = 120 字节 / 20 stride，说明 stride 真的参与了计算，不是照抄调用方的数字。
 3. **fan 被明确拒绝**并给出可操作的替代建议，而不是静默画错。
 4. **索引数按 16 位推算**：6 = 12 字节 / 2，越界被拦截。
-5. **IA 状态确实恢复了**：`igpu_is_vertex_buffer_bound()` 直接查设备，
+5. **IA 状态确实恢复了**：`igpu_is_vertex_buffer_bound )` 直接查设备，
    绘制后 IGPU 的缓冲区不在 slot 0。这条探针经过反向验证（见 §7.15）。
 6. 被拒绝的调用**不会到达设备**（`draw count` 不变）。
 
@@ -607,8 +697,7 @@ backbuffer —— 测试无法读回它的像素。`surface_getpixel()` 只能�
 > **测试从未调用 `shader_set`**，所以这条正向路径当时确实无从验证。
 >
 > 现已补上 `igpu_shader_bind()` / `igpu_get_bound_shader()`，
-> 并加了 13 项绑定断言（见下）。**像素级验证仍然缺失** ——
-> 绑定修好只是让"画得出东西"变成**可能**，证明它仍需要 §9 第 5 项。
+> 并加了 13 项绑定断言（见下）。像素是否写出来，见下面的第五批。
 
 ### 阶段 D 第四批（着色器绑定，2026-09-23 补）
 
@@ -644,16 +733,75 @@ PASS
 > （引擎每次绘制都重绑自己的着色器）。所以应当在需要的那批
 > `igpu_draw` **紧前**绑定。这一限制写在 `spec.gmidl` 的函数注释里。
 
-当前检查项 **152 项**（`checks failed: 0`），退出码 0，
-`--clean-first` 全量重编译零警告（排除生成代码的 7 条 C4819 代码页噪声）。
+### 阶段 D 第五批（像素读回）
 
-> **这个数字是怎么来的**：它是 `Create_0.gml` 里 `_igpu_check(` 调用点的
-> **静态计数**，不是运行时实测值——因为 `_igpu_check` 只在失败时打印，
-> 从不打印总数（见其定义）。这个"数出来"的数字比"测出来"的更容易腐烂：
-> 改测试时忘了同步文档，两边就悄悄分叉。
-> `tools/verify_handover.ps1` 的第 5 组检查就是为此存在的，它按调用点计数，
-> 并把定义行也算进去，所以脚本比对的基准值是 **153**（= 152 个调用点 + 1 行定义）。
-> 两处数字不一致是**刻意的**：文档说的是"断言数"，脚本数的是"匹配行数"。
+不新增 API。`surface_set_target` 已经把 GM 的 surface 绑成当前渲染目标
+（引擎持有 RTV），`igpu_draw` 画进这张 8×8 的离屏表面，再 `surface_reset_target`
+后用 `surface_getpixel` 读回。三角形只覆盖裁剪空间的左半边，右半边必须保持清屏色，
+这样“整张表面被涂成绘制色”和“光栅化真的发生了”就能分开。
+
+```
+clear left        : 16711680 r=0 g=0 b=255
+clear right       : 16711680 r=0 g=0 b=255
+pixel draw        : 1
+drawn left        : 255 r=255 g=0 b=0
+drawn right       : 16711680 r=0 g=0 b=255
+pixel indexed     : 1
+indexed left      : 255 r=255 g=0 b=0
+indexed right     : 32768 r=0 g=128 b=0
+checks failed    : 0
+PASS
+```
+
+`16711680` 是 `c_blue`，`255` 是 `c_red`，`32768` 是 `c_green`
+（GameMaker 的 `c_green` 是 rgb(0, 128, 0)，不是纯绿）。
+像素着色器写的是 `float4(1, 0, 0, 1)`。
+
+这条断言做过金丝雀：把左半边的期望从 `c_red` 改成 `c_white` 后，
+日志出现 `CHECK FAILED : drawn half of the surface is red`，
+`checks failed : 1`，进程退出码 1。读回的像素仍是 `255`，
+所以失败的是断言，不是绘制。
+
+当前检查项 **827 项**（`checks failed: 0`），退出码 0。公开函数收成 59 个。采样、纹理、调度、绘制各留一个入口。反射是 `igpu_shader_reflect(` 返回的 `IgpuUniformBlock` 数组。`igpu_init` 仍是三个指针参数。HTML5 / WASM 不能用 extgen，排在本机后端之后；主机排在 HTML5 / WASM 之后。
+比较采样的日志是 `compare sample  : 1 1 0 / 255 | 1 255 / 0 | 1 128 r=128`。参考值 0.5，左纹素 0.25，右纹素 0.75。小于比较是左黑右红，大于比较对调。线性比较在交界处是红 128。
+边框色加级数范围的日志是 `border range    : 1 1 1 65280 / 16711935 | 1 255 / 16711935 | 1 65280 || 1 65280 / 16711935 | 1 255 / 16711935`。分开过滤和分轴都一样：偏移 4 时纹理内是绿、边缘外是紫；最粗锁在第 0 级时纹理内是红、边缘外仍是紫。分开过滤把最细锁在第 1 级时纹理内是绿。
+各向异性级数的日志是 `aniso range     : 1 1 1 255 / 1 8388736 | 1 255 | 1 8388736 r=128 b=128`。16 倍、偏移 0 是纯红。偏移 8 是红 128、蓝 128。最粗锁在第 0 级时偏移仍是纯红。最细锁在第 4 级时是同一个平均色。
+级数范围的日志是 `level range     : 1 1 1 255 / 255 | 1 65280`。偏移 4、最粗锁在第 0 级时左右都是红。最细锁在第 1 级时，细足迹变成绿。
+级数偏移的日志是 `level offset    : 1 1 1 255 / 65280 | 1 65280 | 1 255`。偏移 0 时左边是红、右边是绿。偏移 4 把左边推到绿。偏移 -1 把右边拉回红。
+多级混合的日志是 `mip blend        : 1 1 1 65280 / 1 32896 r=128 g=128`。第 0 级是红，第 1 级是绿。点混合落到绿 `65280`，线性混合是红 128、绿 128。
+分开过滤的日志是 `split filter     : 1 1 255 / 5046450 | 1 5046450 / 255`。点放大、线性缩小时，左边是纯红，右边是红 178、蓝 77。线性放大、点缩小时，左右对调。
+深度寻址的日志是 `depth address    : 1 1 255 / 1 16711680 / 1 16711935`。横向和纵向都是钳制。深度钳制是近处的红，深度重复是远处的蓝，深度边框是传入的紫。
+分轴寻址的日志是 `axis address     : 1 1 16711680 / 1 65280 / 1 16711935`。横向重复、纵向钳制是蓝，反过来是绿，只把横向设成边框则是紫。
+边框色的日志是 `border address   : 1 255 / 1 16711935`。`u = -0.5` 时钳制仍是红纹素 `255`，边框采样是传入的紫 `16711935`。
+镜像寻址的日志是 `mirror address   : 1 16711680 / 1 16711680 / 1 255`。`u = 1.6` 时钳制和重复都是蓝，镜像是红。
+同一张纹理两层同绘的日志是 `mrt same texture : 1 255 / 65280`。第 0 层是红，第 1 层是绿。同一层列两次仍会被拒绝。
+多目标按层绘制的日志是 `mrt layer        : 1 255 0 0 / 65280 0`。数组的第 1 层、第 1 级是红，它的第 0 层和这一层的第 0 级仍是黑。立方体的 -X 面是绿，+X 面仍是黑。
+多目标按级绘制的日志是 `mrt level        : 1 255 0 / 65280`。4×4 的第 0 级是红，8×8 的第 0 级仍是黑，它的第 1 级是绿。
+画进某一级的日志是 `draw level       : 1 1 255 / 65280`，体积是 `draw level vol   : 1 1 255 / 65280`，数组是 `draw level arr   : 1 1 255 0 / 65280`，立方体是 `draw level cube  : 1 1 255 0 / 65280`。第 0 级仍是红。第 1 级里，二维和体积是绿；数组的第 1 层和立方体的 -X 面是绿，另一层或另一面仍是黑。
+体积的按级写入日志是 `level volume     : 1 1 255 / 65280`，数组是 `level array      : 1 1 255 0 / 65280`，立方体是 `level cube       : 1 1 255 0 / 65280`。第 0 级仍是红。更粗的一级里，体积是绿；数组的第 1 层和立方体的 -X 面是绿，第 0 层或 +X 面仍是黑。
+直接写某一级的日志是 `level write      : 1 1 255 16711680 / 65280`。第 0 级仍是左红右蓝，第 1 级是单独写成的绿，不是生成出来的平均色。
+按级读回的日志是 `mip read         : 255 16711680 / 8388736 r=128 b=128`。第 0 级左红右蓝，第 1 级是红 128、蓝 128。体积、数组层和立方体面的更粗一级也能读回。
+各向异性的日志是 `aniso filter     : 1 1 1 8388736 / 1 255`。线性采样是红 128、蓝 128。16 倍各向异性仍是纯红 `255`。
+体积、数组和立方体的更粗一级日志都是 `1 1 1 255 / 8388736`。最细一级是纯红 `255`，生成出的 1×1 是红 128、蓝 128。
+多级纹理的日志是 `mip level        : 1 1 1 255 / 8388736 r=128 b=128`。最细一级的红纹素仍是纯红 `255`。2×2 里两红两蓝生成出的 1×1 是红 128、蓝 128。
+寻址的日志是 `address mode     : 1 16711680 / 1 255`。采样点在右缘之外。钳制停在蓝纹素 `16711680`，重复绕回红纹素 `255`。
+过滤接缝的日志是 `filter seam      : 1 1 255 / 1 5046450 r=178 b=77`。采样点在红纹素中心和蓝纹素中心之间、更靠近红。点采样仍是纯红 `255`，线性采样是红 178、蓝 77。
+分层采样的日志是 `sample volume    : 1 255 / 16711680`、`sample array     : 1 255 / 16711680`、`sample cube      : 1 255 / 16711680`。左半边是第 0 层或 +X 面的红，右半边是下一层或 -X 面的蓝。
+采样存储纹理的日志是 `storage sample   : 1 1 255 / 16711680`：写入和绘制都成功，表面左半边是红，右半边是蓝。清屏色是黄，未写入的纹理是黑，所以这两种颜色只能来自这次采样。
+三维存储纹理的日志是 `storage volume   : 1 255 / 16711680`，数组是 `storage array    : 1 255 / 16711680`，立方体是 `storage cube     : 1 255 / 16711680 / 16711680`。第一层是红，后面的层或面是蓝，最后一面也是蓝。
+细分的日志是 `tessellation     : 1 16711680 1 1 1 255 / 16711680`：叠在原点的三角形留着左半边的蓝，面片画完后左半边是红，右半边仍是蓝。
+几何着色器的日志是 `geometry pixel   : 1 16711680 1 1 255 / 16711680`：单独的点留着左半边的蓝，绑上几何着色器后左半边变成红，右半边仍是蓝。
+索引化间接绘制的日志是 `indexed indirect : 1 16711680 / 255`：调度成功，左半边保持蓝，右半边是红。
+结构化缓冲的计算写入日志是 `storage compute  : 1 1 1`：调度成功、读回成功、第一个结构体的第三个分量是 1。
+同一次调度写纹理和缓冲的日志是 `storage pair     : 1 255 1 1`：调度成功，纹理像素是红，缓冲第一个分量是 1。
+按顺序写四个目标的日志是 `storage list     : 1 255 65280 1 1 1 1`：两张纹理分别是红和绿，两个缓冲的对应分量都是 1。
+缓冲排在纹理前面的日志是 `storage order    : 1 16711680 1 1`：槽 0 的缓冲第二个分量是 1，槽 1 的纹理是蓝。
+
+> **这个数字是怎么来的**：它是 `Create_0.gml` 里 `_igpu_check(` **调用点**的
+> 静态计数。`tools/verify_handover.ps1` 第 5 组用同一规则计数，并且**排除**
+> 函数定义那一行。有两处检查和 `if` 写在同一行、句柄创建失败时不会执行，
+> 所以脚本接受的区间是 `[调用点 - 这两处, 调用点]`。
+> 文档写调用点总数，因为那两处在通过的运行里也执行了。
 
 ---
 
@@ -828,31 +976,36 @@ struct GMBuffer {
 | 仅参数 | `func`（→ `GMFunction`）、`buffer`（→ `GMBuffer`）；**不能做返回值或字段** |
 
 > `func` 可用于异步回调：`callback.call(...)` 线程安全，数据排队到 GM 下一帧执行。
+>
+> 当前 extgen（v1.d8c68bd）不接受 `double`。小数参数写 `float`，生成出来是 32 位。
 
-### 7.15 ⚠️ GM **完全不管**输入装配（IA）状态 —— 绘制必须自己恢复
+### 7.15 输入装配状态：GML 碰不到，引擎自己的绘制会重设一部分
 
-**这是本项目最容易造成"玄学渲染 bug"的地方，务必理解。**
+`gpu_get_state()` / `gpu_set_state()` 的保存表（`Function_3D.cpp` 的
+`g_SaveRenderStates` / `g_SaveSamplerStates`）是 blend、depth、stencil、
+cull、fog、colour write、alpha test，加上采样器。**没有**顶点缓冲、输入布局、
+拓扑，也没有 scissor。GML 侧也查不到 `gpu_set_*vertex*` / `layout` / `topology`。
+调用方无法自己保存再恢复，所以 `igpu_draw` 把这件事包在一次调用里。
 
-`gpu_get_state()` / `gpu_set_state()` 能保存/恢复的状态，用 `GmlSpec.xml` 逐个数出来是：
+**但“不恢复就会画坏 GameMaker 的下一帧”不成立。** DX11 引擎里输入装配的设置点
+只有 `VertexBuilderM.cpp` 这一处，而且每次绘制都无条件重设：
 
-```
-blend（含 ext / sepalpha）、depth、stencil（全套 8 个）、
-cull、scissor、alphatest、fog、colourwrite、
-以及纹理采样器状态（tex_filter / tex_repeat / mip / aniso ...）
-```
+- `IASetVertexBuffers`（只写 slot 0）
+- `IASetPrimitiveTopology`
+- `IASetInputLayout`
 
-**全部是"光栅化 + 输出合并"阶段的。IA 阶段一个都没有：**
+没有脏标记。`StateManagerM.h` 写明输入布局、拓扑和顶点缓冲 "aren't included yet"。
+所以 GameMaker 自己的下一次绘制会换上自己的顶点缓冲、布局和拓扑。
+引擎**从不**调用 `IASetIndexBuffer`，索引缓冲不会被它换掉。
 
-```pwsh
-# 实测：查不到任何 vertexbuffer / inputlayout / topology 的状态函数
-Select-String -Path $GmlSpec -Pattern 'Function Name="gpu_(set|get)_[a-z_]*(vertex|layout|topology)[a-z_]*"'
-# → 无结果
-```
+`IaStateGuard` 因此还有用，理由是这三条，不是“挡住 GameMaker 的绘制”：
 
-**结论**：`igpu_draw` 会绑定自己的顶点缓冲区、输入布局、拓扑，
-而 **`gpu_set_state()` 无法撤销这些** —— GM 既没暴露读取途径，也没暴露写入途径。
+1. 把索引缓冲设回去。GameMaker 不会做这件事。
+2. 在 GameMaker 下一次绘制之前，设备上的输入装配和绘制前一致。
+   `igpu_is_vertex_buffer_bound )` 读的就是这个窗口。
+3. 如果以后引擎把输入装配放进状态缓存，恢复就变成必要的。
 
-**所以 IGPU 必须自己保存/恢复**，实现见 `igpu_draw.cpp` 的 `IaStateGuard`：
+实现见 `igpu_draw.cpp` 的 `IaStateGuard`，**不要为了改理由去改它**：
 
 1. 构造时用 context 的 `IAGetVertexBuffers / IAGetIndexBuffer / IAGetInputLayout / IAGetPrimitiveTopology` **读回设备真实状态**
 2. 绘制
@@ -865,7 +1018,7 @@ Select-String -Path $GmlSpec -Pattern 'Function Name="gpu_(set|get)_[a-z_]*(vert
 > ⚠️ **`IAGetVertexBuffers` 返回的指针带引用计数，由调用方负责 `Release()`**。
 > 漏了就是每帧泄漏一个 COM 对象 —— `IaStateGuard::releaseReferences()` 专门处理这个。
 
-**验证方式**（不能只看"函数返回 true"）：`igpu_is_vertex_buffer_bound()` 直接
+**验证方式**（不能只看"函数返回 true"）：`igpu_is_vertex_buffer_bound )` 直接
 向设备查询当前 slot 0 的顶点缓冲区，测试断言**绘制后 IGPU 的缓冲区不在里面**。
 这条探针本身也做过反向验证（故意反转断言 → 确实失败），确认它不是恒假的摆设。
 
@@ -931,26 +1084,46 @@ var _v = [(-1), (-1), (0), (0), (0), (3), (-1), (0), (1), (0)];
      两者不兼容。用 DEFAULT 才能既保持 GPU 侧只读、又允许一次上传。
      **改这个映射前先想清楚这条**。
    - 常量缓冲区（`Uniform`）的 size 必须是 16 的倍数，已在创建时校验。
-   - ⚠️ **当前 `Uniform` 只有"创建 + 上传"这半截**：还没有 `D3DReflect` 反射，
-     所以 IGPU **不知道** shader 的 `cbuffer` 里各字段的偏移与大小。
-     调用方现在必须**自己按 16 字节规则排布**结构体。
-     让 IGPU 用 `D3DReflect` 把布局读回来并自动打包，是后续的独立改进。
+   - 字段偏移不再由调用方计算。编译时读出布局，`igpu_uniform_write` 按成员名字打包。见第 10 项。
 4. ✅ **绘制调用（`Draw` / `DrawIndexed`）** ← **已完成**
-   见 `igpu_draw.h/.cpp`。**核心是 IA 状态的自动保存/恢复**（见 §7.15）——
-   GM 完全不提供 IA 状态接口，所以 IGPU 从 context 读回真实状态再设回去。
-   调用方**不需要**配对的 begin/end，一次 `igpu_draw` 内部全包。
-5. **渲染目标绑定**（`OMSetRenderTargets`）← **建议从这里继续**
-   - ⚠️ **这也是补上像素级验证的前提**：现在 `igpu_draw` 只能画到 GM 当时
-     绑定的目标，测试无法读回像素（见 §6「不能证明什么」）。
-     有了渲染目标 API 才能写"画到离屏 surface → `surface_getpixel` → 断言颜色"。
-   - 需要把 GM 的 `surface` 映射到 `ID3D11RenderTargetView`。GM 不暴露 surface
-     的底层纹理，所以这条路可能需要 `surface_get_texture` + 从纹理指针反查，
-     **先调研清楚可行性再动手**，别假设能直接拿到。
-6. **渲染状态对象**（depth-stencil / rasterizer / blend / sampler state）
-7. **MRT**（多 `ID3D11RenderTargetView`）
-8. **纹理 / SRV / RTV / UAV**（含 3D / array / cubemap）
-9. **查询 / 时间戳 / fence**
-10. **常量缓冲区反射**（`D3DReflect`），自动打包 `cbuffer` 布局
+   见 `igpu_draw.h/.cpp`。绘制前后用 `IaStateGuard` 把输入装配设回去（见 §7.15）。
+   GML 没有这些状态的接口，所以一次 `igpu_draw` 内部包掉，调用方不用配 begin/end。
+   GameMaker 自己的绘制会重设顶点缓冲、布局和拓扑；恢复仍然要做，因为索引缓冲
+   它从不重设，而且绘制返回前设备要和进入时一致。
+5. ✅ **渲染目标绑定**
+   `igpu_texture_create(..., render_target)` 建一张 IGPU 自己的颜色目标，
+   `igpu_draw_to_texture` 只在这一次绘制里绑上，返回前恢复原来的目标、视口和裁剪。
+   `igpu_texture_get_pixel` 读回 `surface_rgba8unorm`。`igpu_draw_sampled` 把它当贴图
+   绑到 slot 0。计算着色器写过的二维存储纹理，采样结果和写入的颜色一致。
+6. ✅ **渲染状态对象**（depth-stencil / rasterizer / blend / sampler）
+   `igpu_blend_state_create` / `igpu_depth_state_create` / `igpu_raster_state_create` /
+   `igpu_sampler_state_create`。`igpu_draw_sampled` 和 `igpu_draw_with_state` 都可以带上这些状态，只在这一次绘制里生效，
+   返回前把设备上原来的混合、深度、光栅和采样器设回去。点采样和线性采样在红蓝接缝上的像素不同。放大、缩小和多级混合可以分开指定；两级正中时，点混合落到其中一级，线性混合把两级掺在一起。级数偏移能把同一足迹从最细一级推到更粗的一级，负偏移再从更粗的一级拉回来。最细和最粗可以卡住选用的级数：往更粗推时停在指定的一级，也可以禁止用到比某一级更细的图像。右缘之外，钳制停在边缘纹素，重复绕到另一侧，镜像在整数边界把纹理翻过来，边框模式读调用方给的颜色。边框色可以和级数偏移、最细、最粗放在同一个采样器上：边缘外仍是给定的颜色，纹理内的级数照样能被推走或锁住。比较采样返回的是比较结果：通过是 1，不通过是 0，线性过滤把相邻的结果掺在一起。比较用的是 `cmpfunc_*`，参考值由着色器给出，拿它去比纹素。横向、纵向和深度可以各用一种寻址，体积纹理上的深度轴也已读回。纵向拉长时，16 倍各向异性和线性采样的像素不同。各向异性也能偏移级数并卡住最细和最粗：偏移把纯红推到平均色，最粗锁住时推不走，最细锁在最后一级时即使没有偏移也是平均色。
+   GameMaker 缓存这些状态，不设回去的话它的下一笔绘制不会自己改回来。
+7. ✅ **MRT**
+   `igpu_draw_to_render_targets` 一次最多绑 4 张同尺寸的颜色纹理（与引擎 `MAX_MRTS` 一致），都画第 0 级。
+   `igpu_draw_to_render_targets_level` 给每一张指定级数，比的是这一级的像素尺寸。
+   `igpu_draw_to_render_targets_layer` 再给每一张指定层或面。同一张纹理可以列多次，只要层或级数不同。
+   像素着色器的第 N 个颜色输出写第 N 张。返回前恢复原来的目标、视口和裁剪。
+   能力键 `max_render_targets` 在支持时为 4。
+8. ✅ **纹理形状与存储纹理**
+   `IgpuTextureKind` 是各后端共有的四种形状：二维、三维、数组、立方体。
+   `igpu_texture_create` 仍是二维简写，只有一级。`igpu_texture_create_mips` 分配多级，带级数的纹理也可以当渲染目标。`igpu_texture_generate_mips` 用第 0 级填满更粗的级。`igpu_dispatch_level` 和 `igpu_draw_to_texture_level` 分别用计算着色器和绘制写某一级，都已证明不会改第 0 级。`igpu_texture_read_level` 按这一级的像素读回。切片、层和立方体面用同一个 `layer` 参数。
+   立方体面顺序是 +X、-X、+Y、-Y、+Z、-Z。
+   `storage` 是可写图像（能力键仍叫 `uav`）。二维、三维、数组和立方体都能用 `igpu_dispatch` 写入，也能用 `igpu_draw_sampled` 采样。体积和数组由着色器选层，立方体由方向选面。立方体按面索引写，顺序和 `igpu_texture_read` 相同；没有可写立方体图像的方言把六面写成二维数组。
+   结构化缓冲的写入走 `igpu_dispatch_buffer`。`igpu_dispatch_both` 一次写一张纹理和一个缓冲。`igpu_dispatch_writes` 按列表顺序写 1 到 8 个目标，纹理和缓冲共用同一张槽表。
+   没有计算调度的平台会让 `igpu_supports(UnorderedAccess)` 为 false，创建时失败返回。
+9. ✅ **查询 / 时间戳 / fence**
+   遮挡查询数的是画上去的样本。时间戳是一段 GPU 工作的 tick 差，除以
+   `igpu_timestamp_frequency()` 得到秒。fence 是时间线上的一个点，只轮询、不阻塞。
+   这些入口不包含某个图形 API 的类型；Direct3D 11 的实现在 `src/native/d3d11/`。
+   绘制、纹理、管线状态、着色器编译、缓冲区和输入布局都只调用 `Backend`（`igpu_gpu.cpp` → `D3D11Backend` → `d3d11_impl`）。具体的图形 API 只出现在 `src/native/d3d11/` 和仍放在 `src/native/` 里的 `d3d11_impl` 函数中。
+10. ✅ **常量缓冲区反射**
+   编译时读出每个 uniform 块的名字、字节大小、绑定槽，以及成员的偏移、大小、标量类型、行列数和数组长度。
+   `igpu_uniform_write` 按名字把数值写到这些偏移上，再整块上传。矩阵按列主序。
+   `float` 数组的元素之间空到 16 字节，成员大小停在最后一个元素末尾：`float[2]` 是 20，所在的块仍补到 16 的倍数。
+   `igpu_uniform_bind` 绑到块要求的槽；缓冲传 0 时恢复该槽上原来的缓冲。
+   读布局和绑槽走 `Backend`（`igpu_reflect.cpp`）。能力键 `uniform_reflection`。
 
 > **新增 API 的固定流程**（漏一步就会卡住）：
 > 1. 改 `spec.gmidl` → **重跑 extgen**（不跑就没有绑定代码）
@@ -962,11 +1135,11 @@ var _v = [(-1), (-1), (0), (0), (0), (3), (-1), (0), (1), (0)];
 >
 > ⚠️ **旧版文档的过时说法**：曾要求改能力键时同步 `kEntryCount`。
 > **当前代码里没有这个常量**（条目数由 `StructStream::writeTo()` 自动计算），
-> 不要去找它。当前键数是 **28**。
+> 不要去找它。当前键数是 **35**。`formats` 只占其中一项，里面的 `surface_*` 名字不另计。
 
 ### 优先级 2
-- [ ] `igpu_get_capabilities()` 增加 `formats` 子结构（复用 GM 的 `surface_*` 词汇表）
-- [ ] Tier 2 后端抽象（OpenGL/GLES 能力探测，先不实现渲染）
+- [x] `igpu_get_capabilities()` 增加 `formats` 子结构（复用 GM 的 `surface_*` 词汇表）
+- [x] Tier 2 后端抽象（OpenGL/GLES 能力探测，先不实现渲染）
 
 ### 设计约束（务必遵守）
 - **接口零 D3D 术语** —— GML 层面不得出现 `d3d`/`dxgi`/`_5_0`/`ID3D` 字样

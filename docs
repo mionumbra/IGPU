@@ -25,6 +25,12 @@
  */
 
 /**
+ * @function_partial igpu_device_lost
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
  * @function_partial igpu_get_feature_level
  * @returns {Real}
  * @function_end
@@ -74,37 +80,21 @@
  */
 
 /**
+ * @function_partial igpu_set_graphics_info
+ * @param {String} vendor
+ * @param {String} version
+ * @param {String} renderer
+ * @param {String} shading_language
+ * @param {Real} max_texture_size
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
  * @function_partial igpu_shader_compile
  * @param {String} source
  * @param {String} entry
  * @param {Real} stage
- * @param {String} dialect
- * @returns {Real}
- * @function_end
- */
-
-/**
- * @function_partial igpu_shader_compile_vertex
- * @param {String} source
- * @param {String} entry
- * @param {String} dialect
- * @returns {Real}
- * @function_end
- */
-
-/**
- * @function_partial igpu_shader_compile_pixel
- * @param {String} source
- * @param {String} entry
- * @param {String} dialect
- * @returns {Real}
- * @function_end
- */
-
-/**
- * @function_partial igpu_shader_compile_compute
- * @param {String} source
- * @param {String} entry
  * @param {String} dialect
  * @returns {Real}
  * @function_end
@@ -143,8 +133,10 @@
  * @param {Real} shader
  * @param {Array} usage
  * @param {Array} type
+ * @param {Array} step
  * @param {Real} element_count
- * @param {Real} stride
+ * @param {Real} vertex_stride
+ * @param {Real} instance_stride
  * @returns {Real}
  * @function_end
  */
@@ -207,12 +199,54 @@
  */
 
 /**
+ * @function_partial igpu_storage_bind
+ * @param {Real} buffer
+ * @param {Real} stage
+ * @param {Real} slot
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_shader_reflect
+ * @param {Real} shader
+ * @returns {Array[Struct.IgpuUniformBlock]}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_uniform_write
+ * @param {Real} buffer
+ * @param {Real} shader
+ * @param {String} block
+ * @param {String} member
+ * @param {Array} values
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_uniform_bind
+ * @param {Real} buffer
+ * @param {Real} stage
+ * @param {Real} slot
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
  * @function_partial igpu_draw
  * @param {Real} vertex_buffer
+ * @param {Real} instance_buffer
  * @param {Real} layout
  * @param {Real} primitive
  * @param {Real} first_vertex
  * @param {Real} vertex_count
+ * @param {Real} instance_count
+ * @param {Real} blend_state
+ * @param {Real} depth_state
+ * @param {Real} raster_state
+ * @param {Real} sampler_state
  * @returns {Bool}
  * @function_end
  */
@@ -225,27 +259,368 @@
  * @param {Real} primitive
  * @param {Real} first_index
  * @param {Real} index_count
+ * @param {Real} blend_state
+ * @param {Real} depth_state
+ * @param {Real} raster_state
+ * @param {Real} sampler_state
  * @returns {Bool}
  * @function_end
  */
 
 /**
- * @function_partial igpu_get_draw_count
- * @returns {Real}
- * @function_end
- */
-
-/**
- * @function_partial igpu_get_draw_restore_failures
- * @returns {Real}
- * @function_end
- */
-
-/**
- * @function_partial igpu_is_vertex_buffer_bound
- * @param {Real} buffer
+ * @function_partial igpu_draw_indirect
+ * @param {Real} vertex_buffer
+ * @param {Real} instance_buffer
+ * @param {Real} layout
+ * @param {Real} primitive
+ * @param {Real} args
+ * @param {Real} args_offset
+ * @param {Real} blend_state
+ * @param {Real} depth_state
+ * @param {Real} raster_state
+ * @param {Real} sampler_state
  * @returns {Bool}
  * @function_end
+ */
+
+/**
+ * @function_partial igpu_draw_patch
+ * @param {Real} vertex_buffer
+ * @param {Real} layout
+ * @param {Real} control_points
+ * @param {Real} first_vertex
+ * @param {Real} vertex_count
+ * @param {Real} blend_state
+ * @param {Real} depth_state
+ * @param {Real} raster_state
+ * @param {Real} sampler_state
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_draw_indexed_indirect
+ * @param {Real} vertex_buffer
+ * @param {Real} instance_buffer
+ * @param {Real} layout
+ * @param {Real} index_buffer
+ * @param {Real} primitive
+ * @param {Real} args
+ * @param {Real} args_offset
+ * @param {Real} blend_state
+ * @param {Real} depth_state
+ * @param {Real} raster_state
+ * @param {Real} sampler_state
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_blend_state_create
+ * @param {Bool} enabled
+ * @param {Real} src
+ * @param {Real} dest
+ * @param {Real} equation
+ * @param {Real} src_alpha
+ * @param {Real} dest_alpha
+ * @param {Real} equation_alpha
+ * @param {Bool} write_red
+ * @param {Bool} write_green
+ * @param {Bool} write_blue
+ * @param {Bool} write_alpha
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_depth_state_create
+ * @param {Bool} depth_test
+ * @param {Bool} depth_write
+ * @param {Real} depth_func
+ * @param {Bool} stencil_enable
+ * @param {Real} stencil_func
+ * @param {Real} stencil_fail
+ * @param {Real} stencil_depth_fail
+ * @param {Real} stencil_pass
+ * @param {Real} stencil_ref
+ * @param {Real} stencil_read_mask
+ * @param {Real} stencil_write_mask
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_raster_state_create
+ * @param {Real} cull
+ * @param {Real} fill
+ * @param {Bool} scissor
+ * @param {Bool} depth_clip
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_sampler_state_create
+ * @param {Real} magnification
+ * @param {Real} minification
+ * @param {Real} mip
+ * @param {Real} address_u
+ * @param {Real} address_v
+ * @param {Real} address_w
+ * @param {Real} anisotropy
+ * @param {Real} border
+ * @param {Real} compare
+ * @param {Real} level_offset
+ * @param {Real} finest
+ * @param {Real} coarsest
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_state_release
+ * @param {Real} state
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_texture_create
+ * @param {Real} kind
+ * @param {Real} width
+ * @param {Real} height
+ * @param {Real} depth
+ * @param {Real} format
+ * @param {Bool} render_target
+ * @param {Bool} storage
+ * @param {Real} mip_count
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_texture_generate_mips
+ * @param {Real} texture
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_texture_read
+ * @param {Real} texture
+ * @param {Real} x
+ * @param {Real} y
+ * @param {Real} layer
+ * @param {Real} mip
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_texture_release
+ * @param {Real} texture
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_dispatch
+ * @param {Real} groups_x
+ * @param {Real} groups_y
+ * @param {Real} groups_z
+ * @param {Array} kinds
+ * @param {Array} targets
+ * @param {Array} layers
+ * @param {Array} mips
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_query_create
+ * @param {Real} kind
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_query_begin
+ * @param {Real} query
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_query_end
+ * @param {Real} query
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_query_ready
+ * @param {Real} query
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_query_result
+ * @param {Real} query
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_query_release
+ * @param {Real} query
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_timestamp_frequency
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_fence_create
+ * @returns {Real}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_fence_signal
+ * @param {Real} fence
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_fence_signaled
+ * @param {Real} fence
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_fence_release
+ * @param {Real} fence
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_draw_to_render_targets
+ * @param {Real} vertex_buffer
+ * @param {Real} layout
+ * @param {Real} primitive
+ * @param {Real} first_vertex
+ * @param {Real} vertex_count
+ * @param {Array} targets
+ * @param {Array} layers
+ * @param {Array} mips
+ * @param {Real} blend_state
+ * @param {Real} depth_state
+ * @param {Real} raster_state
+ * @param {Real} sampler_state
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @function_partial igpu_draw_sampled
+ * @param {Real} vertex_buffer
+ * @param {Real} layout
+ * @param {Real} primitive
+ * @param {Real} first_vertex
+ * @param {Real} vertex_count
+ * @param {Real} texture
+ * @param {Real} blend_state
+ * @param {Real} depth_state
+ * @param {Real} raster_state
+ * @param {Real} sampler_state
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
+ * @struct_partial IgpuUniformMember
+ * @member {String} name
+ * @member {Real} offset
+ * @member {Real} size
+ * @member {Real} type
+ * @member {Real} rows
+ * @member {Real} columns
+ * @member {Real} elements
+ * @struct_end
+ */
+
+/**
+ * @struct_partial IgpuUniformBlock
+ * @member {String} name
+ * @member {Real} size
+ * @member {Real} slot
+ * @member {Array[Struct.IgpuUniformMember]} members
+ * @struct_end
+ */
+
+/**
+ * @enum_partial IgpuVertexStep
+ * @member Vertex
+ * @member Instance
+ * @enum_end
+ */
+
+/**
+ * @enum_partial IgpuUniformType
+ * @member Float
+ * @member Int
+ * @member Uint
+ * @member Bool
+ * @member Struct
+ * @member Unknown
+ * @enum_end
+ */
+
+/**
+ * @enum_partial IgpuAddressMode
+ * @member Clamp
+ * @member Repeat
+ * @member Mirror
+ * @member Border
+ * @enum_end
+ */
+
+/**
+ * @enum_partial IgpuWriteTarget
+ * @member Texture
+ * @member Buffer
+ * @enum_end
+ */
+
+/**
+ * @enum_partial IgpuQueryKind
+ * @member Occlusion
+ * @member Timestamp
+ * @enum_end
+ */
+
+/**
+ * @enum_partial IgpuTextureKind
+ * @member TwoD
+ * @member ThreeD
+ * @member Array
+ * @member Cube
+ * @enum_end
+ */
+
+/**
+ * @enum_partial IgpuFill
+ * @member Solid
+ * @member Wireframe
+ * @enum_end
  */
 
 /**
@@ -286,6 +661,7 @@
  * @member Index
  * @member Uniform
  * @member Storage
+ * @member Indirect
  * @enum_end
  */
 
@@ -316,6 +692,7 @@
  * @member StructuredBuffer
  * @member UnorderedAccess
  * @member MultipleRenderTargets
+ * @member Texture2D
  * @member Instancing
  * @member IndirectDraw
  * @member Queries
@@ -332,9 +709,14 @@
  * @member Draw
  * @member DrawIndexed
  * @member DrawStateRestore
+ * @member BlendState
+ * @member DepthState
+ * @member RasterState
+ * @member SamplerState
  * @member AdapterInfo
  * @member VideoMemory
  * @member BackbufferSize
+ * @member UniformReflection
  * @enum_end
  */
 

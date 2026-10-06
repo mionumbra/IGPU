@@ -2,9 +2,13 @@
 
 #include <d3d11.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <vector>
+
+#include "igpu_reflect.h"
 
 namespace igpu
 {
@@ -31,6 +35,10 @@ namespace igpu
             // pixel shader to the vertex stage and letting the backend fail
             // later with a far more opaque message.
             std::int32_t stage = -1;
+
+            // Uniform blocks read back when the shader was compiled. Empty when
+            // the shader declares none. Queries never re-read the bytecode.
+            UniformLayout uniforms;
         };
 
         std::unordered_map<std::uint64_t, ShaderEntry> shaders;
@@ -61,14 +69,64 @@ namespace igpu
             std::int32_t usage = 0;
             std::int32_t bind = 0;
 
-            // Bytes per vertex, for a buffer created with IgpuBufferBind.Vertex.
-            // Stored because a draw has to derive how many vertices the buffer
-            // holds, and only its creator knows the stride. 0 when not vertex.
+            // Bytes per vertex, or bytes per structure for a storage buffer.
+            // 0 when the buffer has neither of those uses.
             std::int32_t stride = 0;
+
+            // Shader view of a structured storage buffer. Null for other binds.
+            ID3D11ShaderResourceView* shader_view = nullptr;
+            // Writable view used by a compute shader. Null for other binds.
+            ID3D11UnorderedAccessView* unordered_view = nullptr;
+
+            // CPU copy of a uniform buffer. Member writes patch this and then
+            // upload the whole block; the GPU buffer starts zeroed to match.
+            std::vector<std::byte> shadow;
         };
 
         std::unordered_map<std::uint64_t, BufferEntry> buffers;
         std::uint64_t next_buffer_id = 1;
+
+        // Immutable pipeline states. `object` is a blend, depth-stencil,
+        // rasteriser or sampler state. `stencil_ref` is only meaningful for
+        // a depth state; the depth-stencil object itself cannot store it.
+        enum class StateKind : std::int32_t
+        {
+            Blend = 1,
+            Depth = 2,
+            Raster = 3,
+            Sampler = 4
+        };
+
+        struct StateEntry
+        {
+            StateKind kind = StateKind::Blend;
+            ID3D11DeviceChild* object = nullptr;
+            std::uint32_t stencil_ref = 0;
+        };
+
+        std::unordered_map<std::uint64_t, StateEntry> states;
+        std::uint64_t next_state_id = 1;
+
+        // texture is a 2D resource or a 3D resource. rtv covers the whole
+        // resource only for a plain 2D render target; layered draws make a
+        // one-slice view on the spot. uav is set only for a storage texture.
+        struct TextureEntry
+        {
+            ID3D11Resource* texture = nullptr;
+            ID3D11ShaderResourceView* srv = nullptr;
+            ID3D11RenderTargetView* rtv = nullptr;
+            ID3D11UnorderedAccessView* uav = nullptr;
+            std::int32_t kind = 0;
+            std::int32_t width = 0;
+            std::int32_t height = 0;
+            std::int32_t depth = 1;
+            std::int32_t format = 0;
+            bool target = false;
+            std::int32_t mips = 1;
+        };
+
+        std::unordered_map<std::uint64_t, TextureEntry> textures;
+        std::uint64_t next_texture_id = 1;
 
         DXGI_ADAPTER_DESC adapter_desc{};
         bool adapter_desc_valid = false;
@@ -78,8 +136,29 @@ namespace igpu
         std::int32_t backbuffer_width = 0;
         std::int32_t backbuffer_height = 0;
 
+        // Set when GetDeviceRemovedReason reports the borrowed device is dead.
+        // Cleared by a later successful igpu_init, and by a clean shutdown.
+        // Stays set after the pointers are dropped, so a caller can tell loss
+        // apart from "never initialised".
+        bool device_lost = false;
+
+        // Phrase recorded with device_lost, so a later call can repeat the
+        // reason after the original error string has been cleared.
+        std::string device_lost_detail;
+
         void reset();
     };
+
+    // If the borrowed device has been removed or reset, drop every handle that
+    // was created on it and record the error. Does nothing when no device is
+    // bound. Safe to call often; a healthy device is left untouched, including
+    // the last-error string.
+    void refresh_device_status();
+
+    bool device_was_removed();
+
+    // False when there is no live device. Sets last error, naming `entry`.
+    bool require_device(const char* entry);
 
     DeviceState& state();
 
@@ -89,6 +168,9 @@ namespace igpu
 
     // Buffer lookup helper, same contract as find_shader.
     DeviceState::BufferEntry* find_buffer(std::uint64_t handle);
+
+    DeviceState::StateEntry* find_state(std::uint64_t handle);
+    DeviceState::TextureEntry* find_texture(std::uint64_t handle);
 
     bool bind_device(ID3D11Device* device, ID3D11DeviceContext* context, IDXGISwapChain* swapchain);
     void release_all();
