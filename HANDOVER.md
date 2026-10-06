@@ -1,12 +1,12 @@
 # IGPU — 交接文档
 
-> 最后更新：2026-10-06
-> 状态：**0.5.0**。公开函数 60 个。Windows D3D11 已跑通像素测试。OpenGL 后端只在探针里，Windows 的 GameMaker DLL 没有它。
+> 最后更新：2026-10-07
+> 状态：**0.5.0**。公开函数 60 个。Windows D3D11 已跑通像素测试。OpenGL 后端只在探针里，Windows 的 GameMaker DLL 没有它。索引绘制已合并进 `main`。
 > 版本：`0.5.0`
-> Git：分支 `gl-bind-current`，HEAD `15441b5`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）。未合并、未推送。`main` 仍是 `523e0f3`。
+> Git：分支 `main`，HEAD `d662fb2`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）。拉取请求 #1 已合并并推送。`gl-bind-current` 已删除。
 > **接手第一件事：读 `SESSION_HANDOVER.md` 开头，再跑 `pwsh -File tools\verify_handover.ps1`**
 >
-> 📄 **2026-10-06 的交接在 `SESSION_HANDOVER.md` 开头。** OpenGL 第一刀和索引绘制已在探针里落地。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。9 月审计记录仍在该文件下半截。
+> 📄 **2026-10-07 的交接在 `SESSION_HANDOVER.md` 开头。** 下一刀是探针里的非索引 `igpu_draw`。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。9 月审计记录仍在 `SESSION_HANDOVER.md` 下半截。
 >
 > 🔴 本次会话用**真实引擎源码**做了审计，发现并修复了若干问题。
 > 详细结论见 `tools/engine_audit.md`；本文档 §0.0 是摘要。
@@ -125,7 +125,7 @@ extgen --config config.json
 
 当前的优先级是：
 
-1. **OpenGL 索引绘制已经在探针里证明。** 8×8 纹理先画成蓝。前 6 个 16 位索引只把左半边画成红 `255`，右半边保持蓝 `16711680`。从索引 6 起再把右半边画成红。Windows 的 GameMaker DLL 仍没有 OpenGL 后端。不要加 ANGLE，也不要改三个指针的 `igpu_init`。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。分工和命令写在 `SESSION_HANDOVER.md` 开头。
+1. **OpenGL 下一刀：非索引的 `igpu_draw`。** 索引绘制已经在探针里证明。`GlBackend::draw` 仍是 `not_yet("igpu_draw")`。这一刀画进调用方已经 current 的帧缓冲，用像素证明只涂左半边。Windows 的 GameMaker DLL 仍没有 OpenGL 后端。不要加 ANGLE，也不要改三个指针的 `igpu_init`。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。分工和命令写在 `SESSION_HANDOVER.md` 开头。
 
 接手时先读 `SESSION_HANDOVER.md` 开头。比较采样的偏移、最细、最粗和线性过滤上的各向异性已经在 Direct3D 11 上用像素证明。实例化、间接、面片、画进纹理和采样绘制都会应用并恢复管线状态。
 

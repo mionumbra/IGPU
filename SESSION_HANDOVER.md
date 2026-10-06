@@ -1,4 +1,4 @@
-# 会话交接 — 2026-10-06 — 版本 0.5.0 — OpenGL 第一刀
+# 会话交接 — 2026-10-07 — 版本 0.5.0 — OpenGL 索引绘制已合并
 
 > 先读这一节，再改代码。`HANDOVER.md` 是长文档，开头版本是 `0.5.0`。正文里 9 月的叙述已经过时。本文下半截仍保留 2026-09-23 审计记录。
 >
@@ -6,11 +6,18 @@
 
 ## 下一会话接着做
 
-停在分支 `gl-bind-current`。这个分支没有 upstream，没有合并进 `main`，也没有推到 GitHub。`main` 停在已发布的 `0.4.0`（`523e0f3`）。继续就留在这个分支上。
+停在 `main`。拉取请求 https://github.com/mionumbra/IGPU/pull/1 已合并，合并提交 `d662fb2`。`origin/main` 就是这个提交。`gl-bind-current` 已经从本地和远程删除。下一刀从 `main` 开新分支。
 
-第一刀已经落地：无指针的 `igpu_bind_current()`，加上只属于测试的 WGL 探针。探针在这块 AMD Radeon Vega 8 上画出 8×8 纹理，读回 `255 / 16711680 / 16711680`（左上红，右上蓝，左下蓝）。Windows 的 GameMaker DLL 不含 OpenGL。
+已经落地的 OpenGL 只在探针里，Windows 的 GameMaker DLL 不含它：
 
-索引绘制已经在 `igpu_gl_probe` 里证明。静态 16 位索引缓冲可以创建。`IndexBuffer` 和 `DrawIndexed` 在 OpenGL 探针上为 true，写法是 `native || opengl_backend()`。像素：先把 8×8 纹理画成蓝，前 6 个索引只把左半边画成红 `255`，右半边保持蓝 `16711680`；从索引 6 起、`index_count = -1` 再把右半边画成红。Windows 的 GameMaker DLL 仍然没有 OpenGL 后端。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。Linux / macOS / Android / iOS / tvOS 上的 GameMaker 运行仍是更后面的产品证据，这台机器证明不了。
+- `igpu_bind_current()` 绑定调用线程上已经 current 的上下文，不创建、不销毁。Windows 这份 GameMaker 构建里它失败，错误是 `igpu_bind_current: this build has no OpenGL backend`。已经 `igpu_init` 的 D3D11 设备不会被这次失败丢掉。
+- 探针在这块 AMD Radeon Vega 8 上画出 8×8 纹理，读回 `255 / 16711680 / 16711680`（左上红，右上蓝，左下蓝）。
+- 静态 16 位索引缓冲可以创建。`IndexBuffer` 和 `DrawIndexed` 在探针上为 true，写法是 `native || opengl_backend()`。前 6 个索引只把左半边画成红 `255`，右半边保持蓝 `16711680`；从索引 6 起、`index_count = -1` 再把右半边画成红。`igpu_draw_indexed` 画进当前帧缓冲，不清屏。探针用 `gl_color_target_begin` 把 IGPU 纹理绑成当前目标。
+- `igpu_draw_to_render_targets` 拒绝 `bind != 1` 的缓冲。索引缓冲的 stride 是 0，不拒绝的话范围检查会放行，`glDrawArrays` 会读过那 24 个字节。
+
+下一刀做**非索引的 `igpu_draw`**。公开函数已在。`GlBackend::draw` 现在仍是 `not_yet("igpu_draw")`。产品路径在 Linux、macOS 和移动端上会调用它，当时帧缓冲已经 current。这一刀让它画进那张帧缓冲，仍在 `igpu_gl_probe` 里用像素证明：三角形列表只涂左半边，右半边保持清屏色。四个状态句柄必须是 0。图元 `6` 拒绝且不改像素。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。那些平台上的 GameMaker 运行这台机器证明不了。
+
+已知的小缺口，不是下一刀：`first_index + index_count` 在特别大的正数上可能回绕，再被收成 `GLsizei`。Direct3D 有同样的写法。探针里的 13 个索引不会走到这里。
 
 动手前先跑下面三件事，确认树还是绿的：
 
@@ -20,7 +27,15 @@ cmake --build --preset win-x64-release-vs18 --target igpu_gl_probe
 out\build\win-x64-release\src\Release\igpu_gl_probe.exe
 ```
 
-探针退出码 0，并打印 `pixels       : 255 / 16711680 / 16711680` 和 `PASS`。可执行文件在 `src\Release` 下，不在预设目录的 `Release` 根上。
+探针退出码 0，并打印这三行和 `PASS`：
+
+```
+pixels       : 255 / 16711680 / 16711680
+indexed pixels: 255 / 16711680
+indexed tail  : 255 / 255
+```
+
+可执行文件在 `src\Release` 下，不在预设目录的 `Release` 根上。
 
 改了 DLL 才会再跑 GameMaker。在 `project\` 下：
 
@@ -105,7 +120,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 探针 | 同一块 GPU，`GL_VERSION` 为 `4.6.0 Compatibility Profile Context 26.5.2.260413` |
 | GL 像素 | `255 / 16711680 / 16711680` |
 | GL 索引像素 | `255 / 16711680`，随后右半边也是 `255` |
-| Git | 分支 `gl-bind-current`，代码提交 `15441b5`。未推送。`main` 仍是已推送的 `0.4.0` |
+| Git | `main`，合并提交 `d662fb2`，已推送。拉取请求 #1 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
 
@@ -130,7 +145,7 @@ out\build\win-x64-release\src\Release\igpu_gl_probe.exe
 
 - `tests/gl_probe/wgl_host.cpp` 拥有窗口和 `HGLRC`。`gl_probe_forget()` 只把句柄置空，不删除。
 - `src/native/gl/igpu_gl_loader.cpp` 用 `wglGetProcAddress` 装 GL 2.0 入口。`<GL/gl.h>` 之前要先 include `<Windows.h>`。
-- `src/native/gl/igpu_gl_backend.cpp` 是 `GlBackend`。没实现的虚函数返回 0 或 false，错误以 `: the opengl backend does not implement this call yet` 结尾。
+- `src/native/gl/igpu_gl_backend.cpp` 是 `GlBackend`。`draw_indexed` 已经转到 `gl_draw_indexed`。`draw` 仍是 `not_yet("igpu_draw")`，这是下一刀。没实现的虚函数返回 0 或 false，错误以 `: the opengl backend does not implement this call yet` 结尾。
 - `src/native/gl/igpu_gl_draw.cpp` 管缓冲、布局、纹理、绘制、读回。
 - `src/CMakeLists.txt` 把核心源、`d3d11`、`gl` 和 `code_gen` 编进 `igpu_gl_probe`，并定义 `IGPU_HAS_OPENGL`、`NOMINMAX`、`WIN32_LEAN_AND_MEAN`。DLL 目标没有这些。
 
