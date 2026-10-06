@@ -6,11 +6,11 @@
 
 ## 下一会话接着做
 
-停在分支 `gl-bind-current`，提交 `15441b5`。这个分支没有 upstream，没有合并进 `main`，也没有推到 GitHub。`main` 停在已发布的 `0.4.0`（`523e0f3`）。继续就留在这个分支上。
+停在分支 `gl-bind-current`。这个分支没有 upstream，没有合并进 `main`，也没有推到 GitHub。`main` 停在已发布的 `0.4.0`（`523e0f3`）。继续就留在这个分支上。
 
 第一刀已经落地：无指针的 `igpu_bind_current()`，加上只属于测试的 WGL 探针。探针在这块 AMD Radeon Vega 8 上画出 8×8 纹理，读回 `255 / 16711680 / 16711680`（左上红，右上蓝，左下蓝）。Windows 的 GameMaker DLL 不含 OpenGL。
 
-下一刀做**索引绘制**。仍在 `igpu_gl_probe` 里证明，仍用已经 current 的上下文。公开函数 `igpu_draw_indexed` 已在。这一刀让 OpenGL 后端的 `IndexBuffer` 和 `DrawIndexed` 在实现之后变为 true，并用像素证明：16 位索引只画出要求的那一半，另一半保持清屏色。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。Linux / macOS / Android / iOS / tvOS 上的 GameMaker 运行仍是更后面的产品证据，这台机器证明不了。
+索引绘制已经在 `igpu_gl_probe` 里证明。静态 16 位索引缓冲可以创建。`IndexBuffer` 和 `DrawIndexed` 在 OpenGL 探针上为 true，写法是 `native || opengl_backend()`。像素：先把 8×8 纹理画成蓝，前 6 个索引只把左半边画成红 `255`，右半边保持蓝 `16711680`；从索引 6 起、`index_count = -1` 再把右半边画成红。Windows 的 GameMaker DLL 仍然没有 OpenGL 后端。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。Linux / macOS / Android / iOS / tvOS 上的 GameMaker 运行仍是更后面的产品证据，这台机器证明不了。
 
 动手前先跑下面三件事，确认树还是绿的：
 
@@ -104,6 +104,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | D3D11 测试 GPU | AMD Radeon Vega 8，`igpu_get_feature_level()` 为 `2`（`Level_11_1`） |
 | GL 探针 | 同一块 GPU，`GL_VERSION` 为 `4.6.0 Compatibility Profile Context 26.5.2.260413` |
 | GL 像素 | `255 / 16711680 / 16711680` |
+| GL 索引像素 | `255 / 16711680`，随后右半边也是 `255` |
 | Git | 分支 `gl-bind-current`，代码提交 `15441b5`。未推送。`main` 仍是已推送的 `0.4.0` |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
@@ -133,11 +134,11 @@ out\build\win-x64-release\src\Release\igpu_gl_probe.exe
 - `src/native/gl/igpu_gl_draw.cpp` 管缓冲、布局、纹理、绘制、读回。
 - `src/CMakeLists.txt` 把核心源、`d3d11`、`gl` 和 `code_gen` 编进 `igpu_gl_probe`，并定义 `IGPU_HAS_OPENGL`、`NOMINMAX`、`WIN32_LEAN_AND_MEAN`。DLL 目标没有这些。
 
-已经为 true 的能力：`ShaderCompileRuntime`、`ShaderStageVertex`、`ShaderStagePixel`、`Texture2D`、`InputLayout`、`VertexBuffer`、`Draw`、`DrawStateRestore`。`formats.surface_rgba8unorm` 为 true，另外七个格式为 false。`igpu_get_feature_level()` 在 GL 上是 `0`（`Unknown`）。没有 DXGI 适配器时，显存和后缓冲尺寸是 0，设备名来自 `GL_RENDERER`。方言是 `glsl`。
+已经为 true 的能力：`ShaderCompileRuntime`、`ShaderStageVertex`、`ShaderStagePixel`、`Texture2D`、`InputLayout`、`VertexBuffer`、`IndexBuffer`、`Draw`、`DrawIndexed`、`DrawStateRestore`。`formats.surface_rgba8unorm` 为 true，另外七个格式为 false。`igpu_get_feature_level()` 在 GL 上是 `0`（`Unknown`）。没有 DXGI 适配器时，显存和后缓冲尺寸是 0，设备名来自 `GL_RENDERER`。方言是 `glsl`。
 
 着色器是 `#version 120`。入口必须是 `main`。空方言和 `"glsl"` 可以编译。`"hlsl"` 被拒绝。顶点阶段和像素阶段都绑上之后才链成一个程序，属性 0 叫 `in_pos`。阶段绑错会失败，原来的绑定还在。`shader_bind(0, stage)` 解绑该阶段。
 
-绘制只接受一个目标、layer 0、mip 0、四个状态句柄都是 0、图元 `4`（三角形列表）。图元 `6` 是扇形，拒绝且不改像素。布局只接受一个 `float2` 位置（usage `1`，type `2`，step `0`，stride 0 或 8）。缓冲是静态顶点缓冲，一次写满。读回把 RGBA 收成 `r | (g << 8) | (b << 16)`，丢掉 alpha。`gl_row = height - 1 - y`，所以 `y = 0` 是裁剪空间的上方。绘制返回前恢复 `GL_FRAMEBUFFER_BINDING` 和 `GL_VIEWPORT`，不解开调用方绑好的程序。
+绘制只接受一个目标、layer 0、mip 0、四个状态句柄都是 0、图元 `4`（三角形列表）。图元 `6` 是扇形，拒绝且不改像素。布局只接受一个 `float2` 位置（usage `1`，type `2`，step `0`，stride 0 或 8）。顶点缓冲是静态的，一次写满。索引缓冲也是静态的，16 位，`bind` 为 2，stride 为 0，长度是 2 的倍数。`igpu_draw_indexed` 画进当前帧缓冲，不清屏。探针用 `gl_color_target_begin` 把 IGPU 纹理绑成当前目标，画完再还原。读回把 RGBA 收成 `r | (g << 8) | (b << 16)`，丢掉 alpha。`gl_row = height - 1 - y`，所以 `y = 0` 是裁剪空间的上方。非索引绘制返回前恢复 `GL_FRAMEBUFFER_BINDING` 和 `GL_VIEWPORT`，不解开调用方绑好的程序。索引绘制恢复顶点数组、数组缓冲和元素数组缓冲，不动帧缓冲和程序。
 
 `supports()` 里的局部量 `native` 等于 `d3d11_backend()`。交接脚本把裸的 `return native` 当成这份构建上的恒 true。OpenGL 多出来的 true 写成 `native || opengl_backend()`。不要把 `native` 改回「任意后端」，否则 GL 会继承计算、三维纹理和查询。
 
