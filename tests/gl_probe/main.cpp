@@ -3,6 +3,7 @@
 #include "IGPU_native.h"
 
 #include "core/GMExtWire.h"
+#include "native/gl/igpu_gl_draw.h"
 
 #include <Windows.h>
 #include <GL/gl.h>
@@ -139,10 +140,10 @@ int main()
         {26, true, "Texture2D"},
         {47, true, "InputLayout"},
         {48, true, "VertexBuffer"},
-        {49, false, "IndexBuffer"},
+        {49, true, "IndexBuffer"},
         {50, false, "UniformBuffer"},
         {53, true, "Draw"},
-        {54, false, "DrawIndexed"},
+        {54, true, "DrawIndexed"},
         {55, true, "DrawStateRestore"},
         {63, false, "UniformReflection"},
     };
@@ -255,6 +256,153 @@ int main()
     if (viewport[0] != 0 || viewport[1] != 0 || viewport[2] != 1 || viewport[3] != 1 || framebuffer != 0)
     {
         return fail("draw did not restore the viewport and framebuffer");
+    }
+
+    const float indexed_vertices[] = {
+        -1.f, -1.f, 0.f, -1.f, -1.f, 1.f, 0.f, 1.f, 1.f, -1.f, 1.f, 1.f,
+    };
+    const std::uint16_t indexed_indices[] = {
+        0, 1, 2, 1, 3, 2, 1, 4, 3, 4, 5, 3,
+    };
+    const auto indexed_vertices_buffer = igpu_buffer_create(48, 0, 1, 8);
+    const auto indexed_index_buffer = igpu_buffer_create(24, 0, 2, 0);
+    if (indexed_vertices_buffer == 0 || indexed_index_buffer == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(indexed_vertices_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<float*>(indexed_vertices), 48)) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(indexed_index_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<std::uint16_t*>(indexed_indices), 24)))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (igpu_buffer_create(24, 1, 2, 0) != 0 || igpu_buffer_create(24, 0, 2, 2) != 0 ||
+        igpu_buffer_create(23, 0, 2, 0) != 0)
+    {
+        return fail("dynamic, strided, or odd index buffer was accepted");
+    }
+    const auto indexed_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (indexed_texture == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto indexed_target = encode_u64(static_cast<std::uint64_t>(indexed_texture));
+    if (!igpu_shader_bind(blue, 1) ||
+        !igpu_draw_to_render_targets(static_cast<std::uint64_t>(full_buffer), static_cast<std::uint64_t>(layout), 4, 0, 6,
+                                     as_array(indexed_target), as_array(zero_bytes), as_array(zero_bytes), 0, 0, 0, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(frag, 1))
+    {
+        return fail("red shader rebound failed");
+    }
+
+    std::int32_t saved_fbo = 0;
+    std::int32_t held_viewport[4] = {};
+    const auto reject_leaves_blue = [&](const char* label) {
+        if (igpu_texture_read(static_cast<std::uint64_t>(indexed_texture), 1, 4, 0, 0) != 16711680 ||
+            igpu_texture_read(static_cast<std::uint64_t>(indexed_texture), 6, 4, 0, 0) != 16711680)
+        {
+            std::fprintf(stderr, "%s changed a pixel\n", label);
+            return false;
+        }
+        return true;
+    };
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(indexed_texture), saved_fbo, held_viewport))
+    {
+        return fail("color target begin failed");
+    }
+    if (igpu_draw_indexed(static_cast<std::uint64_t>(indexed_vertices_buffer), static_cast<std::uint64_t>(layout),
+                          static_cast<std::uint64_t>(indexed_vertices_buffer), 4, 0, 6, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(saved_fbo, held_viewport);
+        return fail("vertex buffer was accepted as an index buffer");
+    }
+    if (igpu_draw_indexed(static_cast<std::uint64_t>(indexed_vertices_buffer), static_cast<std::uint64_t>(layout),
+                          999999, 4, 0, 6, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(saved_fbo, held_viewport);
+        return fail("unknown index buffer was accepted");
+    }
+    if (igpu_draw_indexed(static_cast<std::uint64_t>(indexed_vertices_buffer), static_cast<std::uint64_t>(layout),
+                          static_cast<std::uint64_t>(indexed_index_buffer), 4, 0, 13, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(saved_fbo, held_viewport);
+        return fail("thirteen indices were accepted");
+    }
+    if (igpu_draw_indexed(static_cast<std::uint64_t>(indexed_vertices_buffer), static_cast<std::uint64_t>(layout),
+                          static_cast<std::uint64_t>(indexed_index_buffer), 6, 0, 6, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(saved_fbo, held_viewport);
+        return fail("triangle fan was accepted");
+    }
+    if (igpu_draw_indexed(static_cast<std::uint64_t>(indexed_vertices_buffer), static_cast<std::uint64_t>(layout),
+                          static_cast<std::uint64_t>(indexed_index_buffer), 4, 0, 6, 1, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(saved_fbo, held_viewport);
+        return fail("blend state was accepted");
+    }
+    igpu::gl_color_target_end(saved_fbo, held_viewport);
+    if (!reject_leaves_blue("rejected indexed draw"))
+    {
+        return fail("rejected indexed draw changed a pixel");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(indexed_texture), saved_fbo, held_viewport))
+    {
+        return fail("color target begin failed");
+    }
+    if (!igpu_draw_indexed(static_cast<std::uint64_t>(indexed_vertices_buffer), static_cast<std::uint64_t>(layout),
+                           static_cast<std::uint64_t>(indexed_index_buffer), 4, 0, 6, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(saved_fbo, held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(saved_fbo, held_viewport);
+    const auto indexed_left = igpu_texture_read(static_cast<std::uint64_t>(indexed_texture), 1, 4, 0, 0);
+    const auto indexed_right = igpu_texture_read(static_cast<std::uint64_t>(indexed_texture), 6, 4, 0, 0);
+    std::printf("indexed pixels: %lld / %lld\n", static_cast<long long>(indexed_left),
+                static_cast<long long>(indexed_right));
+    if (indexed_left != 255 || indexed_right != 16711680)
+    {
+        return fail("first six indices did not paint only the left half");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(indexed_texture), saved_fbo, held_viewport))
+    {
+        return fail("color target begin failed");
+    }
+    if (!igpu_draw_indexed(static_cast<std::uint64_t>(indexed_vertices_buffer), static_cast<std::uint64_t>(layout),
+                           static_cast<std::uint64_t>(indexed_index_buffer), 4, 6, -1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(saved_fbo, held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(saved_fbo, held_viewport);
+    const auto tail_left = igpu_texture_read(static_cast<std::uint64_t>(indexed_texture), 1, 4, 0, 0);
+    const auto tail_right = igpu_texture_read(static_cast<std::uint64_t>(indexed_texture), 6, 4, 0, 0);
+    std::printf("indexed tail  : %lld / %lld\n", static_cast<long long>(tail_left),
+                static_cast<long long>(tail_right));
+    if (tail_left != 255 || tail_right != 255)
+    {
+        return fail("the tail index range did not paint only the right half");
+    }
+
+    if (igpu_texture_read(static_cast<std::uint64_t>(texture), 0, 0, 0, 0) != 255)
+    {
+        return fail("indexed draw changed the first texture");
+    }
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(part_buffer), static_cast<std::uint64_t>(layout), 4, 0, 6,
+                                     as_array(target_bytes), as_array(zero_bytes), as_array(zero_bytes), 0, 0, 0, 0))
+    {
+        return fail("non-indexed draw failed after indexed draw");
+    }
+    GLint viewport_after[4] = {};
+    GLint framebuffer_after = 0;
+    glGetIntegerv(GL_VIEWPORT, viewport_after);
+    glGetIntegerv(0x8CA6, &framebuffer_after);
+    if (viewport_after[2] != 1 || viewport_after[3] != 1 || framebuffer_after != 0)
+    {
+        return fail("indexed section left the framebuffer or viewport bound");
     }
 
     void* context = gl_probe_context();
