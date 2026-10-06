@@ -3,11 +3,10 @@
 > 最后更新：2026-10-06
 > 状态：**0.5.0**。公开函数 60 个。Windows D3D11 已跑通像素测试。OpenGL 后端只在探针里，Windows 的 GameMaker DLL 没有它。
 > 版本：`0.5.0`
-> Git：`main` 分支，HEAD `add3cf2`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）
-> **接手第一件事：跑 `pwsh -File tools\verify_handover.ps1`** —— 见 §0
+> Git：分支 `gl-bind-current`，HEAD `15441b5`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）。未合并、未推送。`main` 仍是 `523e0f3`。
+> **接手第一件事：读 `SESSION_HANDOVER.md` 开头，再跑 `pwsh -File tools\verify_handover.ps1`**
 >
-> 📄 **本次会话（2026-09-23）的交接单在 `SESSION_HANDOVER.md`** ——
-> 三十秒版本、门禁状态、外部依赖、踩过的坑、下一步。**建议先读它。**
+> 📄 **2026-10-06 的交接在 `SESSION_HANDOVER.md` 开头。** OpenGL 第一刀已在探针里落地。下一刀是索引绘制。9 月审计记录仍在该文件下半截。
 >
 > 🔴 本次会话用**真实引擎源码**做了审计，发现并修复了若干问题。
 > 详细结论见 `tools/engine_audit.md`；本文档 §0.0 是摘要。
@@ -126,7 +125,7 @@ extgen --config config.json
 
 当前的优先级是：
 
-1. **OpenGL 第一刀：`igpu_bind_current()`。** 这个后端给 Windows 以外的 GameMaker 运行时用。产品入口不创建、不销毁上下文。Windows 的 GameMaker DLL 没有 OpenGL 后端，调用失败。证明 GL 的是 `tests/gl_probe` 里自建的 WGL 上下文。不要加 ANGLE，也不要改三个指针的 `igpu_init`。分工写在 `SESSION_HANDOVER.md` 开头。
+1. **OpenGL 下一刀：索引绘制。** 第一刀已经在 `tests/gl_probe` 里证明了一张 rgba8 纹理上的左上红、其余蓝。下一刀用 16 位索引只画要求的那一半。Windows 的 GameMaker DLL 仍没有 OpenGL 后端。不要加 ANGLE，也不要改三个指针的 `igpu_init`。分工和命令写在 `SESSION_HANDOVER.md` 开头。
 
 接手时先读 `SESSION_HANDOVER.md` 开头。比较采样的偏移、最细、最粗和线性过滤上的各向异性已经在 Direct3D 11 上用像素证明。实例化、间接、面片、画进纹理和采样绘制都会应用并恢复管线状态。
 
