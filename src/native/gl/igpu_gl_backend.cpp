@@ -48,10 +48,13 @@ namespace igpu
             bool fence_signaled(std::uint64_t) override { return not_yet("igpu_fence_signaled"); }
             bool fence_release(std::uint64_t) override { return not_yet("igpu_fence_release"); }
 
-            bool draw(std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t,
-                      std::int64_t, std::int64_t, std::int64_t, std::int64_t) override
+            bool draw(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
+                      std::int64_t first_vertex, std::int64_t vertex_count,
+                      std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
+                      std::int64_t sampler_state) override
             {
-                return not_yet("igpu_draw");
+                return gl_draw(vertex_buffer, layout, primitive, first_vertex, vertex_count,
+                               blend_state, depth_state, raster_state, sampler_state);
             }
             bool draw_instanced(std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t,
                                 std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t) override
