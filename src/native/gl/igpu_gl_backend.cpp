@@ -74,10 +74,13 @@ namespace igpu
             {
                 return not_yet("igpu_draw_indexed_indirect");
             }
-            bool draw_indexed(std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t,
-                              std::int64_t, std::int64_t, std::int64_t, std::int64_t) override
+            bool draw_indexed(std::uint64_t vertex_buffer, std::uint64_t layout, std::uint64_t index_buffer,
+                              std::int32_t primitive, std::int64_t first_index, std::int64_t index_count,
+                              std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
+                              std::int64_t sampler_state) override
             {
-                return not_yet("igpu_draw_indexed");
+                return gl_draw_indexed(vertex_buffer, layout, index_buffer, primitive, first_index, index_count,
+                                       blend_state, depth_state, raster_state, sampler_state);
             }
             std::int32_t draw_count() override { not_yet("igpu_get_draw_count"); return 0; }
             std::int32_t draw_restore_failures() override { not_yet("igpu_get_draw_restore_failures"); return 0; }

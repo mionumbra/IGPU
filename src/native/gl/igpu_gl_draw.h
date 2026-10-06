@@ -24,6 +24,11 @@ namespace igpu
     std::int64_t gl_texture_read_level(std::uint64_t texture, std::int32_t x, std::int32_t y, std::int32_t layer,
                                        std::int32_t mip);
 
+    bool gl_draw_indexed(std::uint64_t vertex_buffer, std::uint64_t layout, std::uint64_t index_buffer,
+                         std::int32_t primitive, std::int64_t first_index, std::int64_t index_count,
+                         std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
+                         std::int64_t sampler_state);
+
     bool gl_color_target_begin(std::uint64_t texture, std::int32_t& previous_framebuffer,
                                std::int32_t previous_viewport[4]);
     void gl_color_target_end(std::int32_t previous_framebuffer, const std::int32_t previous_viewport[4]);

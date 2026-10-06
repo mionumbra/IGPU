@@ -311,7 +311,7 @@ namespace igpu
         // true whenever a device is bound.
         case Capability::InputLayout:   return native || opengl_backend();
         case Capability::VertexBuffer:  return native || opengl_backend();
-        case Capability::IndexBuffer:   return native;
+        case Capability::IndexBuffer:   return native || opengl_backend();
         case Capability::UniformBuffer: return native;
         case Capability::BufferResize:  return native;
         case Capability::BufferReadback: return native;
@@ -324,7 +324,7 @@ namespace igpu
         // GameMaker never rebinds, and for any reader of the device in between.
         // A backend that could not read the assembler would report false.
         case Capability::Draw:             return native || opengl_backend();
-        case Capability::DrawIndexed:      return native;
+        case Capability::DrawIndexed:      return native || opengl_backend();
         case Capability::DrawStateRestore: return native || opengl_backend();
         case Capability::BlendState:       return native;
         case Capability::DepthState:       return native;
