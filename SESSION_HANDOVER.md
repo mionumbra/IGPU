@@ -6,7 +6,7 @@
 
 ## 下一会话接着做
 
-停在 `main`。拉取请求 https://github.com/mionumbra/IGPU/pull/1 已合并，合并提交 `d662fb2`。`origin/main` 就是这个提交。`gl-bind-current` 已经从本地和远程删除。下一刀从 `main` 开新分支。
+停在分支 `gl-draw`，还没合并。它从 `main` 的 `6ffb683` 开出。`main` 上拉取请求 https://github.com/mionumbra/IGPU/pull/1 已合并（`d662fb2`），其后是交接提交 `6ffb683`。`gl-bind-current` 已经从本地和远程删除。下一会话先把 `gl-draw` 合进 `main`，再从合完的 `main` 开新分支。不要在 `main` 上重做非索引绘制。
 
 已经落地的 OpenGL 只在探针里，Windows 的 GameMaker DLL 不含它：
 
