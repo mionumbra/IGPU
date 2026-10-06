@@ -94,5 +94,13 @@ if(WIN32)
     spirv-cross-core
     spirv-cross-glsl
     spirv-cross-hlsl)
+
+  # Test-only executable. It is not the GameMaker DLL and must not be copied
+  # into project/extensions/IGPU.
+  add_executable(igpu_gl_probe
+      "${CMAKE_SOURCE_DIR}/tests/gl_probe/main.cpp"
+      "${CMAKE_SOURCE_DIR}/tests/gl_probe/wgl_host.cpp")
+  target_include_directories(igpu_gl_probe PRIVATE "${CMAKE_SOURCE_DIR}/tests/gl_probe")
+  target_link_libraries(igpu_gl_probe PRIVATE opengl32)
 endif()
 
