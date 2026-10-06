@@ -170,7 +170,11 @@ namespace igpu
         std::int32_t mip,
         std::int32_t address_u,
         std::int32_t address_v,
-        std::int32_t address_w);
+        std::int32_t address_w,
+        std::int32_t anisotropy,
+        float level_offset,
+        float finest,
+        float coarsest);
 
     bool state_release(std::uint64_t handle);
 }

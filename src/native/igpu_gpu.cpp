@@ -63,12 +63,17 @@ namespace igpu
                         std::int32_t primitive,
                         std::int64_t first_vertex,
                         std::int64_t vertex_count,
-                        std::int64_t instance_count)
+                        std::int64_t instance_count,
+                        std::int64_t blend_state,
+                        std::int64_t depth_state,
+                        std::int64_t raster_state,
+                        std::int64_t sampler_state)
     {
         clear_last_error();
         Backend* backend = need("igpu_draw_instanced");
         return backend != nullptr && backend->draw_instanced(
-            vertex_buffer, instance_buffer, layout, primitive, first_vertex, vertex_count, instance_count);
+            vertex_buffer, instance_buffer, layout, primitive, first_vertex, vertex_count, instance_count,
+            blend_state, depth_state, raster_state, sampler_state);
     }
 
     bool draw_indirect(std::uint64_t vertex_buffer,
@@ -76,24 +81,34 @@ namespace igpu
                        std::uint64_t layout,
                        std::int32_t primitive,
                        std::uint64_t args,
-                       std::int64_t args_offset)
+                       std::int64_t args_offset,
+                       std::int64_t blend_state,
+                       std::int64_t depth_state,
+                       std::int64_t raster_state,
+                       std::int64_t sampler_state)
     {
         clear_last_error();
         Backend* backend = need("igpu_draw_indirect");
         return backend != nullptr && backend->draw_indirect(
-            vertex_buffer, instance_buffer, layout, primitive, args, args_offset);
+            vertex_buffer, instance_buffer, layout, primitive, args, args_offset,
+            blend_state, depth_state, raster_state, sampler_state);
     }
 
     bool draw_patch(std::uint64_t vertex_buffer,
                     std::uint64_t layout,
                     std::int32_t control_points,
                     std::int64_t first_vertex,
-                    std::int64_t vertex_count)
+                    std::int64_t vertex_count,
+                    std::int64_t blend_state,
+                    std::int64_t depth_state,
+                    std::int64_t raster_state,
+                    std::int64_t sampler_state)
     {
         clear_last_error();
         Backend* backend = need("igpu_draw_patch");
         return backend != nullptr && backend->draw_patch(
-            vertex_buffer, layout, control_points, first_vertex, vertex_count);
+            vertex_buffer, layout, control_points, first_vertex, vertex_count,
+            blend_state, depth_state, raster_state, sampler_state);
     }
 
     bool draw_indexed_indirect(std::uint64_t vertex_buffer,
@@ -102,12 +117,17 @@ namespace igpu
                                std::uint64_t index_buffer,
                                std::int32_t primitive,
                                std::uint64_t args,
-                               std::int64_t args_offset)
+                               std::int64_t args_offset,
+                               std::int64_t blend_state,
+                               std::int64_t depth_state,
+                               std::int64_t raster_state,
+                               std::int64_t sampler_state)
     {
         clear_last_error();
         Backend* backend = need("igpu_draw_indexed_indirect");
         return backend != nullptr && backend->draw_indexed_indirect(
-            vertex_buffer, instance_buffer, layout, index_buffer, primitive, args, args_offset);
+            vertex_buffer, instance_buffer, layout, index_buffer, primitive, args, args_offset,
+            blend_state, depth_state, raster_state, sampler_state);
     }
 
     bool draw_indexed(std::uint64_t vertex_buffer,
@@ -494,6 +514,12 @@ namespace igpu
             return 0;
         }
         const bool wants_border = address_u == 3 || address_v == 3 || address_w == 3;
+        if (anisotropy > 1 && (magnification != 1 || minification != 1 || mip != 1))
+        {
+            set_last_error(std::string(api) + ": anisotropy above 1 requires linear filters");
+            return 0;
+        }
+        const float max_lod = coarsest < 0.0f ? 3.402823466e+38f : coarsest;
         if (compare != 0)
         {
             if (compare < 1 || compare > 8)
@@ -506,20 +532,10 @@ namespace igpu
                 set_last_error(std::string(api) + ": border address mode is not available on a comparison sampler");
                 return 0;
             }
-            if (anisotropy != 1 || level_offset != 0.0f || finest != 0.0f || coarsest >= 0.0f)
-            {
-                set_last_error(std::string(api) + ": a comparison sampler uses anisotropy 1 and an open level range");
-                return 0;
-            }
             return sampler_state_create_compare(
-                compare, magnification, minification, mip, address_u, address_v, address_w);
+                compare, magnification, minification, mip, address_u, address_v, address_w,
+                anisotropy, level_offset, finest, max_lod);
         }
-        if (anisotropy > 1 && (magnification != 1 || minification != 1 || mip != 1))
-        {
-            set_last_error(std::string(api) + ": anisotropy above 1 requires linear filters");
-            return 0;
-        }
-        const float max_lod = coarsest < 0.0f ? 3.402823466e+38f : coarsest;
         if (anisotropy > 1)
         {
             if (wants_border)
@@ -546,12 +562,17 @@ namespace igpu
         std::int32_t mip,
         std::int32_t address_u,
         std::int32_t address_v,
-        std::int32_t address_w)
+        std::int32_t address_w,
+        std::int32_t anisotropy,
+        float level_offset,
+        float finest,
+        float coarsest)
     {
         clear_last_error();
         Backend* backend = need("igpu_sampler_state_create_compare");
         return backend == nullptr ? 0 : backend->sampler_state_create_compare(
-            compare, magnification, minification, mip, address_u, address_v, address_w);
+            compare, magnification, minification, mip, address_u, address_v, address_w,
+            anisotropy, level_offset, finest, coarsest);
     }
 
     bool state_release(std::uint64_t handle)
@@ -753,12 +774,17 @@ namespace igpu
         std::int64_t vertex_count,
         const gm::wire::GMArrayView& targets,
         const gm::wire::GMArrayView& layers,
-        const gm::wire::GMArrayView& mips)
+        const gm::wire::GMArrayView& mips,
+        std::int64_t blend_state,
+        std::int64_t depth_state,
+        std::int64_t raster_state,
+        std::int64_t sampler_state)
     {
         clear_last_error();
         Backend* backend = need("igpu_draw_to_render_targets_layer");
         return backend != nullptr && backend->draw_to_render_targets_layer(
-            vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips);
+            vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips,
+            blend_state, depth_state, raster_state, sampler_state);
     }
 
     bool draw_sampled(
@@ -768,12 +794,16 @@ namespace igpu
         std::int64_t first_vertex,
         std::int64_t vertex_count,
         std::uint64_t texture,
-        std::int64_t sampler)
+        std::int64_t blend_state,
+        std::int64_t depth_state,
+        std::int64_t raster_state,
+        std::int64_t sampler_state)
     {
         clear_last_error();
         Backend* backend = need("igpu_draw_sampled");
         return backend != nullptr && backend->draw_sampled(
-            vertex_buffer, layout, primitive, first_vertex, vertex_count, texture, sampler);
+            vertex_buffer, layout, primitive, first_vertex, vertex_count, texture,
+            blend_state, depth_state, raster_state, sampler_state);
     }
 
     std::int64_t shader_compile(std::string_view source, std::string_view entry,

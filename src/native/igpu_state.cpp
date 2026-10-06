@@ -794,7 +794,11 @@ namespace d3d11_impl
         std::int32_t mip,
         std::int32_t address_u,
         std::int32_t address_v,
-        std::int32_t address_w)
+        std::int32_t address_w,
+        std::int32_t anisotropy,
+        float level_offset,
+        float finest,
+        float coarsest)
     {
         const char* api = "igpu_sampler_state_create_compare";
         clear_last_error();
@@ -833,15 +837,24 @@ namespace d3d11_impl
         }
 
         D3D11_SAMPLER_DESC desc{};
-        desc.Filter = D3D11_ENCODE_BASIC_FILTER(min_type, mag_type, mip_type, D3D11_FILTER_REDUCTION_TYPE_COMPARISON);
+        if (anisotropy > 1)
+        {
+            desc.Filter = D3D11_FILTER_COMPARISON_ANISOTROPIC;
+            desc.MaxAnisotropy = static_cast<UINT>(anisotropy);
+        }
+        else
+        {
+            desc.Filter = D3D11_ENCODE_BASIC_FILTER(
+                min_type, mag_type, mip_type, D3D11_FILTER_REDUCTION_TYPE_COMPARISON);
+            desc.MaxAnisotropy = 1;
+        }
         desc.AddressU = mode_u;
         desc.AddressV = mode_v;
         desc.AddressW = mode_w;
-        desc.MipLODBias = 0.0f;
-        desc.MaxAnisotropy = 1;
+        desc.MipLODBias = level_offset;
         desc.ComparisonFunc = compare_func;
-        desc.MinLOD = 0.0f;
-        desc.MaxLOD = D3D11_FLOAT32_MAX;
+        desc.MinLOD = finest;
+        desc.MaxLOD = coarsest;
 
         ID3D11SamplerState* object = nullptr;
         const HRESULT hr = state().device->CreateSamplerState(&desc, &object);

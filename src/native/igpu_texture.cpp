@@ -1185,7 +1185,11 @@ namespace d3d11_impl
         const gm::wire::GMArrayView& targets,
         const gm::wire::GMArrayView* layers,
         const gm::wire::GMArrayView& mips,
-        const char* api)
+        const char* api,
+        std::int64_t blend_state,
+        std::int64_t depth_state,
+        std::int64_t raster_state,
+        std::int64_t sampler_state)
     {
         clear_last_error();
         if (!require_device(api))
@@ -1322,7 +1326,8 @@ namespace d3d11_impl
         }
 
         TargetGuard guard(state().context, views, static_cast<UINT>(count), width, height);
-        const bool ok = draw(vertex_buffer, layout, primitive, first_vertex, vertex_count);
+        const bool ok = draw(vertex_buffer, layout, primitive, first_vertex, vertex_count,
+            blend_state, depth_state, raster_state, sampler_state);
         guard.restore();
         release_owned();
         return ok;
@@ -1339,7 +1344,7 @@ namespace d3d11_impl
     {
         return draw_targets_chosen(
             vertex_buffer, layout, primitive, first_vertex, vertex_count,
-            targets, nullptr, mips, "igpu_draw_to_render_targets_level");
+            targets, nullptr, mips, "igpu_draw_to_render_targets_level", 0, 0, 0, 0);
     }
 
     bool draw_to_render_targets_layer(
@@ -1350,11 +1355,16 @@ namespace d3d11_impl
         std::int64_t vertex_count,
         const gm::wire::GMArrayView& targets,
         const gm::wire::GMArrayView& layers,
-        const gm::wire::GMArrayView& mips)
+        const gm::wire::GMArrayView& mips,
+        std::int64_t blend_state,
+        std::int64_t depth_state,
+        std::int64_t raster_state,
+        std::int64_t sampler_state)
     {
         return draw_targets_chosen(
             vertex_buffer, layout, primitive, first_vertex, vertex_count,
-            targets, &layers, mips, "igpu_draw_to_render_targets_layer");
+            targets, &layers, mips, "igpu_draw_to_render_targets_layer",
+            blend_state, depth_state, raster_state, sampler_state);
     }
 
     bool draw_sampled(
@@ -1364,7 +1374,10 @@ namespace d3d11_impl
         std::int64_t first_vertex,
         std::int64_t vertex_count,
         std::uint64_t texture,
-        std::int64_t sampler)
+        std::int64_t blend_state,
+        std::int64_t depth_state,
+        std::int64_t raster_state,
+        std::int64_t sampler_state)
     {
         clear_last_error();
         if (!require_device("igpu_draw_sampled"))
@@ -1386,7 +1399,7 @@ namespace d3d11_impl
 
         const bool ok = draw(
             vertex_buffer, layout, primitive, first_vertex, vertex_count,
-            0, 0, 0, sampler);
+            blend_state, depth_state, raster_state, sampler_state);
 
         context->PSSetShaderResources(0, 1, &previous);
         if (previous != nullptr)

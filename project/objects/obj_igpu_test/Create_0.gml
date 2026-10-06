@@ -1135,6 +1135,81 @@ if (_tex > 0 && _tex_sample > 0 && _tex_full > 0 && surface_exists(_sample_surf)
 }
 if (surface_exists(_sample_surf)) surface_free(_sample_surf);
 
+// Keep-destination blend on the draws that take pipeline state.
+// Source factor zero leaves the colour already in the target. A following
+// draw with every state handle at 0 must replace that colour, which shows
+// the blend was put back.
+var _pipe_hold = igpu_blend_state_create(
+    true, bm_zero, bm_one, bm_eq_add, bm_zero, bm_one, bm_eq_add,
+    true, true, true, true);
+var _pipe_blue = igpu_shader_compile("float4 main() : SV_TARGET { return float4(0.0, 0.0, 1.0, 1.0); }", "main", IgpuShaderStage.Pixel, "");
+var _pipe_tex = igpu_texture_create(IgpuTextureKind.TwoD, 8, 8, 1, surface_rgba8unorm, true, false, 1);
+var _pipe_samp = igpu_sampler_state_create(tf_point, tf_point, tf_point, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, 1, 0, 0, 0, 0, -1);
+_igpu_check(_pipe_hold > 0 && _pipe_blue > 0 && _pipe_tex > 0 && _pipe_samp > 0, "pipeline-state draw resources are created");
+if (_pipe_hold > 0 && _pipe_blue > 0 && _pipe_tex > 0 && _tex_vs > 0 && _tex_red > 0 && _tex_full > 0 && _tex_layout > 0)
+{
+    igpu_shader_bind(_tex_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_pipe_blue, IgpuShaderStage.Pixel);
+    var _pipe_base = igpu_draw_to_render_targets(_tex_full, _tex_layout, pr_trianglelist, 0, 6, [_pipe_tex], [0], [0], 0, 0, 0, 0);
+    var _pipe_base_px = igpu_texture_read(_pipe_tex, 1, 4, 0, 0);
+    igpu_shader_bind(_tex_red, IgpuShaderStage.Pixel);
+    var _pipe_held = igpu_draw_to_render_targets(_tex_full, _tex_layout, pr_trianglelist, 0, 6, [_pipe_tex], [0], [0], _pipe_hold, 0, 0, 0);
+    var _pipe_held_px = igpu_texture_read(_pipe_tex, 1, 4, 0, 0);
+    var _pipe_bad = igpu_draw_to_render_targets(_tex_full, _tex_layout, pr_trianglelist, 0, 6, [_pipe_tex], [0], [0], 0, _pipe_hold, 0, 0);
+    var _pipe_bad_px = igpu_texture_read(_pipe_tex, 1, 4, 0, 0);
+    var _pipe_open = igpu_draw_to_render_targets(_tex_full, _tex_layout, pr_trianglelist, 0, 6, [_pipe_tex], [0], [0], 0, 0, 0, 0);
+    var _pipe_open_px = igpu_texture_read(_pipe_tex, 1, 4, 0, 0);
+    igpu_shader_bind(0, IgpuShaderStage.Vertex);
+    igpu_shader_bind(0, IgpuShaderStage.Pixel);
+    show_debug_message("offscreen state  : " + string(_pipe_base) + " " + string(_pipe_base_px)
+        + " | " + string(_pipe_held) + " " + string(_pipe_held_px)
+        + " | " + string(_pipe_bad) + " " + string(_pipe_bad_px)
+        + " | " + string(_pipe_open) + " " + string(_pipe_open_px));
+    if (!_pipe_held || !_pipe_open) show_debug_message("offscreen state err: " + string(igpu_get_last_error()));
+    _igpu_check(_pipe_base && _pipe_base_px == c_blue, "an offscreen draw with no state writes blue");
+    _igpu_check(_pipe_held && _pipe_held_px == c_blue, "an offscreen draw keeps the destination colour");
+    _igpu_check(!_pipe_bad && _pipe_bad_px == c_blue, "an offscreen depth slot rejects a blend state and leaves the texel");
+    _igpu_check(_pipe_open && _pipe_open_px == c_red, "an offscreen draw with no state replaces the colour");
+}
+var _pipe_surf = surface_create(8, 8);
+if (_pipe_hold > 0 && _pipe_samp > 0 && surface_exists(_pipe_surf) && _tex > 0 && _tex_vs > 0 && _tex_red > 0 && _tex_full > 0 && _tex_layout > 0)
+{
+    gpu_push_state();
+    _igpu_target_begin(_pipe_surf, c_blue);
+    igpu_shader_bind(_tex_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_tex_red, IgpuShaderStage.Pixel);
+    var _sm_held = igpu_draw_sampled(_tex_full, _tex_layout, pr_trianglelist, 0, 6, _tex, _pipe_hold, 0, 0, _pipe_samp);
+    surface_reset_target();
+    var _sm_held_px = surface_getpixel(_pipe_surf, 1, 4);
+    surface_set_target(_pipe_surf);
+    igpu_shader_bind(_tex_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_tex_red, IgpuShaderStage.Pixel);
+    var _sm_open = igpu_draw_sampled(_tex_full, _tex_layout, pr_trianglelist, 0, 6, _tex, 0, 0, 0, 0);
+    surface_reset_target();
+    var _sm_open_px = surface_getpixel(_pipe_surf, 1, 4);
+    _igpu_target_begin(_pipe_surf, c_red);
+    igpu_shader_bind(_tex_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_tex_red, IgpuShaderStage.Pixel);
+    var _sm_bad = igpu_draw_sampled(_tex_full, _tex_layout, pr_trianglelist, 0, 6, _tex, 0, _pipe_hold, 0, 0);
+    surface_reset_target();
+    var _sm_bad_px = surface_getpixel(_pipe_surf, 1, 4);
+    igpu_shader_bind(0, IgpuShaderStage.Vertex);
+    igpu_shader_bind(0, IgpuShaderStage.Pixel);
+    gpu_pop_state();
+    show_debug_message("sampled state    : " + string(_sm_held) + " " + string(_sm_held_px)
+        + " | " + string(_sm_open) + " " + string(_sm_open_px)
+        + " | " + string(_sm_bad) + " " + string(_sm_bad_px));
+    if (!_sm_held || !_sm_open) show_debug_message("sampled state err : " + string(igpu_get_last_error()));
+    _igpu_check(_sm_held && _sm_held_px == c_blue, "a sampled draw keeps the destination colour");
+    _igpu_check(_sm_open && _sm_open_px == c_red, "a sampled draw with no blend replaces the colour");
+    _igpu_check(!_sm_bad && _sm_bad_px == c_red, "a sampled depth slot rejects a blend state and leaves the pixel");
+}
+if (surface_exists(_pipe_surf)) surface_free(_pipe_surf);
+_igpu_check(igpu_texture_release(_pipe_tex), "release offscreen state texture");
+_igpu_check(igpu_shader_release(_pipe_blue), "release offscreen blue shader");
+_igpu_check(igpu_state_release(_pipe_samp), "release offscreen point sampler");
+_igpu_check(igpu_state_release(_pipe_hold), "release offscreen hold blend");
+
 // Four colour targets at once. Each shader output is a different colour, so a
 // draw that only reached the first target cannot satisfy the later reads.
 _igpu_check(igpu_supports(IgpuCapability.MultipleRenderTargets), "supports multiple render targets");
@@ -2109,6 +2184,113 @@ _igpu_check(igpu_state_release(_cmp_less), "release less comparison sampler");
 _igpu_check(igpu_state_release(_cmp_greater), "release greater comparison sampler");
 _igpu_check(igpu_state_release(_cmp_linear), "release linear comparison sampler");
 
+// Level 0 is 0.25 and level 1 is 1.0. cmpfunc_less against 0.5 fails on
+// level 0 and passes on level 1. SampleCmp follows the sampler offset.
+// On this Direct3D 11 device SampleCmpLevelZero follows it too, and the
+// fine limit still clamps that explicit level.
+var _cl_tex = igpu_texture_create(IgpuTextureKind.TwoD, 2, 2, 1, surface_r32float, false, true, 0);
+var _cl0 = igpu_shader_compile("RWTexture2D<float> dst : register(u0); [numthreads(2, 2, 1)] void main(uint3 id : SV_DispatchThreadID) { dst[id.xy] = 0.25; }", "main", IgpuShaderStage.Compute, "");
+var _cl1 = igpu_shader_compile("RWTexture2D<float> dst : register(u0); [numthreads(1, 1, 1)] void main(uint3 id : SV_DispatchThreadID) { dst[id.xy] = 1.0; }", "main", IgpuShaderStage.Compute, "");
+var _cl_grad = igpu_shader_compile("Texture2D<float> t : register(t0); SamplerComparisonState s : register(s0); struct In { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; }; float4 main(In i) : SV_TARGET { return float4(t.SampleCmp(s, i.uv, 0.5), 0.0, 0.0, 1.0); }", "main", IgpuShaderStage.Pixel, "");
+if (_cl_grad == 0) show_debug_message("compare grad err: " + string(igpu_get_last_error()));
+var _cl_zero = igpu_shader_compile("Texture2D<float> t : register(t0); SamplerComparisonState s : register(s0); struct In { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; }; float4 main(In i) : SV_TARGET { return float4(t.SampleCmpLevelZero(s, float2(0.25, 0.5), 0.5), 0.0, 0.0, 1.0); }", "main", IgpuShaderStage.Pixel, "");
+if (_cl_tex == 0 || _cl0 == 0 || _cl1 == 0 || _cl_grad == 0 || _cl_zero == 0) show_debug_message("compare level res: " + string(igpu_get_last_error()));
+var _cl_base = igpu_sampler_state_create(tf_point, tf_point, tf_point, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, 1, 0, cmpfunc_less, 0, 0, -1);
+var _cl_plus = igpu_sampler_state_create(tf_point, tf_point, tf_point, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, 1, 0, cmpfunc_less, 4, 0, -1);
+if (_cl_plus == 0) show_debug_message("compare level err: " + string(igpu_get_last_error()));
+var _cl_cap = igpu_sampler_state_create(tf_point, tf_point, tf_point, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, 1, 0, cmpfunc_less, 4, 0, 0);
+var _cl_floor = igpu_sampler_state_create(tf_point, tf_point, tf_point, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, 1, 0, cmpfunc_less, 0, 1, -1);
+var _cl_explicit = igpu_sampler_state_create(tf_point, tf_point, tf_point, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, 1, 0, cmpfunc_less, 4, 0, -1);
+var _cl_explicit_floor = igpu_sampler_state_create(tf_point, tf_point, tf_point, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, 1, 0, cmpfunc_less, 0, 1, -1);
+var _cl_aniso = igpu_sampler_state_create(tf_linear, tf_linear, tf_linear, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, 16, 0, cmpfunc_less, 0, 0, -1);
+var _cl_surf = surface_create(8, 8);
+_igpu_check(_cl_tex > 0 && _cl0 > 0 && _cl1 > 0 && _cl_grad > 0 && _cl_zero > 0 && surface_exists(_cl_surf), "comparison level resources are created");
+_igpu_check(_cl_base > 0 && _cl_plus > 0 && _cl_cap > 0 && _cl_floor > 0 && _cl_explicit > 0 && _cl_explicit_floor > 0 && _cl_aniso > 0, "comparison level samplers are created");
+_igpu_check(igpu_sampler_state_create(tf_point, tf_point, tf_point, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, IgpuAddressMode.Clamp, 16, 0, cmpfunc_less, 0, 0, -1) == 0, "a comparison sampler rejects anisotropy above 1 with point filters");
+if (_cl_tex > 0 && _cl0 > 0 && _cl1 > 0 && _cl_grad > 0 && _cl_zero > 0 && _cl_base > 0 && _cl_plus > 0 && _cl_cap > 0 && _cl_floor > 0 && _cl_explicit > 0 && _cl_explicit_floor > 0 && _cl_aniso > 0 && surface_exists(_cl_surf) && _tex_vs > 0 && _tex_full > 0 && _tex_layout > 0)
+{
+    igpu_shader_bind(_cl0, IgpuShaderStage.Compute);
+    var _cl_wrote0 = igpu_dispatch(1, 1, 1, [IgpuWriteTarget.Texture], [_cl_tex], [0], [0]);
+    igpu_shader_bind(_cl1, IgpuShaderStage.Compute);
+    var _cl_wrote1 = igpu_dispatch(1, 1, 1, [IgpuWriteTarget.Texture], [_cl_tex], [0], [1]);
+    igpu_shader_bind(0, IgpuShaderStage.Compute);
+    gpu_push_state();
+    _igpu_target_begin(_cl_surf, c_yellow);
+    igpu_shader_bind(_tex_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_cl_grad, IgpuShaderStage.Pixel);
+    var _cl_z_drew = igpu_draw_sampled(_tex_full, _tex_layout, pr_trianglelist, 0, 6, _cl_tex, 0, 0, 0, _cl_base);
+    surface_reset_target();
+    var _cl_z_px = surface_getpixel(_cl_surf, 1, 4);
+    _igpu_target_begin(_cl_surf, c_yellow);
+    igpu_shader_bind(_tex_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_cl_zero, IgpuShaderStage.Pixel);
+    var _cl_e_drew = igpu_draw_sampled(_tex_full, _tex_layout, pr_trianglelist, 0, 6, _cl_tex, 0, 0, 0, _cl_explicit);
+    surface_reset_target();
+    var _cl_e_px = surface_getpixel(_cl_surf, 1, 4);
+    _igpu_target_begin(_cl_surf, c_yellow);
+    igpu_shader_bind(_tex_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_cl_grad, IgpuShaderStage.Pixel);
+    var _cl_p_drew = igpu_draw_sampled(_tex_full, _tex_layout, pr_trianglelist, 0, 6, _cl_tex, 0, 0, 0, _cl_plus);
+    surface_reset_target();
+    var _cl_p_px = surface_getpixel(_cl_surf, 1, 4);
+    _igpu_target_begin(_cl_surf, c_yellow);
+    igpu_shader_bind(_tex_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_cl_grad, IgpuShaderStage.Pixel);
+    var _cl_c_drew = igpu_draw_sampled(_tex_full, _tex_layout, pr_trianglelist, 0, 6, _cl_tex, 0, 0, 0, _cl_cap);
+    surface_reset_target();
+    var _cl_c_px = surface_getpixel(_cl_surf, 1, 4);
+    _igpu_target_begin(_cl_surf, c_yellow);
+    igpu_shader_bind(_tex_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_cl_grad, IgpuShaderStage.Pixel);
+    var _cl_f_drew = igpu_draw_sampled(_tex_full, _tex_layout, pr_trianglelist, 0, 6, _cl_tex, 0, 0, 0, _cl_floor);
+    surface_reset_target();
+    var _cl_f_px = surface_getpixel(_cl_surf, 1, 4);
+    _igpu_target_begin(_cl_surf, c_yellow);
+    igpu_shader_bind(_tex_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_cl_zero, IgpuShaderStage.Pixel);
+    var _cl_ef_drew = igpu_draw_sampled(_tex_full, _tex_layout, pr_trianglelist, 0, 6, _cl_tex, 0, 0, 0, _cl_explicit_floor);
+    surface_reset_target();
+    var _cl_ef_px = surface_getpixel(_cl_surf, 1, 4);
+    _igpu_target_begin(_cl_surf, c_yellow);
+    igpu_shader_bind(_tex_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_cl_zero, IgpuShaderStage.Pixel);
+    var _cl_a_drew = igpu_draw_sampled(_tex_full, _tex_layout, pr_trianglelist, 0, 6, _cl_tex, 0, 0, 0, _cl_aniso);
+    igpu_shader_bind(0, IgpuShaderStage.Vertex);
+    igpu_shader_bind(0, IgpuShaderStage.Pixel);
+    surface_reset_target();
+    gpu_pop_state();
+    var _cl_a_px = surface_getpixel(_cl_surf, 1, 4);
+    show_debug_message("compare level    : " + string(_cl_wrote0) + " " + string(_cl_wrote1)
+        + " " + string(_cl_z_drew) + " " + string(_cl_z_px)
+        + " | " + string(_cl_p_drew) + " " + string(_cl_p_px)
+        + " | " + string(_cl_c_drew) + " " + string(_cl_c_px)
+        + " | " + string(_cl_f_drew) + " " + string(_cl_f_px)
+        + " || " + string(_cl_e_drew) + " " + string(_cl_e_px)
+        + " | " + string(_cl_ef_drew) + " " + string(_cl_ef_px)
+        + " | " + string(_cl_a_drew) + " " + string(_cl_a_px));
+    if (!_cl_z_drew || !_cl_p_drew || !_cl_c_drew || !_cl_f_drew || !_cl_e_drew || !_cl_ef_drew || !_cl_a_drew) show_debug_message("compare level err: " + string(igpu_get_last_error()));
+    _igpu_check(_cl_wrote0 && _cl_wrote1 && _cl_z_drew && _cl_z_px == c_black, "a comparison sample with no offset stays on the fine level");
+    _igpu_check(_cl_p_drew && _cl_p_px == c_red, "a comparison offset moves to the coarse level");
+    _igpu_check(_cl_c_drew && _cl_c_px == c_black, "a comparison coarse limit keeps the fine level");
+    _igpu_check(_cl_f_drew && _cl_f_px == c_red, "a comparison fine limit starts on the coarse level");
+    _igpu_check(_cl_e_drew && _cl_e_px == c_red, "an explicit comparison level also follows the offset");
+    _igpu_check(_cl_ef_drew && _cl_ef_px == c_red, "an explicit comparison level still obeys the fine limit");
+    _igpu_check(_cl_a_drew && _cl_a_px == c_black, "an anisotropic comparison sampler still compares the fine level");
+}
+if (surface_exists(_cl_surf)) surface_free(_cl_surf);
+_igpu_check(igpu_texture_release(_cl_tex), "release comparison level texture");
+_igpu_check(igpu_shader_release(_cl0), "release comparison level-0 shader");
+_igpu_check(igpu_shader_release(_cl1), "release comparison level-1 shader");
+_igpu_check(igpu_shader_release(_cl_grad), "release comparison gradient shader");
+_igpu_check(igpu_shader_release(_cl_zero), "release comparison explicit-level shader");
+_igpu_check(igpu_state_release(_cl_base), "release comparison base sampler");
+_igpu_check(igpu_state_release(_cl_plus), "release comparison offset sampler");
+_igpu_check(igpu_state_release(_cl_cap), "release comparison coarse sampler");
+_igpu_check(igpu_state_release(_cl_floor), "release comparison fine sampler");
+_igpu_check(igpu_state_release(_cl_explicit), "release comparison explicit offset sampler");
+_igpu_check(igpu_state_release(_cl_explicit_floor), "release comparison explicit fine sampler");
+_igpu_check(igpu_state_release(_cl_aniso), "release anisotropic comparison sampler");
+
 // Level 0 is 2x2, left column red and right column blue. The generated
 // 1x1 level is the mix of those four texels. The left of the quad samples
 // level 0, the right samples level 1.
@@ -2939,6 +3121,48 @@ if (surface_exists(_i_surf) && _i_vb > 0 && _i_ib > 0 && _i_layout > 0 && _i_vs 
     _igpu_check(_i_drew, "instanced draw succeeds");
     _igpu_check(_i_left == c_red, "instance 0 is red");
     _igpu_check(_i_right == c_lime, "instance 1 is green");
+
+    var _i_hold = igpu_blend_state_create(
+        true, bm_zero, bm_one, bm_eq_add, bm_zero, bm_one, bm_eq_add,
+        true, true, true, true);
+    var _i_hold_surf = surface_create(8, 8);
+    if (_i_hold > 0 && surface_exists(_i_hold_surf))
+    {
+        gpu_push_state();
+        _igpu_target_begin(_i_hold_surf, c_blue);
+        igpu_shader_bind(_i_vs, IgpuShaderStage.Vertex);
+        igpu_shader_bind(_i_ps, IgpuShaderStage.Pixel);
+        var _i_held = igpu_draw(_i_vb, _i_ib, _i_layout, pr_trianglelist, 0, 6, 2, _i_hold, 0, 0, 0);
+        surface_reset_target();
+        var _i_held_l = surface_getpixel(_i_hold_surf, 1, 4);
+        var _i_held_r = surface_getpixel(_i_hold_surf, 6, 4);
+        surface_set_target(_i_hold_surf);
+        igpu_shader_bind(_i_vs, IgpuShaderStage.Vertex);
+        igpu_shader_bind(_i_ps, IgpuShaderStage.Pixel);
+        var _i_open = igpu_draw(_i_vb, _i_ib, _i_layout, pr_trianglelist, 0, 6, 2, 0, 0, 0, 0);
+        surface_reset_target();
+        var _i_open_l = surface_getpixel(_i_hold_surf, 1, 4);
+        var _i_open_r = surface_getpixel(_i_hold_surf, 6, 4);
+        surface_set_target(_i_hold_surf);
+        igpu_shader_bind(_i_vs, IgpuShaderStage.Vertex);
+        igpu_shader_bind(_i_ps, IgpuShaderStage.Pixel);
+        var _i_bad = igpu_draw(_i_vb, _i_ib, _i_layout, pr_trianglelist, 0, 6, 2, 0, _i_hold, 0, 0);
+        surface_reset_target();
+        var _i_bad_l = surface_getpixel(_i_hold_surf, 1, 4);
+        var _i_bad_r = surface_getpixel(_i_hold_surf, 6, 4);
+        igpu_shader_bind(0, IgpuShaderStage.Vertex);
+        igpu_shader_bind(0, IgpuShaderStage.Pixel);
+        gpu_pop_state();
+        show_debug_message("instance state   : " + string(_i_held) + " " + string(_i_held_l) + " / " + string(_i_held_r)
+            + " | " + string(_i_open) + " " + string(_i_open_l) + " / " + string(_i_open_r)
+            + " | " + string(_i_bad) + " " + string(_i_bad_l) + " / " + string(_i_bad_r));
+        if (!_i_held) show_debug_message("instance state err: " + string(igpu_get_last_error()));
+        _igpu_check(_i_held && _i_held_l == c_blue && _i_held_r == c_blue, "an instanced draw keeps the destination colour");
+        _igpu_check(_i_open && _i_open_l == c_red && _i_open_r == c_lime, "an instanced draw with no state replaces both halves");
+        _igpu_check(!_i_bad && _i_bad_l == c_red && _i_bad_r == c_lime, "an instanced depth slot rejects a blend state and leaves the pixels");
+    }
+    if (surface_exists(_i_hold_surf)) surface_free(_i_hold_surf);
+    _igpu_check(igpu_state_release(_i_hold), "release instanced hold blend");
 }
 if (surface_exists(_i_surf))
 {
@@ -2974,6 +3198,39 @@ if (surface_exists(_a_surf) && _a_buf > 0 && _i_vb > 0 && _i_ib > 0 && _i_layout
     _igpu_check(_a_drew, "indirect draw succeeds");
     _igpu_check(_a_left == c_red, "indirect instance 0 is red");
     _igpu_check(_a_right == c_lime, "indirect instance 1 is green");
+
+    var _a_hold = igpu_blend_state_create(
+        true, bm_zero, bm_one, bm_eq_add, bm_zero, bm_one, bm_eq_add,
+        true, true, true, true);
+    var _a_hold_surf = surface_create(8, 8);
+    if (_a_hold > 0 && surface_exists(_a_hold_surf))
+    {
+        gpu_push_state();
+        _igpu_target_begin(_a_hold_surf, c_blue);
+        igpu_shader_bind(_i_vs, IgpuShaderStage.Vertex);
+        igpu_shader_bind(_i_ps, IgpuShaderStage.Pixel);
+        var _a_held = igpu_draw_indirect(_i_vb, _i_ib, _i_layout, pr_trianglelist, _a_buf, 0, _a_hold, 0, 0, 0);
+        surface_reset_target();
+        var _a_held_l = surface_getpixel(_a_hold_surf, 1, 4);
+        var _a_held_r = surface_getpixel(_a_hold_surf, 6, 4);
+        _igpu_target_begin(_a_hold_surf, c_blue);
+        igpu_shader_bind(_i_vs, IgpuShaderStage.Vertex);
+        igpu_shader_bind(_i_ps, IgpuShaderStage.Pixel);
+        var _a_open = igpu_draw_indirect(_i_vb, _i_ib, _i_layout, pr_trianglelist, _a_buf, 0, 0, 0, 0, 0);
+        igpu_shader_bind(0, IgpuShaderStage.Vertex);
+        igpu_shader_bind(0, IgpuShaderStage.Pixel);
+        surface_reset_target();
+        gpu_pop_state();
+        var _a_open_l = surface_getpixel(_a_hold_surf, 1, 4);
+        var _a_open_r = surface_getpixel(_a_hold_surf, 6, 4);
+        show_debug_message("indirect state   : " + string(_a_held) + " " + string(_a_held_l) + " / " + string(_a_held_r)
+            + " | " + string(_a_open) + " " + string(_a_open_l) + " / " + string(_a_open_r));
+        if (!_a_held) show_debug_message("indirect state err: " + string(igpu_get_last_error()));
+        _igpu_check(_a_held && _a_held_l == c_blue && _a_held_r == c_blue, "an indirect draw keeps the destination colour");
+        _igpu_check(_a_open && _a_open_l == c_red && _a_open_r == c_lime, "an indirect draw with no state replaces both halves");
+    }
+    if (surface_exists(_a_hold_surf)) surface_free(_a_hold_surf);
+    _igpu_check(igpu_state_release(_a_hold), "release indirect hold blend");
 }
 if (surface_exists(_a_surf))
 {
@@ -3054,6 +3311,39 @@ if (surface_exists(_n_surf) && _n_vb > 0 && _n_ib > 0 && _n_args > 0 && _n_layou
     _igpu_check(_n_drew, "indexed indirect draw succeeds");
     _igpu_check(_n_right == c_red, "the indexed record draws the right half");
     _igpu_check(_n_left == c_blue, "the indexed record leaves the left half blue");
+
+    var _n_hold = igpu_blend_state_create(
+        true, bm_zero, bm_one, bm_eq_add, bm_zero, bm_one, bm_eq_add,
+        true, true, true, true);
+    var _n_hold_surf = surface_create(8, 8);
+    if (_n_hold > 0 && surface_exists(_n_hold_surf))
+    {
+        gpu_push_state();
+        _igpu_target_begin(_n_hold_surf, c_blue);
+        igpu_shader_bind(_n_vs, IgpuShaderStage.Vertex);
+        igpu_shader_bind(_n_ps, IgpuShaderStage.Pixel);
+        var _n_held = igpu_draw_indexed_indirect(_n_vb, 0, _n_layout, _n_ib, pr_trianglelist, _n_args, 0, _n_hold, 0, 0, 0);
+        surface_reset_target();
+        var _n_held_l = surface_getpixel(_n_hold_surf, 1, 4);
+        var _n_held_r = surface_getpixel(_n_hold_surf, 6, 4);
+        _igpu_target_begin(_n_hold_surf, c_blue);
+        igpu_shader_bind(_n_vs, IgpuShaderStage.Vertex);
+        igpu_shader_bind(_n_ps, IgpuShaderStage.Pixel);
+        var _n_open = igpu_draw_indexed_indirect(_n_vb, 0, _n_layout, _n_ib, pr_trianglelist, _n_args, 0, 0, 0, 0, 0);
+        igpu_shader_bind(0, IgpuShaderStage.Vertex);
+        igpu_shader_bind(0, IgpuShaderStage.Pixel);
+        surface_reset_target();
+        gpu_pop_state();
+        var _n_open_l = surface_getpixel(_n_hold_surf, 1, 4);
+        var _n_open_r = surface_getpixel(_n_hold_surf, 6, 4);
+        show_debug_message("indexed state    : " + string(_n_held) + " " + string(_n_held_l) + " / " + string(_n_held_r)
+            + " | " + string(_n_open) + " " + string(_n_open_l) + " / " + string(_n_open_r));
+        if (!_n_held) show_debug_message("indexed state err : " + string(igpu_get_last_error()));
+        _igpu_check(_n_held && _n_held_l == c_blue && _n_held_r == c_blue, "an indexed indirect draw keeps the destination colour");
+        _igpu_check(_n_open && _n_open_l == c_blue && _n_open_r == c_red, "an indexed indirect draw with no state paints only the right half");
+    }
+    if (surface_exists(_n_hold_surf)) surface_free(_n_hold_surf);
+    _igpu_check(igpu_state_release(_n_hold), "release indexed-indirect hold blend");
 }
 if (surface_exists(_n_surf))
 {
@@ -3190,6 +3480,17 @@ if (surface_exists(_t_surf) && _t_vb > 0 && _t_layout > 0 && _t_vs > 0 && _t_hs 
     igpu_shader_bind(_t_ps, IgpuShaderStage.Pixel);
     var _t_hull = igpu_shader_bind(_t_hs, IgpuShaderStage.Hull);
     var _t_domain = igpu_shader_bind(_t_ds, IgpuShaderStage.Domain);
+    var _t_hold = igpu_blend_state_create(
+        true, bm_zero, bm_one, bm_eq_add, bm_zero, bm_one, bm_eq_add,
+        true, true, true, true);
+    var _t_held = igpu_draw_patch(_t_vb, _t_layout, 3, 0, 3, _t_hold, 0, 0, 0);
+    surface_reset_target();
+    var _t_held_left = surface_getpixel(_t_surf, 1, 4);
+    _igpu_target_begin(_t_surf, c_blue);
+    igpu_shader_bind(_t_vs, IgpuShaderStage.Vertex);
+    igpu_shader_bind(_t_ps, IgpuShaderStage.Pixel);
+    igpu_shader_bind(_t_hs, IgpuShaderStage.Hull);
+    igpu_shader_bind(_t_ds, IgpuShaderStage.Domain);
     var _t_drew = igpu_draw_patch(_t_vb, _t_layout, 3, 0, 3, 0, 0, 0, 0);
     igpu_shader_bind(0, IgpuShaderStage.Vertex);
     igpu_shader_bind(0, IgpuShaderStage.Pixel);
@@ -3199,11 +3500,13 @@ if (surface_exists(_t_surf) && _t_vb > 0 && _t_layout > 0 && _t_vs > 0 && _t_hs 
     gpu_pop_state();
     var _t_left = surface_getpixel(_t_surf, 1, 4);
     var _t_right = surface_getpixel(_t_surf, 6, 4);
-    show_debug_message("tessellation     : " + string(_t_plain) + " " + string(_t_plain_left) + " " + string(_t_hull) + " " + string(_t_domain) + " " + string(_t_drew) + " " + string(_t_left) + " / " + string(_t_right));
-    if (!_t_drew) show_debug_message("tessellation err  : " + string(igpu_get_last_error()));
+    show_debug_message("tessellation     : " + string(_t_plain) + " " + string(_t_plain_left) + " " + string(_t_hull) + " " + string(_t_domain) + " " + string(_t_held) + " " + string(_t_held_left) + " " + string(_t_drew) + " " + string(_t_left) + " / " + string(_t_right));
+    if (!_t_drew || !_t_held) show_debug_message("tessellation err  : " + string(igpu_get_last_error()));
     _igpu_check(_t_plain && _t_plain_left == c_blue, "the degenerate triangle leaves the left pixel blue");
+    _igpu_check(_t_hold > 0 && _t_held && _t_held_left == c_blue, "a patch draw keeps the destination colour");
     _igpu_check(_t_hull && _t_domain && _t_drew && _t_left == c_red, "the patch covers the left half");
     _igpu_check(_t_right == c_blue, "the patch leaves the right half blue");
+    _igpu_check(igpu_state_release(_t_hold), "release patch hold blend");
 }
 if (surface_exists(_t_surf))
 {

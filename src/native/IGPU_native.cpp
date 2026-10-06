@@ -304,13 +304,9 @@ bool igpu_draw(
             vertex_buffer, layout, primitive, first_vertex, vertex_count,
             blend_state, depth_state, raster_state, sampler_state);
     }
-    if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
-    {
-        igpu::set_last_error("igpu_draw: instanced draws do not take pipeline state yet");
-        return false;
-    }
     return igpu::draw_instanced(
-        vertex_buffer, instance_buffer, layout, primitive, first_vertex, vertex_count, instance_count);
+        vertex_buffer, instance_buffer, layout, primitive, first_vertex, vertex_count, instance_count,
+        blend_state, depth_state, raster_state, sampler_state);
 }
 
 bool igpu_draw_instanced(
@@ -323,7 +319,8 @@ bool igpu_draw_instanced(
     std::int64_t instance_count)
 {
     return igpu::draw_instanced(
-        vertex_buffer, instance_buffer, layout, primitive, first_vertex, vertex_count, instance_count);
+        vertex_buffer, instance_buffer, layout, primitive, first_vertex, vertex_count, instance_count,
+        0, 0, 0, 0);
 }
 
 bool igpu_draw_indirect(
@@ -338,12 +335,9 @@ bool igpu_draw_indirect(
     std::int64_t raster_state,
     std::int64_t sampler_state)
 {
-    if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
-    {
-        igpu::set_last_error("igpu_draw_indirect: pipeline state on an indirect draw is not wired yet");
-        return false;
-    }
-    return igpu::draw_indirect(vertex_buffer, instance_buffer, layout, primitive, args, args_offset);
+    return igpu::draw_indirect(
+        vertex_buffer, instance_buffer, layout, primitive, args, args_offset,
+        blend_state, depth_state, raster_state, sampler_state);
 }
 
 bool igpu_draw_patch(
@@ -357,12 +351,9 @@ bool igpu_draw_patch(
     std::int64_t raster_state,
     std::int64_t sampler_state)
 {
-    if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
-    {
-        igpu::set_last_error("igpu_draw_patch: pipeline state on a patch draw is not wired yet");
-        return false;
-    }
-    return igpu::draw_patch(vertex_buffer, layout, control_points, first_vertex, vertex_count);
+    return igpu::draw_patch(
+        vertex_buffer, layout, control_points, first_vertex, vertex_count,
+        blend_state, depth_state, raster_state, sampler_state);
 }
 
 bool igpu_draw_indexed_indirect(
@@ -378,13 +369,9 @@ bool igpu_draw_indexed_indirect(
     std::int64_t raster_state,
     std::int64_t sampler_state)
 {
-    if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
-    {
-        igpu::set_last_error("igpu_draw_indexed_indirect: pipeline state on an indirect draw is not wired yet");
-        return false;
-    }
     return igpu::draw_indexed_indirect(
-        vertex_buffer, instance_buffer, layout, index_buffer, primitive, args, args_offset);
+        vertex_buffer, instance_buffer, layout, index_buffer, primitive, args, args_offset,
+        blend_state, depth_state, raster_state, sampler_state);
 }
 
 bool igpu_draw_indexed(
@@ -604,10 +591,15 @@ std::int64_t igpu_sampler_state_create_compare(
     std::int32_t mip,
     std::int32_t address_u,
     std::int32_t address_v,
-    std::int32_t address_w)
+    std::int32_t address_w,
+    std::int32_t anisotropy,
+    float level_offset,
+    float finest,
+    float coarsest)
 {
     return igpu::sampler_state_create_compare(
-        compare, magnification, minification, mip, address_u, address_v, address_w);
+        compare, magnification, minification, mip, address_u, address_v, address_w,
+        anisotropy, level_offset, finest, coarsest);
 }
 
 bool igpu_state_release(std::uint64_t state)
@@ -892,13 +884,9 @@ bool igpu_draw_to_render_targets(
     std::int64_t raster_state,
     std::int64_t sampler_state)
 {
-    if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
-    {
-        igpu::set_last_error("igpu_draw_to_render_targets: pipeline state on an offscreen draw is not wired yet");
-        return false;
-    }
     return igpu::draw_to_render_targets_layer(
-        vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips);
+        vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips,
+        blend_state, depth_state, raster_state, sampler_state);
 }
 
 bool igpu_draw_to_render_targets_level(
@@ -925,7 +913,8 @@ bool igpu_draw_to_render_targets_layer(
     const gm::wire::GMArrayView& mips)
 {
     return igpu::draw_to_render_targets_layer(
-        vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips);
+        vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips,
+        0, 0, 0, 0);
 }
 
 bool igpu_draw_sampled(
@@ -940,13 +929,9 @@ bool igpu_draw_sampled(
     std::int64_t raster_state,
     std::int64_t sampler_state)
 {
-    if (blend_state != 0 || depth_state != 0 || raster_state != 0)
-    {
-        igpu::set_last_error("igpu_draw_sampled: only the sampler state is applied on this draw");
-        return false;
-    }
     return igpu::draw_sampled(
-        vertex_buffer, layout, primitive, first_vertex, vertex_count, texture, sampler_state);
+        vertex_buffer, layout, primitive, first_vertex, vertex_count, texture,
+        blend_state, depth_state, raster_state, sampler_state);
 }
 
 std::int32_t igpu_get_draw_count()

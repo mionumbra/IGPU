@@ -89,7 +89,11 @@ namespace igpu
         std::int64_t vertex_count,
         const gm::wire::GMArrayView& targets,
         const gm::wire::GMArrayView& layers,
-        const gm::wire::GMArrayView& mips);
+        const gm::wire::GMArrayView& mips,
+        std::int64_t blend_state,
+        std::int64_t depth_state,
+        std::int64_t raster_state,
+        std::int64_t sampler_state);
 
     bool draw_sampled(
         std::uint64_t vertex_buffer,
@@ -98,5 +102,8 @@ namespace igpu
         std::int64_t first_vertex,
         std::int64_t vertex_count,
         std::uint64_t texture,
-        std::int64_t sampler);
+        std::int64_t blend_state,
+        std::int64_t depth_state,
+        std::int64_t raster_state,
+        std::int64_t sampler_state);
 }

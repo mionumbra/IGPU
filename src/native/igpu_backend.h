@@ -58,14 +58,20 @@ namespace igpu
                           std::int64_t raster_state, std::int64_t sampler_state) = 0;
         virtual bool draw_instanced(std::uint64_t vertex_buffer, std::uint64_t instance_buffer, std::uint64_t layout,
                                     std::int32_t primitive, std::int64_t first_vertex, std::int64_t vertex_count,
-                                    std::int64_t instance_count) = 0;
+                                    std::int64_t instance_count, std::int64_t blend_state, std::int64_t depth_state,
+                                    std::int64_t raster_state, std::int64_t sampler_state) = 0;
         virtual bool draw_indirect(std::uint64_t vertex_buffer, std::uint64_t instance_buffer, std::uint64_t layout,
-                                   std::int32_t primitive, std::uint64_t args, std::int64_t args_offset) = 0;
+                                   std::int32_t primitive, std::uint64_t args, std::int64_t args_offset,
+                                   std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
+                                   std::int64_t sampler_state) = 0;
         virtual bool draw_patch(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t control_points,
-                                std::int64_t first_vertex, std::int64_t vertex_count) = 0;
+                                std::int64_t first_vertex, std::int64_t vertex_count, std::int64_t blend_state,
+                                std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state) = 0;
         virtual bool draw_indexed_indirect(std::uint64_t vertex_buffer, std::uint64_t instance_buffer,
                                            std::uint64_t layout, std::uint64_t index_buffer, std::int32_t primitive,
-                                           std::uint64_t args, std::int64_t args_offset) = 0;
+                                           std::uint64_t args, std::int64_t args_offset, std::int64_t blend_state,
+                                           std::int64_t depth_state, std::int64_t raster_state,
+                                           std::int64_t sampler_state) = 0;
         virtual bool draw_indexed(std::uint64_t vertex_buffer, std::uint64_t layout, std::uint64_t index_buffer,
                                   std::int32_t primitive, std::int64_t first_index, std::int64_t index_count,
                                   std::int64_t blend_state, std::int64_t depth_state,
@@ -139,7 +145,8 @@ namespace igpu
         virtual std::int64_t sampler_state_create_compare(std::int32_t compare, std::int32_t magnification,
                                                           std::int32_t minification, std::int32_t mip,
                                                           std::int32_t address_u, std::int32_t address_v,
-                                                          std::int32_t address_w) = 0;
+                                                          std::int32_t address_w, std::int32_t anisotropy,
+                                                          float level_offset, float finest, float coarsest) = 0;
         virtual bool state_release(std::uint64_t handle) = 0;
 
         virtual std::int64_t texture_create(std::int32_t width, std::int32_t height, std::int32_t format, bool render_target) = 0;
@@ -176,10 +183,13 @@ namespace igpu
         virtual bool draw_to_render_targets_layer(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                                                   std::int64_t first_vertex, std::int64_t vertex_count,
                                                   const gm::wire::GMArrayView& targets, const gm::wire::GMArrayView& layers,
-                                                  const gm::wire::GMArrayView& mips) = 0;
+                                                  const gm::wire::GMArrayView& mips, std::int64_t blend_state,
+                                                  std::int64_t depth_state, std::int64_t raster_state,
+                                                  std::int64_t sampler_state) = 0;
         virtual bool draw_sampled(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                                   std::int64_t first_vertex, std::int64_t vertex_count, std::uint64_t texture,
-                                  std::int64_t sampler) = 0;
+                                  std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
+                                  std::int64_t sampler_state) = 0;
 
         // Fills `out` from compiled shader bytecode. True with an empty layout
         // when the shader has no uniform blocks.

@@ -267,31 +267,42 @@ namespace igpu
 
             bool draw_instanced(std::uint64_t vertex_buffer, std::uint64_t instance_buffer, std::uint64_t layout,
                                 std::int32_t primitive, std::int64_t first_vertex, std::int64_t vertex_count,
-                                std::int64_t instance_count) override
+                                std::int64_t instance_count, std::int64_t blend_state, std::int64_t depth_state,
+                                std::int64_t raster_state, std::int64_t sampler_state) override
             {
                 return d3d11_impl::draw_instanced(
-                    vertex_buffer, instance_buffer, layout, primitive, first_vertex, vertex_count, instance_count);
+                    vertex_buffer, instance_buffer, layout, primitive, first_vertex, vertex_count, instance_count,
+                    blend_state, depth_state, raster_state, sampler_state);
             }
 
             bool draw_indirect(std::uint64_t vertex_buffer, std::uint64_t instance_buffer, std::uint64_t layout,
-                               std::int32_t primitive, std::uint64_t args, std::int64_t args_offset) override
+                               std::int32_t primitive, std::uint64_t args, std::int64_t args_offset,
+                               std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
+                               std::int64_t sampler_state) override
             {
                 return d3d11_impl::draw_indirect(
-                    vertex_buffer, instance_buffer, layout, primitive, args, args_offset);
+                    vertex_buffer, instance_buffer, layout, primitive, args, args_offset,
+                    blend_state, depth_state, raster_state, sampler_state);
             }
 
             bool draw_patch(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t control_points,
-                            std::int64_t first_vertex, std::int64_t vertex_count) override
+                            std::int64_t first_vertex, std::int64_t vertex_count, std::int64_t blend_state,
+                            std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state) override
             {
-                return d3d11_impl::draw_patch(vertex_buffer, layout, control_points, first_vertex, vertex_count);
+                return d3d11_impl::draw_patch(
+                    vertex_buffer, layout, control_points, first_vertex, vertex_count,
+                    blend_state, depth_state, raster_state, sampler_state);
             }
 
             bool draw_indexed_indirect(std::uint64_t vertex_buffer, std::uint64_t instance_buffer,
                                        std::uint64_t layout, std::uint64_t index_buffer, std::int32_t primitive,
-                                       std::uint64_t args, std::int64_t args_offset) override
+                                       std::uint64_t args, std::int64_t args_offset, std::int64_t blend_state,
+                                       std::int64_t depth_state, std::int64_t raster_state,
+                                       std::int64_t sampler_state) override
             {
                 return d3d11_impl::draw_indexed_indirect(
-                    vertex_buffer, instance_buffer, layout, index_buffer, primitive, args, args_offset);
+                    vertex_buffer, instance_buffer, layout, index_buffer, primitive, args, args_offset,
+                    blend_state, depth_state, raster_state, sampler_state);
             }
 
             bool draw_indexed(std::uint64_t vertex_buffer, std::uint64_t layout, std::uint64_t index_buffer,
@@ -432,10 +443,13 @@ namespace igpu
 
             std::int64_t sampler_state_create_compare(std::int32_t compare, std::int32_t magnification,
                                                       std::int32_t minification, std::int32_t mip, std::int32_t address_u,
-                                                      std::int32_t address_v, std::int32_t address_w) override
+                                                      std::int32_t address_v, std::int32_t address_w,
+                                                      std::int32_t anisotropy, float level_offset, float finest,
+                                                      float coarsest) override
             {
                 return d3d11_impl::sampler_state_create_compare(
-                    compare, magnification, minification, mip, address_u, address_v, address_w);
+                    compare, magnification, minification, mip, address_u, address_v, address_w,
+                    anisotropy, level_offset, finest, coarsest);
             }
 
             bool state_release(std::uint64_t handle) override
@@ -552,17 +566,23 @@ namespace igpu
             bool draw_to_render_targets_layer(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                                               std::int64_t first_vertex, std::int64_t vertex_count,
                                               const gm::wire::GMArrayView& targets, const gm::wire::GMArrayView& layers,
-                                              const gm::wire::GMArrayView& mips) override
+                                              const gm::wire::GMArrayView& mips, std::int64_t blend_state,
+                                              std::int64_t depth_state, std::int64_t raster_state,
+                                              std::int64_t sampler_state) override
             {
                 return d3d11_impl::draw_to_render_targets_layer(
-                    vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips);
+                    vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips,
+                    blend_state, depth_state, raster_state, sampler_state);
             }
 
             bool draw_sampled(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                               std::int64_t first_vertex, std::int64_t vertex_count, std::uint64_t texture,
-                              std::int64_t sampler) override
+                              std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
+                              std::int64_t sampler_state) override
             {
-                return d3d11_impl::draw_sampled(vertex_buffer, layout, primitive, first_vertex, vertex_count, texture, sampler);
+                return d3d11_impl::draw_sampled(
+                    vertex_buffer, layout, primitive, first_vertex, vertex_count, texture,
+                    blend_state, depth_state, raster_state, sampler_state);
             }
 
             bool reflect_uniforms(const void* bytecode, std::size_t size, UniformLayout& out) override

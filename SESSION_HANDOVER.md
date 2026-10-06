@@ -6,23 +6,47 @@
 
 ## 这一版是什么
 
-`0.4.0` 把公开函数从 105 个收到 59 个。一个概念一个函数。Windows D3D11 上集成测试 `checks failed : 0`，当前检查项 **827** 项。`igpu_version()` 返回 `0.4.0`。
+`0.4.0` 把公开函数从 105 个收到 59 个。一个概念一个函数。Windows D3D11 上集成测试 `checks failed : 0`，当前检查项 **873** 项。`igpu_version()` 返回 `0.4.0`。
 
 `igpu_init(device, context, swapchain)` 仍是三个 `gmval` 指针。不要把指针塞进 GMIDL 类的 `gmval` 字段：本机 extgen `v1.d8c68bd` 会把那种字段生成成 `DataStream`，而 `readValue<DataStream>` 编不过。要让它编过就得改生成文件，下次跑 extgen 会盖掉。反射用的是具体字段的类 `IgpuUniformMember` / `IgpuUniformBlock`，那个能生成可读的 C++ 结构体。
 
 生成物只由 extgen 重写：`code_gen/`、`project/scripts/IGPU_API/IGPU_API.gml`、`project/extensions/IGPU/IGPU.yy`、根上的 `docs` 文件。不要手改它们。
 
-## 下一轮做什么
+## 下一会话只规划，先不写代码
 
-按这个顺序，不要跳：
+下一阶段是 OpenGL / OpenGL ES 后端。这个后端不是给 Windows 上的 GameMaker 准备的。GMS2 Runtime 在 Windows 上走 Direct3D 11；OpenGL 是 Windows 以外那些目标的渲染后端。不要为了让 Windows 的 `gm-cli` 跑到 GL 而加 ANGLE，也不要把 GL 塞进 `igpu_init(device, context, swapchain)`。
 
-1. **OpenGL / OpenGL ES 后端。** extgen 的桌面和移动目标：Linux、macOS、Android、iOS、tvOS。`config.json` 现在只开了 Windows。Runtime 源码在 `D:\Users\User\Documents\gml_ext\OpenGM\runtime\GMS2-Runner-Main\VC_Runner`。这些平台的 `os_get_info` 不交上下文指针。游戏步进和 GL 上下文在同一条线程上，上下文当时已经 current。Android / iOS / tvOS 这份源码建的是 OpenGL ES 2。macOS 请求 Legacy profile。Linux 是不请求版本的旧式 GLX。Windows 这份运行时没有 OpenGL。
-2. **HTML5 / WASM**（含 GX.games）。不能用 extgen，要单独写 JavaScript。排在本机后端之后。
-3. **主机**（Xbox、PS4、PS5、Switch）。排在 HTML5 / WASM 之后。extgen schema 里有槽位，现在不启用。
+HTML5 / WASM（含 GX.games）仍排在本机后端之后，要单独写 JavaScript。主机（Xbox、PS4、PS5、Switch）排在 HTML5 / WASM 之后。extgen schema 里有主机槽位，现在不启用。
 
-做 OpenGL 之前，这几条公开绘制还拒绝非零的混合、深度或光栅状态：实例化、间接绘制、面片、画进纹理。`igpu_draw_sampled` 只应用采样器。比较采样要求各向异性 1、偏移 0、不限制最粗（`coarsest < 0`）。边框色 `0` 是黑色，不是「没给颜色」。比较值 `0` 是普通采样。
+### 已经核对过的平台事实
 
-## 必须守住的结构
+Runtime 源码在 `D:\Users\User\Documents\gml_ext\OpenGM\runtime\GMS2-Runner-Main\VC_Runner`。这是去混淆派生树，不是官方发布。`config.json` 现在只打开了 Windows。
+
+`os_get_info` 交设备指针的，这份源码里只有 Windows D3D11：`video_d3d11_device`、`video_d3d11_context`、`video_d3d11_swapchain`。这份 Windows 运行时没有 WGL，也没有 `wglCreateContext`。
+
+Linux、macOS、Android、iOS、tvOS 不交指针。游戏步进和 GL 上下文在同一条线程上，扩展函数跟着 GML 跑的时候上下文已经 current：
+
+- Android：`DemoGLSurfaceView.java` 用 EGL10。ES 2 走 `setEGLContextClientVersion(2)`，否则是 ES 1。`onDrawFrame` 里调用 `RunnerJNILib.Process`。
+- iOS / tvOS：`ES2Renderer.m` 建 `kEAGLRenderingAPIOpenGLES2`。`renderTheScene` 先 `setCurrentContext`，再 `iPad_Process()`。`MTLDevice` 没有交给 GML。Metal 只显示 OpenGL 画完的纹理。
+- Linux：`TFormM.cpp` 用 `glXCreateContext` 建旧式 GLX，不请求版本。`glXMakeCurrent` 之后同线程进入 `MainLoop_Process`。
+- macOS：`YYGLView.mm` 请求 `NSOpenGLProfileVersionLegacy`。`performGameStep` 先 `beginRender`，那里 `makeCurrentContext`。
+
+因此产品入口仍然是：无指针，绑定这条线程上已经 current 的上下文，不创建、不销毁它。这个函数还没进 `spec.gmidl`。公开函数仍是 59 个。Windows 的 GameMaker 构建里，这个入口应当失败，并写明这份构建没有 OpenGL 后端。
+
+ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓冲块和三维纹理不会为 true。立方体贴图在 ES 2 里有。多目标和实例化取决于扩展字符串。`glsl_es` 不带版本号。源码和上下文对不上时编译失败。
+
+### 下一会话要先定的测试办法
+
+这台 Windows 机器上的 `gm-cli` 只能证明 D3D11。它证明不了 GL，因为 Windows 的 GameMaker 运行时不用 OpenGL。下一会话先选定怎么证明 GL，再写实现。两条路都合法，可以并存，但职责不能混：
+
+1. **其他平台上的 GameMaker 运行。** Linux、macOS、Android、iOS、tvOS 里至少一条。扩展函数跑在引擎已经 current 的上下文里。这是产品路径的证据。`config.json` 要打开对应目标，构建不能只靠现在的 `win-x64-release-vs18`。
+2. **临时自建的上下文，只用于测试。** 在有 GL 驱动的机器上自己创建上下文、自己 `MakeCurrent`、跑不经过 GameMaker 的本机测试，测完销毁。它不能成为公开的 `igpu_init`，不能链进 Windows 的 GameMaker 绘制，也不能留下来冒充那些平台的运行时。产品代码仍然只借用已经 current 的上下文。
+
+不要把「自建上下文」写成 Windows 产品功能。不要引入 ANGLE 来给 Windows 的 GameMaker 提供 GL。
+
+### 这一版已经补上的公开契约
+
+实例化、间接绘制、面片、画进纹理和 `igpu_draw_sampled` 与 `igpu_draw`、`igpu_draw_indexed` 一样。非零的混合、深度、光栅和采样器只在这一次绘制里生效，返回前恢复。比较采样接受级数偏移、最细、最粗，以及线性过滤上的各向异性。`SampleCmp` 看偏移。这块 Direct3D 11 设备上 `SampleCmpLevelZero` 也看偏移，最细和最粗仍然把级数留在范围内。边框色 `0` 是黑色，不是「没给颜色」。比较值 `0` 是普通采样。比较和边框寻址仍然互斥。这块编译器的 `Texture2D` 没有 `SampleCmpGrad`，偏移证明用的是带真实纹理坐标导数的 `SampleCmp`。
 
 ## 必须守住的结构
 
@@ -38,7 +62,7 @@
 - 能力只有真有 API 才为 true。键数保持 35。键清单代码块里不要写 `surface_*`。文档里不要为无关列表写「N 个键」，验证脚本会把那句话当成键数。
 - 断言数是 `_igpu_check(` 的调用点，去掉函数定义那一行。文档里的「当前检查项 **N 项**」必须落在验证脚本打印的区间里。
 - GML 数组字面量里不要写裸负数。数组里的句柄和枚举经常以 `uint64` 到达，读取时接受 `uint64`、`int32` 和 `double`。
-- OpenGL 后端是下一阶段，不是这一版。做的时候用调用线程上已经 current 的上下文，不创建、不销毁它。不要引入 ANGLE。不要手改生成文件来传递指针。
+- OpenGL 后端是下一阶段，不是这一版，也不是 Windows 的 GameMaker 路径。产品代码用调用线程上已经 current 的上下文，不创建、不销毁它。测试可以另建上下文，但那个上下文只属于测试，不能进公开入口。不要引入 ANGLE。不要手改生成文件来传递指针。
 - 借用 GameMaker 的设备：AddRef 一次，只 Release 这一次。`reset()` 先 `set_active_backend(nullptr)`。
 
 ## 当前数字
@@ -46,7 +70,7 @@
 | 项 | 值 |
 |---|---|
 | 版本 | 0.4.0 |
-| 检查 | **827** 项，`checks failed: 0` |
+| 检查 | **873** 项，`checks failed: 0` |
 | spec 函数 | 59 |
 | 能力键 | 35 |
 | `tools\verify_handover.ps1` | exit 0 |

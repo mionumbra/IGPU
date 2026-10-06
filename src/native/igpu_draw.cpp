@@ -375,7 +375,11 @@ namespace d3d11_impl
                     std::uint64_t layout,
                     std::int32_t control_points,
                     std::int64_t first_vertex,
-                    std::int64_t vertex_count)
+                    std::int64_t vertex_count,
+                    std::int64_t blend_state,
+                    std::int64_t depth_state,
+                    std::int64_t raster_state,
+                    std::int64_t sampler_state)
     {
         D3D11_PRIMITIVE_TOPOLOGY topology{};
         DeviceState::BufferEntry* vb = nullptr;
@@ -424,7 +428,7 @@ namespace d3d11_impl
         }
 
         ResolvedDrawState pipeline{};
-        if (!resolve_draw_states("igpu_draw_patch", 0, 0, 0, 0, pipeline))
+        if (!resolve_draw_states("igpu_draw_patch", blend_state, depth_state, raster_state, sampler_state, pipeline))
         {
             return false;
         }
@@ -454,7 +458,11 @@ namespace d3d11_impl
                         std::int32_t primitive,
                         std::int64_t first_vertex,
                         std::int64_t vertex_count,
-                        std::int64_t instance_count)
+                        std::int64_t instance_count,
+                        std::int64_t blend_state,
+                        std::int64_t depth_state,
+                        std::int64_t raster_state,
+                        std::int64_t sampler_state)
     {
         D3D11_PRIMITIVE_TOPOLOGY topology{};
         DeviceState::BufferEntry* vb = nullptr;
@@ -518,7 +526,7 @@ namespace d3d11_impl
         }
 
         ResolvedDrawState pipeline{};
-        if (!resolve_draw_states("igpu_draw_instanced", 0, 0, 0, 0, pipeline))
+        if (!resolve_draw_states("igpu_draw_instanced", blend_state, depth_state, raster_state, sampler_state, pipeline))
         {
             return false;
         }
@@ -615,7 +623,11 @@ namespace d3d11_impl
                               std::int32_t primitive,
                               std::uint64_t args,
                               std::int64_t args_offset,
-                              bool indexed)
+                              bool indexed,
+                              std::int64_t blend_state,
+                              std::int64_t depth_state,
+                              std::int64_t raster_state,
+                              std::int64_t sampler_state)
     {
         D3D11_PRIMITIVE_TOPOLOGY topology{};
         DeviceState::BufferEntry* mesh = nullptr;
@@ -639,7 +651,7 @@ namespace d3d11_impl
         }
 
         ResolvedDrawState pipeline{};
-        if (!resolve_draw_states(api, 0, 0, 0, 0, pipeline))
+        if (!resolve_draw_states(api, blend_state, depth_state, raster_state, sampler_state, pipeline))
         {
             return false;
         }
@@ -674,10 +686,15 @@ namespace d3d11_impl
                        std::uint64_t layout,
                        std::int32_t primitive,
                        std::uint64_t args,
-                       std::int64_t args_offset)
+                       std::int64_t args_offset,
+                       std::int64_t blend_state,
+                       std::int64_t depth_state,
+                       std::int64_t raster_state,
+                       std::int64_t sampler_state)
     {
         return draw_indirect_record(
-            "igpu_draw_indirect", vertex_buffer, instance_buffer, layout, 0, primitive, args, args_offset, false);
+            "igpu_draw_indirect", vertex_buffer, instance_buffer, layout, 0, primitive, args, args_offset, false,
+            blend_state, depth_state, raster_state, sampler_state);
     }
 
     bool draw_indexed_indirect(std::uint64_t vertex_buffer,
@@ -686,7 +703,11 @@ namespace d3d11_impl
                                std::uint64_t index_buffer,
                                std::int32_t primitive,
                                std::uint64_t args,
-                               std::int64_t args_offset)
+                               std::int64_t args_offset,
+                               std::int64_t blend_state,
+                               std::int64_t depth_state,
+                               std::int64_t raster_state,
+                               std::int64_t sampler_state)
     {
         if (index_buffer == 0)
         {
@@ -695,7 +716,8 @@ namespace d3d11_impl
         }
         return draw_indirect_record(
             "igpu_draw_indexed_indirect", vertex_buffer, instance_buffer, layout, index_buffer,
-            primitive, args, args_offset, true);
+            primitive, args, args_offset, true,
+            blend_state, depth_state, raster_state, sampler_state);
     }
 
     bool draw_indexed(std::uint64_t vertex_buffer,

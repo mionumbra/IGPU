@@ -570,7 +570,9 @@ function igpu_raster_state_create(
 // cmpfunc_* (cmpfunc_never is 1). Comparison together with Border fails.
 // level_offset is a number of levels; positive is coarser. finest is the
 // minimum level, 0 is the base. coarsest below 0 means no upper limit.
-// A shader-specified level ignores the offset and still stays inside the range.
+// The offset applies to samples that let the sampler choose the level, and
+// on Direct3D 11 it also applies to SampleCmpLevelZero. Either way the
+// chosen level stays inside the finest and coarsest limits.
 [global, bind = typed_gml]
 enum IgpuAddressMode
 {

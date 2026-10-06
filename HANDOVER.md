@@ -126,9 +126,9 @@ extgen --config config.json
 
 当前的优先级是：
 
-1. 比较采样还不能偏移级数，也不能限制最细和最粗。比较结果已经能读回，但选用的级数仍然固定。
+1. **规划 OpenGL / OpenGL ES 后端，下一会话先定测试办法，这一会话不写实现。** 这个后端给 Windows 以外的 GameMaker 运行时用。Linux、macOS、Android、iOS、tvOS 上，游戏步进和 GL 上下文在同一条线程，上下文当时已经 current。产品入口不创建、不销毁它。Windows 的 GameMaker 运行时没有 OpenGL，不要为它加 ANGLE，也不要改三个指针的 `igpu_init`。证明 GL 要么在那些平台上跑 GameMaker，要么用一份只属于测试的自建上下文。两条路的分工写在 `SESSION_HANDOVER.md` 开头。
 
-接手时先读 `SESSION_HANDOVER.md` 开头。比较结果已经用 `igpu_sampler_state_create_compare` 读回。下一刀是给它加上和 `igpu_sampler_state_create_filters_range` 一样的级数偏移、最细和最粗，新函数，不改旧签名。现有像素测试用的比较指令不看级数偏移，证明偏移时要换成由采样器自己选级数的比较。
+接手时先读 `SESSION_HANDOVER.md` 开头。比较采样的偏移、最细、最粗和线性过滤上的各向异性已经在 Direct3D 11 上用像素证明。实例化、间接、面片、画进纹理和采样绘制都会应用并恢复管线状态。
 
 ---
 
@@ -215,6 +215,8 @@ C++: igpu::bind_device(ID3D11Device*, ID3D11DeviceContext*, IDXGISwapChain*)
 `os_get_info` 真正交指针的，这份源码里只有 Windows D3D11：`video_d3d11_device`、`video_d3d11_context`、`video_d3d11_swapchain`（`Files\Function\Win32\YoYo_FunctionsM.cpp`）。Windows 运行时没有 WGL。
 
 Linux、macOS、Android、iOS、tvOS 不交指针。游戏步进和 GL 上下文在同一条线程上，上下文当时已经 current。Android / iOS / tvOS 这份源码建的是 OpenGL ES 2。macOS 请求 Legacy profile。Linux 是不请求版本的旧式 GLX。`MTLDevice` 没有交给 GML。
+
+OpenGL 后端不是 Windows 产品路径。这台机器上的 `gm-cli` 只跑 Direct3D 11。要证明 GL，下一会话先定：在上述某个平台上跑 GameMaker，或者另写一份测试，自己创建上下文、自己设成 current、测完销毁。自建上下文不能进公开的 `igpu_init`，也不能用来假装 Windows 的 GameMaker 有 OpenGL。
 
 现在的 API 只覆盖 extgen 的桌面和移动目标：Windows、Linux、macOS、Android、iOS、tvOS。`config.json` 只启用了 Windows，实现也只有 D3D11。
 
@@ -359,7 +361,7 @@ GML 侧有两个现成辅助函数（`project/scripts/IGPU_helpers/IGPU_helpers.
 - `igpu_sampler_state_create_filters_offset magnification, minification, mip, address_u, address_v, address_w, level_offset) : int64` — 在分开的三种过滤上再加级数偏移。正数往更粗的级走，负数往更细的级走，可以是小数。着色器自己写明级数时不受这个偏移影响。足迹落在第 0 级时，偏移 0 仍是红 `255`，偏移 4 落到绿 `65280`。足迹落在第 1 级时，偏移 -1 回到红。不是有限数的偏移会被拒绝。边框寻址仍然要走带颜色的入口。
 - `igpu_sampler_state_create_filters_range magnification, minification, mip, address_u, address_v, address_w, level_offset, finest, coarsest) : int64` — 在级数偏移之外再限定最细和最粗。偏移先加上，结果再留在这两级之间。着色器自己写明级数时不加偏移，但仍留在这个范围里。最细高于最粗会被拒绝。偏移 4 但最粗停在第 0 级时，左右都是红 `255`。最细停在第 1 级时，原本落在第 0 级的足迹变成绿 `65280`。
 - `igpu_sampler_state_create_filters_border_range magnification, minification, mip, address_u, address_v, address_w, border, level_offset, finest, coarsest) : int64` — 同样的三种过滤和级数范围，并带边框色。颜色在进入后端前拆成 0 到 1 的通道。偏移 4 时纹理内是绿 `65280`，边缘外是传入的紫 `16711935`。最粗锁在第 0 级时纹理内是红，边缘外仍是紫。最细锁在第 1 级时纹理内是绿。
-- `igpu_sampler_state_create_compare compare, magnification, minification, mip, address_u, address_v, address_w) : int64` — 比较采样。`compare` 是 `cmpfunc_*`，和深度测试同一套常量。着色器给出参考值并请求比较；通过是 1，不通过是 0。比较的是参考值对纹素，所以 `cmpfunc_less` 在参考值小于纹素时通过。三种过滤是 `tf_point` 或 `tf_linear`，用来混合这些 0 和 1。左纹素 0.25、右纹素 0.75、参考值 0.5 时，小于比较是左黑右红 `0 / 255`，大于比较对调。线性比较在交界处是红 128。边框寻址会被拒绝。级数偏移是 0，每一级都允许。
+- `igpu_sampler_state_create_compare compare, magnification, minification, mip, address_u, address_v, address_w) : int64` — 比较采样。`compare` 是 `cmpfunc_*`，和深度测试同一套常量。着色器给出参考值并请求比较；通过是 1，不通过是 0。比较的是参考值对纹素，所以 `cmpfunc_less` 在参考值小于纹素时通过。三种过滤是 `tf_point` 或 `tf_linear`，用来混合这些 0 和 1。左纹素 0.25、右纹素 0.75、参考值 0.5 时，小于比较是左黑右红 `0 / 255`，大于比较对调。线性比较在交界处是红 128。边框寻址会被拒绝。级数偏移、最细和最粗都生效。`SampleCmp` 看偏移。这块设备上 `SampleCmpLevelZero` 也看偏移，同时仍被最细和最粗限制。各向异性大于 1 时三种过滤必须是线性。
 - `igpu_state_release(state) : bool`
 - `igpu_draw_with_state vertex_buffer, layout, primitive, first_vertex, vertex_count, blend_state, depth_state, raster_state, sampler_state) : bool`
 - `igpu_draw_indexed_with_state vertex_buffer, layout, index_buffer, primitive, first_index, index_count, blend_state, depth_state, raster_state, sampler_state) : bool`
@@ -762,8 +764,9 @@ PASS
 `checks failed : 1`，进程退出码 1。读回的像素仍是 `255`，
 所以失败的是断言，不是绘制。
 
-当前检查项 **827 项**（`checks failed: 0`），退出码 0。公开函数收成 59 个。采样、纹理、调度、绘制各留一个入口。反射是 `igpu_shader_reflect(` 返回的 `IgpuUniformBlock` 数组。`igpu_init` 仍是三个指针参数。HTML5 / WASM 不能用 extgen，排在本机后端之后；主机排在 HTML5 / WASM 之后。
+当前检查项 **873 项**（`checks failed: 0`），退出码 0。公开函数收成 59 个。采样、纹理、调度、绘制各留一个入口。反射是 `igpu_shader_reflect(` 返回的 `IgpuUniformBlock` 数组。`igpu_init` 仍是三个指针参数。HTML5 / WASM 不能用 extgen，排在本机后端之后；主机排在 HTML5 / WASM 之后。
 比较采样的日志是 `compare sample  : 1 1 0 / 255 | 1 255 / 0 | 1 128 r=128`。参考值 0.5，左纹素 0.25，右纹素 0.75。小于比较是左黑右红，大于比较对调。线性比较在交界处是红 128。
+比较级数的日志是 `compare level    : 1 1 1 0 | 1 255 | 1 0 | 1 255 || 1 255 | 1 255 | 1 0`。第 0 级纹素 0.25，第 1 级是 1.0，参考值 0.5。`SampleCmp` 偏移 0 是黑，偏移 4 是红，最粗锁在第 0 级仍是黑，最细锁在第 1 级是红。`SampleCmpLevelZero` 在这块设备上同样跟着偏移走到红，最细锁在第 1 级也是红。不拉长的 16 倍各向异性比较仍是黑。
 边框色加级数范围的日志是 `border range    : 1 1 1 65280 / 16711935 | 1 255 / 16711935 | 1 65280 || 1 65280 / 16711935 | 1 255 / 16711935`。分开过滤和分轴都一样：偏移 4 时纹理内是绿、边缘外是紫；最粗锁在第 0 级时纹理内是红、边缘外仍是紫。分开过滤把最细锁在第 1 级时纹理内是绿。
 各向异性级数的日志是 `aniso range     : 1 1 1 255 / 1 8388736 | 1 255 | 1 8388736 r=128 b=128`。16 倍、偏移 0 是纯红。偏移 8 是红 128、蓝 128。最粗锁在第 0 级时偏移仍是纯红。最细锁在第 4 级时是同一个平均色。
 级数范围的日志是 `level range     : 1 1 1 255 / 255 | 1 65280`。偏移 4、最粗锁在第 0 级时左右都是红。最细锁在第 1 级时，细足迹变成绿。
