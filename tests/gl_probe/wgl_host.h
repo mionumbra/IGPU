@@ -8,3 +8,7 @@
 bool gl_probe_begin(std::string& error);
 void gl_probe_end();
 void* gl_probe_context();
+
+// Drops the stored HGLRC without deleting it. Call this after the test has
+// deleted the context itself.
+void gl_probe_forget();

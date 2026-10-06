@@ -60,6 +60,11 @@ namespace igpu
             return has_backend() && std::string_view(active_backend()->name()) == "d3d11";
         }
 
+        bool opengl_backend()
+        {
+            return has_backend() && std::string_view(active_backend()->name()) == "opengl";
+        }
+
         // Feature level of the borrowed device; gates the optional states.
         bool device_at_least(D3D_FEATURE_LEVEL level)
         {
@@ -262,9 +267,9 @@ namespace igpu
         case Capability::BackbufferSize: return state().swapchain != nullptr;
 
         // ---- shader compilation ----
-        case Capability::ShaderCompileRuntime: return native;
-        case Capability::ShaderStageVertex:    return native;
-        case Capability::ShaderStagePixel:     return native;
+        case Capability::ShaderCompileRuntime: return native || opengl_backend();
+        case Capability::ShaderStageVertex:    return native || opengl_backend();
+        case Capability::ShaderStagePixel:     return native || opengl_backend();
         case Capability::ShaderStageCompute:   return native;
 
         // Geometry and tessellation are core from D3D feature level 11_0.
@@ -282,7 +287,7 @@ namespace igpu
         // Keep this comment ASCII: MSVC reads the file as code page 936, and a
         // UTF-8 byte of 0x5C in a comment escapes the newline and deletes the
         // next line. That is how Texture2D was compiled out.
-        case Capability::Texture2D:             return native;
+        case Capability::Texture2D:             return native || opengl_backend();
         case Capability::Texture3D:             return native;
         case Capability::TextureArray:          return native;
         case Capability::TextureCubemap:        return native;
@@ -304,8 +309,8 @@ namespace igpu
         // ---- geometry submission ----
         // The input layout and buffer APIs are implemented, so these report
         // true whenever a device is bound.
-        case Capability::InputLayout:   return native;
-        case Capability::VertexBuffer:  return native;
+        case Capability::InputLayout:   return native || opengl_backend();
+        case Capability::VertexBuffer:  return native || opengl_backend();
         case Capability::IndexBuffer:   return native;
         case Capability::UniformBuffer: return native;
         case Capability::BufferResize:  return native;
@@ -318,9 +323,9 @@ namespace igpu
         // topology; the restore still matters for the index buffer, which
         // GameMaker never rebinds, and for any reader of the device in between.
         // A backend that could not read the assembler would report false.
-        case Capability::Draw:             return native;
+        case Capability::Draw:             return native || opengl_backend();
         case Capability::DrawIndexed:      return native;
-        case Capability::DrawStateRestore: return native;
+        case Capability::DrawStateRestore: return native || opengl_backend();
         case Capability::BlendState:       return native;
         case Capability::DepthState:       return native;
         case Capability::RasterState:      return native;

@@ -103,3 +103,8 @@ void* gl_probe_context()
 {
     return g_context;
 }
+
+void gl_probe_forget()
+{
+    g_context = nullptr;
+}
