@@ -12,6 +12,9 @@
 
 #ifndef GL_ARRAY_BUFFER
 #define GL_ARRAY_BUFFER 0x8892
+#define GL_ELEMENT_ARRAY_BUFFER 0x8893
+#define GL_ARRAY_BUFFER_BINDING 0x8894
+#define GL_ELEMENT_ARRAY_BUFFER_BINDING 0x8895
 #define GL_STATIC_DRAW 0x88E4
 #define GL_FRAMEBUFFER 0x8D40
 #define GL_COLOR_ATTACHMENT0 0x8CE0
@@ -29,6 +32,8 @@ namespace igpu
             GLuint id = 0;
             std::int64_t size = 0;
             std::int32_t stride = 0;
+            std::int32_t bind = 0;
+            GLenum target = GL_ARRAY_BUFFER;
         };
 
         struct TextureObject
@@ -100,19 +105,23 @@ namespace igpu
 
     std::int64_t gl_buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind, std::int32_t stride)
     {
-        if (usage != 0 || bind != 1 || size <= 0 || (stride != 0 && stride != 8) || size % 8 != 0)
+        const bool vertex = usage == 0 && bind == 1 && size > 0 && size % 8 == 0 && (stride == 0 || stride == 8);
+        const bool index = usage == 0 && bind == 2 && stride == 0 && size > 0 && size % 2 == 0;
+        if (!vertex && !index)
         {
-            set_last_error("igpu_buffer_create: the opengl backend only accepts a static float2 vertex buffer");
+            set_last_error("igpu_buffer_create: the opengl backend only accepts a static float2 vertex buffer or a static 16-bit index buffer");
             return 0;
         }
         const auto& fns = igpu_gl_fns();
+        const GLenum target = index ? GL_ELEMENT_ARRAY_BUFFER : GL_ARRAY_BUFFER;
         GLuint id = 0;
         fns.GenBuffers(1, &id);
-        fns.BindBuffer(GL_ARRAY_BUFFER, id);
-        fns.BufferData(GL_ARRAY_BUFFER, static_cast<std::ptrdiff_t>(size), nullptr, GL_STATIC_DRAW);
-        fns.BindBuffer(GL_ARRAY_BUFFER, 0);
+        fns.BindBuffer(target, id);
+        fns.BufferData(target, static_cast<std::ptrdiff_t>(size), nullptr, GL_STATIC_DRAW);
+        fns.BindBuffer(target, 0);
         const std::uint64_t handle = g_next_buffer++;
-        g_buffers.emplace(handle, BufferObject{id, size, 8});
+        const std::int32_t stored_stride = vertex ? 8 : 0;
+        g_buffers.emplace(handle, BufferObject{id, size, stored_stride, bind, target});
         return static_cast<std::int64_t>(handle);
     }
 
@@ -130,9 +139,9 @@ namespace igpu
             return false;
         }
         const auto& fns = igpu_gl_fns();
-        fns.BindBuffer(GL_ARRAY_BUFFER, it->second.id);
-        fns.BufferData(GL_ARRAY_BUFFER, static_cast<std::ptrdiff_t>(it->second.size), data.data(), GL_STATIC_DRAW);
-        fns.BindBuffer(GL_ARRAY_BUFFER, 0);
+        fns.BindBuffer(it->second.target, it->second.id);
+        fns.BufferData(it->second.target, static_cast<std::ptrdiff_t>(it->second.size), data.data(), GL_STATIC_DRAW);
+        fns.BindBuffer(it->second.target, 0);
         return true;
     }
 
@@ -249,6 +258,28 @@ namespace igpu
         glReadPixels(x, gl_row, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
         fns.BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous));
         return static_cast<std::int64_t>(pixel[0] | (pixel[1] << 8) | (pixel[2] << 16));
+    }
+
+    bool gl_color_target_begin(std::uint64_t texture, std::int32_t& previous_framebuffer,
+                               std::int32_t previous_viewport[4])
+    {
+        const auto it = g_textures.find(texture);
+        if (it == g_textures.end())
+        {
+            set_last_error("gl_color_target_begin: unknown texture");
+            return false;
+        }
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous_framebuffer);
+        glGetIntegerv(GL_VIEWPORT, previous_viewport);
+        igpu_gl_fns().BindFramebuffer(GL_FRAMEBUFFER, it->second.framebuffer);
+        glViewport(0, 0, it->second.width, it->second.height);
+        return true;
+    }
+
+    void gl_color_target_end(std::int32_t previous_framebuffer, const std::int32_t previous_viewport[4])
+    {
+        igpu_gl_fns().BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous_framebuffer));
+        glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2], previous_viewport[3]);
     }
 
     bool gl_draw_to_render_targets_layer(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
