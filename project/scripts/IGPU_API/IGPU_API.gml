@@ -392,6 +392,9 @@ function igpu_init(_device, _context, _swapchain)
     return __return_value__;
 }
 
+// Skipping function igpu_bind_current (no wrapper is required)
+
+
 // Skipping function igpu_shutdown (no wrapper is required)
 
 

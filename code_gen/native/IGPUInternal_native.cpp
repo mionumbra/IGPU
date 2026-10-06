@@ -34,6 +34,12 @@ GMEXPORT double __EXT_NATIVE__igpu_init(char* __arg_buffer, double __arg_buffer_
     return static_cast<double>(__result);
 }
 
+GMEXPORT double __EXT_NATIVE__igpu_bind_current()
+{
+    auto&& __result = igpu_bind_current();
+    return static_cast<double>(__result);
+}
+
 GMEXPORT double __EXT_NATIVE__igpu_shutdown()
 {
     igpu_shutdown();

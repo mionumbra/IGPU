@@ -94,5 +94,38 @@ if(WIN32)
     spirv-cross-core
     spirv-cross-glsl
     spirv-cross-hlsl)
+
+  # Test-only executable. It is not the GameMaker DLL and must not be copied
+  # into project/extensions/IGPU.
+  file(GLOB IGPU_PROBE_SRCS CONFIGURE_DEPENDS
+      "${SRC_DIR}/native/*.cpp"
+      "${SRC_DIR}/native/d3d11/*.cpp"
+      "${SRC_DIR}/native/gl/*.cpp"
+      "${CMAKE_SOURCE_DIR}/code_gen/core/*.cpp"
+      "${CMAKE_SOURCE_DIR}/code_gen/native/*.cpp")
+  add_executable(igpu_gl_probe
+      "${CMAKE_SOURCE_DIR}/tests/gl_probe/main.cpp"
+      "${CMAKE_SOURCE_DIR}/tests/gl_probe/wgl_host.cpp"
+      ${IGPU_PROBE_SRCS})
+  target_include_directories(igpu_gl_probe PRIVATE
+      "${CMAKE_SOURCE_DIR}/tests/gl_probe"
+      "${SRC_DIR}"
+      "${SRC_DIR}/native"
+      "${CMAKE_SOURCE_DIR}/code_gen"
+      "${CMAKE_SOURCE_DIR}/code_gen/core"
+      ${glslang_SOURCE_DIR})
+  target_compile_definitions(igpu_gl_probe PRIVATE
+      IGPU_HAS_OPENGL=1 OS_WINDOWS EXTGEN_HAS_JNI=0
+      _CRT_SECURE_NO_WARNINGS WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_options(igpu_gl_probe PRIVATE /W4 /permissive-)
+  target_link_libraries(igpu_gl_probe PRIVATE
+      opengl32
+      d3d11 dxgi d3dcompiler dxguid
+      glslang
+      SPIRV
+      glslang-default-resource-limits
+      spirv-cross-core
+      spirv-cross-glsl
+      spirv-cross-hlsl)
 endif()
 

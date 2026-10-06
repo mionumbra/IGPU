@@ -1,13 +1,12 @@
 # IGPU — 交接文档
 
 > 最后更新：2026-10-06
-> 状态：**0.4.0**。公开函数 59 个。Windows D3D11 已跑通像素测试。OpenGL 后端还没写。
-> 版本：`0.4.0`
-> Git：`main` 分支，HEAD `add3cf2`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）
-> **接手第一件事：跑 `pwsh -File tools\verify_handover.ps1`** —— 见 §0
+> 状态：**0.5.0**。公开函数 60 个。Windows D3D11 已跑通像素测试。OpenGL 后端只在探针里，Windows 的 GameMaker DLL 没有它。
+> 版本：`0.5.0`
+> Git：分支 `gl-bind-current`，HEAD `15441b5`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）。未合并、未推送。`main` 仍是 `523e0f3`。
+> **接手第一件事：读 `SESSION_HANDOVER.md` 开头，再跑 `pwsh -File tools\verify_handover.ps1`**
 >
-> 📄 **本次会话（2026-09-23）的交接单在 `SESSION_HANDOVER.md`** ——
-> 三十秒版本、门禁状态、外部依赖、踩过的坑、下一步。**建议先读它。**
+> 📄 **2026-10-06 的交接在 `SESSION_HANDOVER.md` 开头。** OpenGL 第一刀和索引绘制已在探针里落地。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。9 月审计记录仍在该文件下半截。
 >
 > 🔴 本次会话用**真实引擎源码**做了审计，发现并修复了若干问题。
 > 详细结论见 `tools/engine_audit.md`；本文档 §0.0 是摘要。
@@ -126,7 +125,7 @@ extgen --config config.json
 
 当前的优先级是：
 
-1. **规划 OpenGL / OpenGL ES 后端，下一会话先定测试办法，这一会话不写实现。** 这个后端给 Windows 以外的 GameMaker 运行时用。Linux、macOS、Android、iOS、tvOS 上，游戏步进和 GL 上下文在同一条线程，上下文当时已经 current。产品入口不创建、不销毁它。Windows 的 GameMaker 运行时没有 OpenGL，不要为它加 ANGLE，也不要改三个指针的 `igpu_init`。证明 GL 要么在那些平台上跑 GameMaker，要么用一份只属于测试的自建上下文。两条路的分工写在 `SESSION_HANDOVER.md` 开头。
+1. **OpenGL 索引绘制已经在探针里证明。** 8×8 纹理先画成蓝。前 6 个 16 位索引只把左半边画成红 `255`，右半边保持蓝 `16711680`。从索引 6 起再把右半边画成红。Windows 的 GameMaker DLL 仍没有 OpenGL 后端。不要加 ANGLE，也不要改三个指针的 `igpu_init`。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。分工和命令写在 `SESSION_HANDOVER.md` 开头。
 
 接手时先读 `SESSION_HANDOVER.md` 开头。比较采样的偏移、最细、最粗和线性过滤上的各向异性已经在 Direct3D 11 上用像素证明。实例化、间接、面片、画进纹理和采样绘制都会应用并恢复管线状态。
 
@@ -261,12 +260,13 @@ IGPU/
 
 ---
 
-## 4. 当前 API 清单（spec.gmidl，v0.4.0）
+## 4. 当前 API 清单（spec.gmidl，v0.5.0）
 
 ### 生命周期
 - `igpu_init(device : gmval, context : gmval, swapchain : gmval) : bool`
+- `igpu_bind_current() : bool` — 绑定调用线程上已经 current 的 OpenGL 上下文。不创建、不销毁。Windows 这份 GameMaker 构建返回 false，`igpu_get_last_error()` 是 `igpu_bind_current: this build has no OpenGL backend`。已经 `igpu_init` 的 D3D11 设备不会被这次失败丢掉。
 - `igpu_shutdown() : unit`
-- `igpu_version() : string` → `"0.4.0"`
+- `igpu_version() : string` → `"0.5.0"`
 - `igpu_is_available() : bool`
 - `igpu_device_lost() : bool` — 设备被移除或重置后为 true；干净的 `igpu_shutdown()` 不是丢失
 
@@ -764,7 +764,7 @@ PASS
 `checks failed : 1`，进程退出码 1。读回的像素仍是 `255`，
 所以失败的是断言，不是绘制。
 
-当前检查项 **873 项**（`checks failed: 0`），退出码 0。公开函数收成 59 个。采样、纹理、调度、绘制各留一个入口。反射是 `igpu_shader_reflect(` 返回的 `IgpuUniformBlock` 数组。`igpu_init` 仍是三个指针参数。HTML5 / WASM 不能用 extgen，排在本机后端之后；主机排在 HTML5 / WASM 之后。
+当前检查项 **878 项**（`checks failed: 0`），退出码 0。公开函数 60 个。`igpu_bind_current()` 在 Windows 的 GameMaker 构建里失败。采样、纹理、调度、绘制各留一个入口。反射是 `igpu_shader_reflect(` 返回的 `IgpuUniformBlock` 数组。`igpu_init` 仍是三个指针参数。HTML5 / WASM 不能用 extgen，排在本机后端之后；主机排在 HTML5 / WASM 之后。
 比较采样的日志是 `compare sample  : 1 1 0 / 255 | 1 255 / 0 | 1 128 r=128`。参考值 0.5，左纹素 0.25，右纹素 0.75。小于比较是左黑右红，大于比较对调。线性比较在交界处是红 128。
 比较级数的日志是 `compare level    : 1 1 1 0 | 1 255 | 1 0 | 1 255 || 1 255 | 1 255 | 1 0`。第 0 级纹素 0.25，第 1 级是 1.0，参考值 0.5。`SampleCmp` 偏移 0 是黑，偏移 4 是红，最粗锁在第 0 级仍是黑，最细锁在第 1 级是红。`SampleCmpLevelZero` 在这块设备上同样跟着偏移走到红，最细锁在第 1 级也是红。不拉长的 16 倍各向异性比较仍是黑。
 边框色加级数范围的日志是 `border range    : 1 1 1 65280 / 16711935 | 1 255 / 16711935 | 1 65280 || 1 65280 / 16711935 | 1 255 / 16711935`。分开过滤和分轴都一样：偏移 4 时纹理内是绿、边缘外是紫；最粗锁在第 0 级时纹理内是红、边缘外仍是紫。分开过滤把最细锁在第 1 级时纹理内是绿。

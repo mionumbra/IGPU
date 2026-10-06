@@ -146,6 +146,10 @@ namespace igpu
         // reason after the original error string has been cleared.
         std::string device_lost_detail;
 
+        // Filled by a bound OpenGL context. Empty while Direct3D is bound.
+        std::string renderer_name;
+        std::string gl_dialect;
+
         void reset();
     };
 
@@ -173,6 +177,9 @@ namespace igpu
     DeviceState::TextureEntry* find_texture(std::uint64_t handle);
 
     bool bind_device(ID3D11Device* device, ID3D11DeviceContext* context, IDXGISwapChain* swapchain);
+#if defined(IGPU_HAS_OPENGL)
+    bool bind_current_context();
+#endif
     void release_all();
 
     void refresh_backbuffer_size();

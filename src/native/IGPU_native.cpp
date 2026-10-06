@@ -24,7 +24,7 @@ using namespace gm_enums;
 
 namespace
 {
-    constexpr const char* kIgpuVersion = "0.4.0";
+    constexpr const char* kIgpuVersion = "0.5.0";
 
 }
 
@@ -49,6 +49,16 @@ bool igpu_init(
     auto* swapchain_ptr = static_cast<IDXGISwapChain*>(read_pointer(swapchain));
 
     return igpu::bind_device(device_ptr, context_ptr, swapchain_ptr);
+}
+
+bool igpu_bind_current()
+{
+#if defined(IGPU_HAS_OPENGL)
+    return igpu::bind_current_context();
+#else
+    igpu::set_last_error("igpu_bind_current: this build has no OpenGL backend");
+    return false;
+#endif
 }
 
 void igpu_shutdown()
@@ -76,7 +86,7 @@ bool igpu_device_lost()
 std::int32_t igpu_get_feature_level()
 {
     const auto& s = igpu::state();
-    if (!s.initialised)
+    if (!s.initialised || s.device == nullptr)
     {
         return static_cast<std::int32_t>(IgpuFeatureLevel::Unknown);
     }
@@ -100,6 +110,10 @@ std::string igpu_get_adapter_description()
     if (s.adapter_desc_valid)
     {
         return igpu::narrow(s.adapter_desc.Description);
+    }
+    if (!s.renderer_name.empty())
+    {
+        return s.renderer_name;
     }
     return igpu::probed_device_name();
 }

@@ -97,6 +97,9 @@ show_debug_message("========================================");
 show_debug_message("extension_exists : " + string(extension_exists("IGPU")));
 show_debug_message("igpu_version     : " + string(igpu_version()));
 
+_igpu_check(!igpu_bind_current(), "windows build rejects igpu_bind_current before init");
+_igpu_check(igpu_get_last_error() == "igpu_bind_current: this build has no OpenGL backend", "windows build names the missing opengl backend");
+
 _igpu_ok = igpu_init_from_game();
 show_debug_message("igpu_init result : " + string(_igpu_ok));
 
@@ -114,6 +117,9 @@ show_debug_message("video memory     : " + string(igpu_get_video_memory()));
 show_debug_message("backbuffer       : " + string(igpu_get_backbuffer_width()) + " x " + string(igpu_get_backbuffer_height()));
 
 _igpu_check(igpu_is_available(), "igpu_is_available");
+_igpu_check(!igpu_bind_current(), "windows build rejects igpu_bind_current after d3d11 init");
+_igpu_check(igpu_get_last_error() == "igpu_bind_current: this build has no OpenGL backend", "a failed bind leaves the d3d11 error text");
+_igpu_check(igpu_get_capabilities().backend == "d3d11", "a failed opengl bind keeps the d3d11 device");
 _igpu_check(!igpu_device_lost(), "a live device is not reported lost");
 _igpu_check(igpu_get_backbuffer_width() > 0, "backbuffer width > 0");
 _igpu_check(igpu_get_backbuffer_height() > 0, "backbuffer height > 0");

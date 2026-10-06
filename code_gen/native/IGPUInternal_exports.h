@@ -7,6 +7,7 @@
 GMEXPORT double __EXT_NATIVE__IGPU_queue_buffer(char* __arg_buffer, double __arg_buffer_length);
 
 GMEXPORT double __EXT_NATIVE__igpu_init(char* __arg_buffer, double __arg_buffer_length);
+GMEXPORT double __EXT_NATIVE__igpu_bind_current();
 GMEXPORT double __EXT_NATIVE__igpu_shutdown();
 GMEXPORT char* __EXT_NATIVE__igpu_version();
 GMEXPORT double __EXT_NATIVE__igpu_is_available();

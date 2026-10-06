@@ -125,6 +125,8 @@ namespace igpu
         initialised = false;
         device_lost = false;
         device_lost_detail.clear();
+        renderer_name.clear();
+        gl_dialect.clear();
     }
 
     DeviceState& state()
@@ -242,7 +244,7 @@ namespace igpu
             return false;
         }
 
-        if (!s.initialised || s.device == nullptr || s.context == nullptr)
+        if (!s.initialised || active_backend() == nullptr)
         {
             set_last_error(std::string(entry) + ": call igpu_init() first");
             return false;
