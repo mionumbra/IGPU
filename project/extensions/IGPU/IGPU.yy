@@ -44,6 +44,21 @@
         },
         {
           "$GMExtensionFunction": "",
+          "%Name": "igpu_bind_current",
+          "argCount": 0,
+          "args": [],
+          "documentation": "@returns {Real}",
+          "externalName": "__EXT_NATIVE__igpu_bind_current",
+          "help": "",
+          "hidden": false,
+          "kind": 4,
+          "name": "igpu_bind_current",
+          "resourceType": "GMExtensionFunction",
+          "resourceVersion": "2.0",
+          "returnType": 2
+        },
+        {
+          "$GMExtensionFunction": "",
           "%Name": "igpu_shutdown",
           "argCount": 0,
           "args": [],

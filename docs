@@ -8,6 +8,12 @@
  */
 
 /**
+ * @function_partial igpu_bind_current
+ * @returns {Bool}
+ * @function_end
+ */
+
+/**
  * @function_partial igpu_shutdown
  * @function_end
  */

@@ -1,4 +1,4 @@
-# 会话交接 — 2026-10-06 — 版本 0.4.0
+# 会话交接 — 2026-10-06 — 版本 0.5.0
 
 > 先读这一节。`HANDOVER.md` 是长文档，开头版本号是 0.4.0，正文里 9 月的叙述已经过时。文末仍保留 2026-09-23 审计记录。
 >
@@ -6,15 +6,17 @@
 
 ## 这一版是什么
 
-`0.4.0` 把公开函数从 105 个收到 59 个。一个概念一个函数。Windows D3D11 上集成测试 `checks failed : 0`，当前检查项 **873** 项。`igpu_version()` 返回 `0.4.0`。
+`0.4.0` 把公开函数从 105 个收到 59 个。`0.5.0` 加上 `igpu_bind_current()`，公开函数 60 个。一个概念一个函数。Windows D3D11 上集成测试 `checks failed : 0`，当前检查项 **878** 项。`igpu_version()` 返回 `0.5.0`。
 
 `igpu_init(device, context, swapchain)` 仍是三个 `gmval` 指针。不要把指针塞进 GMIDL 类的 `gmval` 字段：本机 extgen `v1.d8c68bd` 会把那种字段生成成 `DataStream`，而 `readValue<DataStream>` 编不过。要让它编过就得改生成文件，下次跑 extgen 会盖掉。反射用的是具体字段的类 `IgpuUniformMember` / `IgpuUniformBlock`，那个能生成可读的 C++ 结构体。
 
 生成物只由 extgen 重写：`code_gen/`、`project/scripts/IGPU_API/IGPU_API.gml`、`project/extensions/IGPU/IGPU.yy`、根上的 `docs` 文件。不要手改它们。
 
-## 下一会话只规划，先不写代码
+## OpenGL 第一刀正在做
 
 下一阶段是 OpenGL / OpenGL ES 后端。这个后端不是给 Windows 上的 GameMaker 准备的。GMS2 Runtime 在 Windows 上走 Direct3D 11；OpenGL 是 Windows 以外那些目标的渲染后端。不要为了让 Windows 的 `gm-cli` 跑到 GL 而加 ANGLE，也不要把 GL 塞进 `igpu_init(device, context, swapchain)`。
+
+测试办法已经选定：Windows 的 GameMaker DLL 不编译 OpenGL。`igpu_bind_current()` 在这份构建里失败，错误是 `igpu_bind_current: this build has no OpenGL backend`。证明 GL 的是 `tests/gl_probe`，它自己创建 WGL 上下文，测完销毁。那个上下文不进公开入口。
 
 HTML5 / WASM（含 GX.games）仍排在本机后端之后，要单独写 JavaScript。主机（Xbox、PS4、PS5、Switch）排在 HTML5 / WASM 之后。extgen schema 里有主机槽位，现在不启用。
 
@@ -31,13 +33,13 @@ Linux、macOS、Android、iOS、tvOS 不交指针。游戏步进和 GL 上下文
 - Linux：`TFormM.cpp` 用 `glXCreateContext` 建旧式 GLX，不请求版本。`glXMakeCurrent` 之后同线程进入 `MainLoop_Process`。
 - macOS：`YYGLView.mm` 请求 `NSOpenGLProfileVersionLegacy`。`performGameStep` 先 `beginRender`，那里 `makeCurrentContext`。
 
-因此产品入口仍然是：无指针，绑定这条线程上已经 current 的上下文，不创建、不销毁它。这个函数还没进 `spec.gmidl`。公开函数仍是 59 个。Windows 的 GameMaker 构建里，这个入口应当失败，并写明这份构建没有 OpenGL 后端。
+因此产品入口是：无指针，绑定这条线程上已经 current 的上下文，不创建、不销毁它。函数是 `igpu_bind_current()`。公开函数 60 个。Windows 的 GameMaker 构建里，这个入口失败，并写明这份构建没有 OpenGL 后端。
 
 ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓冲块和三维纹理不会为 true。立方体贴图在 ES 2 里有。多目标和实例化取决于扩展字符串。`glsl_es` 不带版本号。源码和上下文对不上时编译失败。
 
-### 下一会话要先定的测试办法
+### 测试办法
 
-这台 Windows 机器上的 `gm-cli` 只能证明 D3D11。它证明不了 GL，因为 Windows 的 GameMaker 运行时不用 OpenGL。下一会话先选定怎么证明 GL，再写实现。两条路都合法，可以并存，但职责不能混：
+这台 Windows 机器上的 `gm-cli` 只能证明 D3D11。它证明不了 GL，因为 Windows 的 GameMaker 运行时不用 OpenGL。证明 GL 用探针自建的上下文。两条路都合法，可以并存，但职责不能混：
 
 1. **其他平台上的 GameMaker 运行。** Linux、macOS、Android、iOS、tvOS 里至少一条。扩展函数跑在引擎已经 current 的上下文里。这是产品路径的证据。`config.json` 要打开对应目标，构建不能只靠现在的 `win-x64-release-vs18`。
 2. **临时自建的上下文，只用于测试。** 在有 GL 驱动的机器上自己创建上下文、自己 `MakeCurrent`、跑不经过 GameMaker 的本机测试，测完销毁。它不能成为公开的 `igpu_init`，不能链进 Windows 的 GameMaker 绘制，也不能留下来冒充那些平台的运行时。产品代码仍然只借用已经 current 的上下文。
@@ -69,9 +71,9 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 
 | 项 | 值 |
 |---|---|
-| 版本 | 0.4.0 |
-| 检查 | **873** 项，`checks failed: 0` |
-| spec 函数 | 59 |
+| 版本 | 0.5.0 |
+| 检查 | **878** 项，`checks failed: 0` |
+| spec 函数 | 60 |
 | 能力键 | 35 |
 | `tools\verify_handover.ps1` | exit 0 |
 | 测试 GPU | AMD Radeon Vega 8，功能级别 11_0 |

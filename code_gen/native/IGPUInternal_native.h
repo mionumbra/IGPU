@@ -254,6 +254,7 @@ namespace gm::wire::details
 }
 
 bool igpu_init(const gm::wire::GMValue& device, const gm::wire::GMValue& context, const gm::wire::GMValue& swapchain);
+bool igpu_bind_current();
 void igpu_shutdown();
 std::string igpu_version();
 bool igpu_is_available();

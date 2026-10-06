@@ -48,6 +48,13 @@ module IGPU;
 [global, bind = typed_gml]
 function igpu_init(device : gmval, context : gmval, swapchain : gmval) : bool;
 
+// Binds the OpenGL context that is already current on this thread.
+// Does not create a context, does not destroy one, and does not accept
+// device pointers. A build without an OpenGL backend returns false and
+// sets an error. It must not drop a device already bound with igpu_init.
+[global, bind = typed_gml]
+function igpu_bind_current() : bool;
+
 [global, bind = typed_gml]
 function igpu_shutdown() : unit;
 
