@@ -146,6 +146,10 @@ namespace igpu
         // reason after the original error string has been cleared.
         std::string device_lost_detail;
 
+        // Filled by a bound OpenGL context. Empty while Direct3D is bound.
+        std::string renderer_name;
+        std::string gl_dialect;
+
         void reset();
     };
 

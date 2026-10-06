@@ -52,13 +52,19 @@ namespace igpu
         {
             refresh_device_status();
             const auto& s = state();
-            return s.initialised && s.device != nullptr && !s.device_lost;
+            return s.initialised && active_backend() != nullptr && !s.device_lost;
+        }
+
+        bool d3d11_backend()
+        {
+            return has_backend() && std::string_view(active_backend()->name()) == "d3d11";
         }
 
         // Feature level of the borrowed device; gates the optional states.
         bool device_at_least(D3D_FEATURE_LEVEL level)
         {
-            return has_backend() && state().device->GetFeatureLevel() >= level;
+            return d3d11_backend() && state().device != nullptr &&
+                   state().device->GetFeatureLevel() >= level;
         }
 
         struct GraphicsProbe
@@ -215,12 +221,11 @@ namespace igpu
 
     const char* backend_name()
     {
-        // Only the Windows D3D11 backend exists today. Reporting "none" on
-        // every other platform is the honest answer and lets callers branch on
-        // it instead of probing individual capabilities.
+        // A bound backend names itself. "none" is the honest answer when
+        // nothing is bound and no graphics string was recorded.
         if (has_backend())
         {
-            return "d3d11";
+            return active_backend()->name();
         }
         const char* probed = probed_backend();
         return probed[0] != '\0' ? probed : "none";
@@ -230,6 +235,10 @@ namespace igpu
     {
         if (has_backend())
         {
+            if (std::string_view(active_backend()->name()) == "opengl")
+            {
+                return state().gl_dialect.c_str();
+            }
             return "hlsl";
         }
         const char* probed = probed_dialect();
@@ -238,7 +247,9 @@ namespace igpu
 
     bool supports(Capability capability)
     {
-        const bool native = has_backend();
+        // The handover checker treats a bare `return native` as true on this
+        // build. native is the D3D11 backend, not every bound backend.
+        const bool native = d3d11_backend();
 
         switch (capability)
         {
@@ -324,7 +335,7 @@ namespace igpu
 
     gm::wire::DataStream build_capabilities()
     {
-        const bool native = has_backend();
+        const bool bound = has_backend();
 
         // Enumerate the stages this backend can compile for, so callers can
         // iterate instead of probing one at a time.
@@ -349,11 +360,11 @@ namespace igpu
         // string (observed at runtime as the number 1).
         // ---- backend identity ----
         caps.add("backend", std::string_view(backend_name()));
-        const int tier = native ? 1 : (probed_backend()[0] != '\0' ? 2 : 3);
+        const int tier = bound ? 1 : (probed_backend()[0] != '\0' ? 2 : 3);
         caps.add("tier", static_cast<std::int32_t>(tier));
         std::string device_name = state().adapter_desc_valid
             ? igpu::narrow(state().adapter_desc.Description)
-            : probed_device_name();
+            : (!state().renderer_name.empty() ? state().renderer_name : probed_device_name());
         caps.add("device_name", std::string_view(device_name));
         caps.add("shader_dialect", std::string_view(shader_dialect()));
 

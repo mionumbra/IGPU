@@ -86,7 +86,7 @@ bool igpu_device_lost()
 std::int32_t igpu_get_feature_level()
 {
     const auto& s = igpu::state();
-    if (!s.initialised)
+    if (!s.initialised || s.device == nullptr)
     {
         return static_cast<std::int32_t>(IgpuFeatureLevel::Unknown);
     }
@@ -110,6 +110,10 @@ std::string igpu_get_adapter_description()
     if (s.adapter_desc_valid)
     {
         return igpu::narrow(s.adapter_desc.Description);
+    }
+    if (!s.renderer_name.empty())
+    {
+        return s.renderer_name;
     }
     return igpu::probed_device_name();
 }
