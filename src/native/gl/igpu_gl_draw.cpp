@@ -71,6 +71,32 @@ namespace igpu
             }
             return false;
         }
+
+        void bind_vertices(const BufferObject& buffer, std::int64_t pointer_vertex)
+        {
+            const auto& fns = igpu_gl_fns();
+            const auto base = static_cast<std::uintptr_t>(pointer_vertex * buffer.stride);
+            fns.EnableVertexAttribArray(0);
+            fns.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, buffer.stride,
+                                    reinterpret_cast<const void*>(base));
+            if (buffer.stride == 12)
+            {
+                fns.EnableVertexAttribArray(1);
+                fns.VertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, buffer.stride,
+                                        reinterpret_cast<const void*>(base + 8));
+            }
+            else
+            {
+                fns.DisableVertexAttribArray(1);
+            }
+        }
+
+        void unbind_vertices()
+        {
+            const auto& fns = igpu_gl_fns();
+            fns.DisableVertexAttribArray(0);
+            fns.DisableVertexAttribArray(1);
+        }
     }
 
     void gl_resources_release()
@@ -105,22 +131,23 @@ namespace igpu
 
     std::int64_t gl_buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind, std::int32_t stride)
     {
-        const bool vertex = usage == 0 && bind == 1 && size > 0 && size % 8 == 0 && (stride == 0 || stride == 8);
+        const bool position = usage == 0 && bind == 1 && size > 0 && size % 8 == 0 && (stride == 0 || stride == 8);
+        const bool coloured = usage == 0 && bind == 1 && size > 0 && size % 12 == 0 && stride == 12;
         const bool index = usage == 0 && bind == 2 && stride == 0 && size > 0 && size % 2 == 0;
-        if (!vertex && !index)
+        if (!position && !coloured && !index)
         {
-            set_last_error("igpu_buffer_create: the opengl backend only accepts a static float2 vertex buffer or a static 16-bit index buffer");
+            set_last_error("igpu_buffer_create: the opengl backend only accepts a static float2 vertex buffer, a static position-and-colour vertex buffer, or a static 16-bit index buffer");
             return 0;
         }
         const auto& fns = igpu_gl_fns();
         const GLenum target = index ? GL_ELEMENT_ARRAY_BUFFER : GL_ARRAY_BUFFER;
+        const std::int32_t stored_stride = index ? 0 : (coloured ? 12 : 8);
         GLuint id = 0;
         fns.GenBuffers(1, &id);
         fns.BindBuffer(target, id);
         fns.BufferData(target, static_cast<std::ptrdiff_t>(size), nullptr, GL_STATIC_DRAW);
         fns.BindBuffer(target, 0);
         const std::uint64_t handle = g_next_buffer++;
-        const std::int32_t stored_stride = vertex ? 8 : 0;
         g_buffers.emplace(handle, BufferObject{id, size, stored_stride, bind, target});
         return static_cast<std::int64_t>(handle);
     }
@@ -163,23 +190,33 @@ namespace igpu
                                         std::int32_t element_count, std::int32_t vertex_stride,
                                         std::int32_t instance_stride)
     {
-        if (shader == 0 || element_count != 1 || instance_stride != 0 || (vertex_stride != 0 && vertex_stride != 8) ||
-            usage.size() < 1 || type.size() < 1 || step.size() < 1)
+        if (shader == 0 || instance_stride != 0)
         {
-            set_last_error("igpu_input_layout_create: the opengl backend only accepts a single float2 position");
+            set_last_error("igpu_input_layout_create: the opengl backend only accepts a float2 position, or a float2 position followed by a colour");
             return 0;
         }
-        std::int64_t usage_value = 0;
-        std::int64_t type_value = 0;
-        std::int64_t step_value = 0;
-        if (!read_i64(usage[0], usage_value) || !read_i64(type[0], type_value) || !read_i64(step[0], step_value) ||
-            usage_value != 1 || type_value != 2 || step_value != 0)
+        auto element_is = [&](std::size_t index, std::int64_t expect_usage, std::int64_t expect_type) {
+            if (usage.size() <= index || type.size() <= index || step.size() <= index)
+            {
+                return false;
+            }
+            std::int64_t usage_value = 0;
+            std::int64_t type_value = 0;
+            std::int64_t step_value = 0;
+            return read_i64(usage[index], usage_value) && read_i64(type[index], type_value) &&
+                   read_i64(step[index], step_value) && usage_value == expect_usage && type_value == expect_type &&
+                   step_value == 0;
+        };
+        const bool position = element_count == 1 && (vertex_stride == 0 || vertex_stride == 8) && element_is(0, 1, 2);
+        const bool coloured = element_count == 2 && (vertex_stride == 0 || vertex_stride == 12) &&
+                              element_is(0, 1, 2) && element_is(1, 2, 5);
+        if (!position && !coloured)
         {
-            set_last_error("igpu_input_layout_create: the opengl backend only accepts a single float2 position");
+            set_last_error("igpu_input_layout_create: the opengl backend only accepts a float2 position, or a float2 position followed by a colour");
             return 0;
         }
         const std::uint64_t handle = g_next_layout++;
-        g_layouts.emplace(handle, 1);
+        g_layouts.emplace(handle, coloured ? 12 : 8);
         return static_cast<std::int64_t>(handle);
     }
 
@@ -315,9 +352,15 @@ namespace igpu
         }
         const auto texture = g_textures.find(static_cast<std::uint64_t>(target));
         const auto buffer = g_buffers.find(vertex_buffer);
-        if (texture == g_textures.end() || buffer == g_buffers.end() || g_layouts.find(layout) == g_layouts.end())
+        if (texture == g_textures.end() || buffer == g_buffers.end())
         {
             set_last_error("igpu_draw_to_render_targets: unknown buffer, layout, or texture");
+            return false;
+        }
+        const auto layout_it = g_layouts.find(layout);
+        if (layout_it == g_layouts.end() || layout_it->second != buffer->second.stride)
+        {
+            set_last_error("igpu_draw_to_render_targets: the vertex buffer stride does not match the input layout");
             return false;
         }
         if (buffer->second.bind != 1)
@@ -352,11 +395,9 @@ namespace igpu
         fns.BindFramebuffer(GL_FRAMEBUFFER, texture->second.framebuffer);
         glViewport(0, 0, texture->second.width, texture->second.height);
         fns.BindBuffer(GL_ARRAY_BUFFER, buffer->second.id);
-        fns.EnableVertexAttribArray(0);
-        fns.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, buffer->second.stride,
-                                reinterpret_cast<const void*>(static_cast<std::uintptr_t>(first_vertex * buffer->second.stride)));
+        bind_vertices(buffer->second, first_vertex);
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertex_count));
-        fns.DisableVertexAttribArray(0);
+        unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, 0);
         glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2], previous_viewport[3]);
         fns.BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous_fbo));
@@ -379,9 +420,15 @@ namespace igpu
             return false;
         }
         const auto vertex = g_buffers.find(vertex_buffer);
-        if (vertex == g_buffers.end() || g_layouts.find(layout) == g_layouts.end())
+        if (vertex == g_buffers.end())
         {
             set_last_error("igpu_draw: unknown buffer or layout");
+            return false;
+        }
+        const auto layout_it = g_layouts.find(layout);
+        if (layout_it == g_layouts.end() || layout_it->second != vertex->second.stride)
+        {
+            set_last_error("igpu_draw: the vertex buffer stride does not match the input layout");
             return false;
         }
         if (vertex->second.bind != 1 || vertex->second.stride <= 0)
@@ -421,10 +468,9 @@ namespace igpu
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
         fns.BindVertexArray(g_vertex_array);
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
-        fns.EnableVertexAttribArray(0);
-        fns.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, vertex->second.stride, nullptr);
+        bind_vertices(vertex->second, 0);
         glDrawArrays(GL_TRIANGLES, static_cast<GLint>(first_vertex), static_cast<GLsizei>(vertex_count));
-        fns.DisableVertexAttribArray(0);
+        unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindVertexArray(0);
         return true;
@@ -447,9 +493,15 @@ namespace igpu
         }
         const auto vertex = g_buffers.find(vertex_buffer);
         const auto index = g_buffers.find(index_buffer);
-        if (vertex == g_buffers.end() || index == g_buffers.end() || g_layouts.find(layout) == g_layouts.end())
+        if (vertex == g_buffers.end() || index == g_buffers.end())
         {
             set_last_error("igpu_draw_indexed: unknown buffer or layout");
+            return false;
+        }
+        const auto layout_it = g_layouts.find(layout);
+        if (layout_it == g_layouts.end() || layout_it->second != vertex->second.stride)
+        {
+            set_last_error("igpu_draw_indexed: the vertex buffer stride does not match the input layout");
             return false;
         }
         if (vertex->second.bind != 1)
@@ -497,12 +549,11 @@ namespace igpu
         glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &previous_element);
         fns.BindVertexArray(g_vertex_array);
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
-        fns.EnableVertexAttribArray(0);
-        fns.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, vertex->second.stride, nullptr);
+        bind_vertices(vertex->second, 0);
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, index->second.id);
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(index_count), GL_UNSIGNED_SHORT,
                        reinterpret_cast<const void*>(static_cast<std::uintptr_t>(first_index * kIndexSize)));
-        fns.DisableVertexAttribArray(0);
+        unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(previous_element));
         fns.BindVertexArray(0);

@@ -573,6 +573,270 @@ int main()
         return fail("vertex_count -1 did not paint only the right half");
     }
 
+    const auto encode_i32_2 = [](std::int32_t first, std::int32_t second) {
+        std::vector<std::byte> bytes(12);
+        bytes[0] = std::byte{2};
+        bytes[1] = std::byte{0};
+        bytes[2] = std::byte{6};
+        std::memcpy(bytes.data() + 3, &first, 4);
+        bytes[7] = std::byte{6};
+        std::memcpy(bytes.data() + 8, &second, 4);
+        return bytes;
+    };
+
+    const char* colour_vs =
+        "#version 120\n"
+        "attribute vec2 in_pos;\n"
+        "attribute vec4 in_colour;\n"
+        "varying vec4 v_colour;\n"
+        "void main() {\n"
+        "  gl_Position = vec4(in_pos, 0.0, 1.0);\n"
+        "  v_colour = in_colour;\n"
+        "}\n";
+    const char* colour_ps =
+        "#version 120\n"
+        "varying vec4 v_colour;\n"
+        "void main() { gl_FragColor = v_colour; }\n";
+    const auto colour_vert = igpu_shader_compile(colour_vs, "main", 0, "glsl");
+    const auto colour_frag = igpu_shader_compile(colour_ps, "main", 1, "glsl");
+    if (colour_vert == 0 || colour_frag == 0 ||
+        !igpu_shader_bind(colour_vert, 0) || !igpu_shader_bind(colour_frag, 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+
+    struct ColourVertex
+    {
+        float x;
+        float y;
+        unsigned char r;
+        unsigned char g;
+        unsigned char b;
+        unsigned char a;
+    };
+    static_assert(sizeof(ColourVertex) == 12, "colour vertex must be tightly packed");
+    const float colour_pos[] = {
+        -1.f, -1.f, 0.f, -1.f, -1.f, 1.f, -1.f, 1.f, 0.f, -1.f, 0.f, 1.f,
+        0.f, -1.f, 1.f, -1.f, 0.f, 1.f, 0.f, 1.f, 1.f, -1.f, 1.f, 1.f,
+    };
+    ColourVertex colour_vertices[12] = {};
+    for (int i = 0; i < 12; ++i)
+    {
+        colour_vertices[i].x = colour_pos[i * 2];
+        colour_vertices[i].y = colour_pos[i * 2 + 1];
+        const bool left = i < 6;
+        colour_vertices[i].r = left ? 255 : 0;
+        colour_vertices[i].g = 0;
+        colour_vertices[i].b = left ? 0 : 255;
+        colour_vertices[i].a = 255;
+    }
+    const auto colour_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(colour_vertices)), 0, 1, 12);
+    if (colour_buffer == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(colour_buffer), 0,
+                           gm::wire::GMBuffer(colour_vertices, sizeof(colour_vertices))))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto colour_usage = encode_i32_2(1, 2);
+    const auto colour_type = encode_i32_2(2, 5);
+    const auto colour_step = encode_i32_2(0, 0);
+    const auto colour_layout = igpu_input_layout_create(
+        colour_vert, as_array(colour_usage), as_array(colour_type), as_array(colour_step), 2, 12, 0);
+    if (colour_layout == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto reversed_usage = encode_i32_2(2, 1);
+    const auto reversed_type = encode_i32_2(5, 2);
+    if (igpu_input_layout_create(colour_vert, as_array(reversed_usage), as_array(reversed_type),
+                                 as_array(colour_step), 2, 12, 0) != 0)
+    {
+        return fail("colour-before-position layout was accepted");
+    }
+
+    const auto colour_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (colour_texture == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    auto colour_pixels_are = [&](std::int64_t left, std::int64_t right, const char* label) {
+        const auto got_left = igpu_texture_read(static_cast<std::uint64_t>(colour_texture), 1, 4, 0, 0);
+        const auto got_right = igpu_texture_read(static_cast<std::uint64_t>(colour_texture), 6, 4, 0, 0);
+        if (got_left != left || got_right != right)
+        {
+            std::fprintf(stderr, "%s left=%lld right=%lld\n", label,
+                         static_cast<long long>(got_left), static_cast<long long>(got_right));
+            return false;
+        }
+        return true;
+    };
+    if (!colour_pixels_are(0, 0, "fresh colour texture"))
+    {
+        return fail("fresh colour texture was not clear black");
+    }
+
+    std::int32_t colour_saved_fbo = 0;
+    std::int32_t colour_held_viewport[4] = {};
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(colour_texture), colour_saved_fbo, colour_held_viewport))
+    {
+        return fail("colour target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(full_buffer), 0, static_cast<std::uint64_t>(colour_layout),
+                  4, 0, 6, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+        return fail("float2 buffer was accepted by a colour layout");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(colour_buffer), 0, static_cast<std::uint64_t>(layout),
+                  4, 0, 6, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+        return fail("colour buffer was accepted by a float2 layout");
+    }
+    if (!colour_pixels_are(0, 0, "rejected colour draw"))
+    {
+        igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+        return fail("a rejected colour draw changed pixels");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(colour_buffer), 0, static_cast<std::uint64_t>(colour_layout),
+                   4, 0, 12, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+    const auto colour_left = igpu_texture_read(static_cast<std::uint64_t>(colour_texture), 1, 4, 0, 0);
+    const auto colour_right = igpu_texture_read(static_cast<std::uint64_t>(colour_texture), 6, 4, 0, 0);
+    std::printf("colour pixels  : %lld / %lld\n", static_cast<long long>(colour_left),
+                static_cast<long long>(colour_right));
+    if (colour_left != 255 || colour_right != 16711680)
+    {
+        return fail("vertex colour did not paint red on the left and blue on the right");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(colour_texture), colour_saved_fbo, colour_held_viewport))
+    {
+        return fail("colour leak target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(full_buffer), 0, static_cast<std::uint64_t>(layout),
+                   4, 0, 6, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+    const auto leak_left = igpu_texture_read(static_cast<std::uint64_t>(colour_texture), 1, 4, 0, 0);
+    const auto leak_right = igpu_texture_read(static_cast<std::uint64_t>(colour_texture), 6, 4, 0, 0);
+    std::printf("colour tail    : %lld / %lld\n", static_cast<long long>(leak_left),
+                static_cast<long long>(leak_right));
+    if (leak_left != 0 || leak_right != 0)
+    {
+        return fail("position-only draw left the colour attribute enabled");
+    }
+
+    ColourVertex alpha_vertices[6] = {};
+    for (int i = 0; i < 6; ++i)
+    {
+        alpha_vertices[i].x = colour_pos[i * 2];
+        alpha_vertices[i].y = colour_pos[i * 2 + 1];
+        alpha_vertices[i].r = 255;
+        alpha_vertices[i].a = 0;
+    }
+    const auto alpha_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(alpha_vertices)), 0, 1, 12);
+    const auto alpha_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (alpha_buffer == 0 || alpha_texture == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(alpha_buffer), 0,
+                           gm::wire::GMBuffer(alpha_vertices, sizeof(alpha_vertices))))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(alpha_texture), colour_saved_fbo, colour_held_viewport))
+    {
+        return fail("alpha target begin failed");
+    }
+    if (glIsEnabled(0x0BE2) == GL_TRUE)
+    {
+        igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+        return fail("the probe context already had blending enabled");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(alpha_buffer), 0, static_cast<std::uint64_t>(colour_layout),
+                   4, 0, 6, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (glIsEnabled(0x0BE2) == GL_TRUE)
+    {
+        igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+        return fail("igpu_draw enabled blending");
+    }
+    igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+    const auto alpha_pixel = igpu_texture_read(static_cast<std::uint64_t>(alpha_texture), 1, 4, 0, 0);
+    std::printf("colour alpha   : %lld\n", static_cast<long long>(alpha_pixel));
+    if (alpha_pixel != 255)
+    {
+        return fail("alpha 0 did not write red");
+    }
+
+    unsigned short colour_indices[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    const auto colour_index_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(colour_indices)), 0, 2, 0);
+    const auto indexed_colour_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (colour_index_buffer == 0 || indexed_colour_texture == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(colour_index_buffer), 0,
+                           gm::wire::GMBuffer(colour_indices, sizeof(colour_indices))))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(indexed_colour_texture), colour_saved_fbo,
+                                     colour_held_viewport))
+    {
+        return fail("indexed colour target begin failed");
+    }
+    if (!igpu_draw_indexed(static_cast<std::uint64_t>(colour_buffer), static_cast<std::uint64_t>(colour_layout),
+                           static_cast<std::uint64_t>(colour_index_buffer), 4, 0, 6, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_draw_indexed(static_cast<std::uint64_t>(colour_buffer), static_cast<std::uint64_t>(colour_layout),
+                           static_cast<std::uint64_t>(colour_index_buffer), 4, 6, -1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
+    const auto colour_indexed_left = igpu_texture_read(static_cast<std::uint64_t>(indexed_colour_texture), 1, 4, 0, 0);
+    const auto colour_indexed_right = igpu_texture_read(static_cast<std::uint64_t>(indexed_colour_texture), 6, 4, 0, 0);
+    std::printf("colour indexed : %lld / %lld\n", static_cast<long long>(colour_indexed_left),
+                static_cast<long long>(colour_indexed_right));
+    if (colour_indexed_left != 255 || colour_indexed_right != 16711680)
+    {
+        return fail("indexed vertex colour did not paint red then blue");
+    }
+
+    const auto colour_target_bytes = encode_u64(static_cast<std::uint64_t>(colour_texture));
+    const auto colour_zero_bytes = encode_u64(0);
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(colour_buffer),
+                                     static_cast<std::uint64_t>(colour_layout), 4, 6, 6,
+                                     as_array(colour_target_bytes), as_array(colour_zero_bytes),
+                                     as_array(colour_zero_bytes), 0, 0, 0, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto target_left = igpu_texture_read(static_cast<std::uint64_t>(colour_texture), 1, 4, 0, 0);
+    const auto target_right = igpu_texture_read(static_cast<std::uint64_t>(colour_texture), 6, 4, 0, 0);
+    std::printf("colour target  : %lld / %lld\n", static_cast<long long>(target_left),
+                static_cast<long long>(target_right));
+    if (target_left != 0 || target_right != 16711680)
+    {
+        return fail("draw-to-targets did not take the colour from vertex 6");
+    }
+
+    if (!igpu_shader_bind(vert, 0) || !igpu_shader_bind(frag, 1))
+    {
+        return fail("could not restore the constant red shader");
+    }
+
     if (igpu_texture_read(static_cast<std::uint64_t>(texture), 0, 0, 0, 0) != 255)
     {
         return fail("igpu_draw changed the first texture");
