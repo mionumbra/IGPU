@@ -699,7 +699,7 @@ int main()
         return fail("a rejected colour draw changed pixels");
     }
     if (!igpu_draw(static_cast<std::uint64_t>(colour_buffer), 0, static_cast<std::uint64_t>(colour_layout),
-                   4, 0, 6, 1, 0, 0, 0, 0))
+                   4, 0, 12, 1, 0, 0, 0, 0))
     {
         igpu::gl_color_target_end(colour_saved_fbo, colour_held_viewport);
         return fail(igpu_get_last_error().c_str());

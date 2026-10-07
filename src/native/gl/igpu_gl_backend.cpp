@@ -520,6 +520,7 @@ namespace igpu
                 fns.AttachShader(program, shaders[vertex->second].shader);
                 fns.AttachShader(program, shaders[pixel->second].shader);
                 fns.BindAttribLocation(program, 0, "in_pos");
+                fns.BindAttribLocation(program, 1, "in_colour");
                 fns.LinkProgram(program);
                 GLint ok = 0;
                 fns.GetProgramiv(program, GL_LINK_STATUS, &ok);

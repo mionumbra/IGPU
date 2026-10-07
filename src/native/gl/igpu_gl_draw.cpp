@@ -71,6 +71,32 @@ namespace igpu
             }
             return false;
         }
+
+        void bind_vertices(const BufferObject& buffer, std::int64_t pointer_vertex)
+        {
+            const auto& fns = igpu_gl_fns();
+            const auto base = static_cast<std::uintptr_t>(pointer_vertex * buffer.stride);
+            fns.EnableVertexAttribArray(0);
+            fns.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, buffer.stride,
+                                    reinterpret_cast<const void*>(base));
+            if (buffer.stride == 12)
+            {
+                fns.EnableVertexAttribArray(1);
+                fns.VertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, buffer.stride,
+                                        reinterpret_cast<const void*>(base + 8));
+            }
+            else
+            {
+                fns.DisableVertexAttribArray(1);
+            }
+        }
+
+        void unbind_vertices()
+        {
+            const auto& fns = igpu_gl_fns();
+            fns.DisableVertexAttribArray(0);
+            fns.DisableVertexAttribArray(1);
+        }
     }
 
     void gl_resources_release()
@@ -369,11 +395,9 @@ namespace igpu
         fns.BindFramebuffer(GL_FRAMEBUFFER, texture->second.framebuffer);
         glViewport(0, 0, texture->second.width, texture->second.height);
         fns.BindBuffer(GL_ARRAY_BUFFER, buffer->second.id);
-        fns.EnableVertexAttribArray(0);
-        fns.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, buffer->second.stride,
-                                reinterpret_cast<const void*>(static_cast<std::uintptr_t>(first_vertex * buffer->second.stride)));
+        bind_vertices(buffer->second, first_vertex);
         glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertex_count));
-        fns.DisableVertexAttribArray(0);
+        unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, 0);
         glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2], previous_viewport[3]);
         fns.BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous_fbo));
@@ -444,10 +468,9 @@ namespace igpu
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
         fns.BindVertexArray(g_vertex_array);
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
-        fns.EnableVertexAttribArray(0);
-        fns.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, vertex->second.stride, nullptr);
+        bind_vertices(vertex->second, 0);
         glDrawArrays(GL_TRIANGLES, static_cast<GLint>(first_vertex), static_cast<GLsizei>(vertex_count));
-        fns.DisableVertexAttribArray(0);
+        unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindVertexArray(0);
         return true;
@@ -526,12 +549,11 @@ namespace igpu
         glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &previous_element);
         fns.BindVertexArray(g_vertex_array);
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
-        fns.EnableVertexAttribArray(0);
-        fns.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, vertex->second.stride, nullptr);
+        bind_vertices(vertex->second, 0);
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, index->second.id);
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(index_count), GL_UNSIGNED_SHORT,
                        reinterpret_cast<const void*>(static_cast<std::uintptr_t>(first_index * kIndexSize)));
-        fns.DisableVertexAttribArray(0);
+        unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(previous_element));
         fns.BindVertexArray(0);
