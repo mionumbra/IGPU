@@ -364,6 +364,72 @@ namespace igpu
         return true;
     }
 
+    bool gl_draw(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
+                 std::int64_t first_vertex, std::int64_t vertex_count, std::int64_t blend_state,
+                 std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state)
+    {
+        if (primitive == 6)
+        {
+            set_last_error("igpu_draw: the 'trianglefan' primitive has no backend equivalent");
+            return false;
+        }
+        if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0 || primitive != 4)
+        {
+            set_last_error("igpu_draw: the opengl backend only draws a triangle list with no extra state");
+            return false;
+        }
+        const auto vertex = g_buffers.find(vertex_buffer);
+        if (vertex == g_buffers.end() || g_layouts.find(layout) == g_layouts.end())
+        {
+            set_last_error("igpu_draw: unknown buffer or layout");
+            return false;
+        }
+        if (vertex->second.bind != 1 || vertex->second.stride <= 0)
+        {
+            set_last_error("igpu_draw: the vertex buffer was not created with IgpuBufferBind.Vertex");
+            return false;
+        }
+        const std::int64_t vertex_total = vertex->second.size / vertex->second.stride;
+        if (vertex_count < 0)
+        {
+            vertex_count = vertex_total - first_vertex;
+        }
+        if (first_vertex < 0 || vertex_count <= 0)
+        {
+            set_last_error("igpu_draw: the resolved vertex count is zero");
+            return false;
+        }
+        if (first_vertex + vertex_count > vertex_total)
+        {
+            set_last_error("igpu_draw: the vertex range is outside the buffer");
+            return false;
+        }
+        GLint program = 0;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+        if (program == 0)
+        {
+            set_last_error("igpu_draw: no shader program is bound");
+            return false;
+        }
+
+        const auto& fns = igpu_gl_fns();
+        if (g_vertex_array == 0)
+        {
+            fns.GenVertexArrays(1, &g_vertex_array);
+        }
+        GLint previous_array = 0;
+        glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
+        fns.BindVertexArray(g_vertex_array);
+        fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
+        fns.EnableVertexAttribArray(0);
+        fns.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, vertex->second.stride, nullptr);
+        glDrawArrays(GL_TRIANGLES, static_cast<GLint>(first_vertex), static_cast<GLsizei>(vertex_count));
+        fns.DisableVertexAttribArray(0);
+        fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
+        fns.BindVertexArray(0);
+        return true;
+    }
+
     bool gl_draw_indexed(std::uint64_t vertex_buffer, std::uint64_t layout, std::uint64_t index_buffer,
                          std::int32_t primitive, std::int64_t first_index, std::int64_t index_count,
                          std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,

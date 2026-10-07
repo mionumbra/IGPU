@@ -415,6 +415,182 @@ int main()
         return fail("indexed section left the framebuffer or viewport bound");
     }
 
+    const float draw_halves[] = {
+        -1.f, -1.f, 0.f, -1.f, -1.f, 1.f, -1.f, 1.f, 0.f, -1.f, 0.f, 1.f,
+        0.f, -1.f, 1.f, -1.f, 0.f, 1.f, 0.f, 1.f, 1.f, -1.f, 1.f, 1.f,
+    };
+    const auto draw_buffer = igpu_buffer_create(96, 0, 1, 8);
+    if (draw_buffer == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(draw_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<float*>(draw_halves), 96)))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto draw_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (draw_texture == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    auto draw_pixels_are = [&](std::int64_t left, std::int64_t right, const char* label) {
+        const auto got_left = igpu_texture_read(static_cast<std::uint64_t>(draw_texture), 1, 4, 0, 0);
+        const auto got_right = igpu_texture_read(static_cast<std::uint64_t>(draw_texture), 6, 4, 0, 0);
+        if (got_left != left || got_right != right)
+        {
+            std::fprintf(stderr, "%s left=%lld right=%lld\n", label,
+                         static_cast<long long>(got_left), static_cast<long long>(got_right));
+            return false;
+        }
+        return true;
+    };
+    if (!draw_pixels_are(0, 0, "fresh draw texture"))
+    {
+        return fail("fresh draw texture was not clear black");
+    }
+
+    std::int32_t draw_saved_fbo = 0;
+    std::int32_t draw_held_viewport[4] = {};
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(draw_texture), draw_saved_fbo, draw_held_viewport))
+    {
+        return fail("draw color target begin failed");
+    }
+    GLint draw_fbo = 0;
+    GLint draw_viewport[4] = {};
+    GLint draw_program = 0;
+    glGetIntegerv(0x8CA6, &draw_fbo);
+    glGetIntegerv(GL_VIEWPORT, draw_viewport);
+    glGetIntegerv(0x8B8D, &draw_program);
+    const auto bound_vert = igpu_get_bound_shader(0);
+    const auto bound_frag = igpu_get_bound_shader(1);
+    if (draw_program == 0 || bound_vert == 0 || bound_frag == 0)
+    {
+        igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+        return fail("draw probe lost the bound program before drawing");
+    }
+
+    if (igpu_draw(static_cast<std::uint64_t>(draw_buffer), 0, static_cast<std::uint64_t>(layout),
+                  6, 0, 6, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+        return fail("triangle fan was accepted by igpu_draw");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(draw_buffer), 0, static_cast<std::uint64_t>(layout),
+                  4, 0, 6, 1, 1, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+        return fail("blend state was accepted by igpu_draw");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(draw_buffer), 0, static_cast<std::uint64_t>(layout),
+                  4, 0, 6, 1, 0, 1, 0, 0) ||
+        igpu_draw(static_cast<std::uint64_t>(draw_buffer), 0, static_cast<std::uint64_t>(layout),
+                  4, 0, 6, 1, 0, 0, 1, 0) ||
+        igpu_draw(static_cast<std::uint64_t>(draw_buffer), 0, static_cast<std::uint64_t>(layout),
+                  4, 0, 6, 1, 0, 0, 0, 1))
+    {
+        igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+        return fail("depth, raster, or sampler state was accepted by igpu_draw");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(indexed_index_buffer), 0, static_cast<std::uint64_t>(layout),
+                  4, 0, 6, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+        return fail("index buffer was accepted as a vertex buffer by igpu_draw");
+    }
+    if (igpu_draw(999999, 0, static_cast<std::uint64_t>(layout), 4, 0, 6, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+        return fail("unknown vertex buffer was accepted by igpu_draw");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(draw_buffer), 0, static_cast<std::uint64_t>(layout),
+                  4, 0, 13, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+        return fail("thirteen vertices were accepted by igpu_draw");
+    }
+    igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+    if (!draw_pixels_are(0, 0, "rejected igpu_draw"))
+    {
+        return fail("a rejected igpu_draw changed a pixel");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(draw_texture), draw_saved_fbo, draw_held_viewport))
+    {
+        return fail("draw color target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(draw_buffer), 0, static_cast<std::uint64_t>(layout),
+                   4, 0, 6, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    GLint draw_fbo_after = 0;
+    GLint draw_viewport_after[4] = {};
+    GLint draw_program_after = 0;
+    GLint draw_array_after = 0;
+    GLint draw_vao_after = 0;
+    glGetIntegerv(0x8CA6, &draw_fbo_after);
+    glGetIntegerv(GL_VIEWPORT, draw_viewport_after);
+    glGetIntegerv(0x8B8D, &draw_program_after);
+    glGetIntegerv(0x8894, &draw_array_after);
+    glGetIntegerv(0x85B5, &draw_vao_after);
+    igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+    if (draw_fbo_after != draw_fbo || draw_program_after != draw_program || draw_array_after != 0 ||
+        draw_vao_after != 0 || draw_viewport_after[0] != draw_viewport[0] ||
+        draw_viewport_after[1] != draw_viewport[1] || draw_viewport_after[2] != draw_viewport[2] ||
+        draw_viewport_after[3] != draw_viewport[3])
+    {
+        return fail("igpu_draw changed the framebuffer, viewport, program, array buffer, or vertex array");
+    }
+    if (igpu_get_bound_shader(0) != bound_vert || igpu_get_bound_shader(1) != bound_frag)
+    {
+        return fail("igpu_draw changed the bound shader handles");
+    }
+    const auto draw_left = igpu_texture_read(static_cast<std::uint64_t>(draw_texture), 1, 4, 0, 0);
+    const auto draw_right = igpu_texture_read(static_cast<std::uint64_t>(draw_texture), 6, 4, 0, 0);
+    std::printf("draw pixels   : %lld / %lld\n", static_cast<long long>(draw_left),
+                static_cast<long long>(draw_right));
+    if (draw_left != 255 || draw_right != 0)
+    {
+        return fail("triangle list did not paint only the left half");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(draw_texture), draw_saved_fbo, draw_held_viewport))
+    {
+        return fail("draw color target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(draw_buffer), 0, static_cast<std::uint64_t>(layout),
+                   4, 6, -1, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(draw_saved_fbo, draw_held_viewport);
+    const auto draw_tail_left = igpu_texture_read(static_cast<std::uint64_t>(draw_texture), 1, 4, 0, 0);
+    const auto draw_tail_right = igpu_texture_read(static_cast<std::uint64_t>(draw_texture), 6, 4, 0, 0);
+    std::printf("draw tail     : %lld / %lld\n", static_cast<long long>(draw_tail_left),
+                static_cast<long long>(draw_tail_right));
+    if (draw_tail_left != 255 || draw_tail_right != 255)
+    {
+        return fail("vertex_count -1 did not paint only the right half");
+    }
+
+    if (igpu_texture_read(static_cast<std::uint64_t>(texture), 0, 0, 0, 0) != 255)
+    {
+        return fail("igpu_draw changed the first texture");
+    }
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(part_buffer), static_cast<std::uint64_t>(layout), 4, 0, 6,
+                                     as_array(target_bytes), as_array(zero_bytes), as_array(zero_bytes), 0, 0, 0, 0))
+    {
+        return fail("draw-to-targets failed after igpu_draw");
+    }
+    GLint viewport_after_draw[4] = {};
+    GLint framebuffer_after_draw = 0;
+    glGetIntegerv(GL_VIEWPORT, viewport_after_draw);
+    glGetIntegerv(0x8CA6, &framebuffer_after_draw);
+    if (viewport_after_draw[2] != 1 || viewport_after_draw[3] != 1 || framebuffer_after_draw != 0)
+    {
+        return fail("igpu_draw section left the framebuffer or viewport bound");
+    }
+
     void* context = gl_probe_context();
     igpu_shutdown();
     if (!wglMakeCurrent(nullptr, nullptr) || !wglDeleteContext(static_cast<HGLRC>(context)))
