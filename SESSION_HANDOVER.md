@@ -1,4 +1,4 @@
-# 会话交接 — 2026-10-07 — 版本 0.5.0 — OpenGL 非索引绘制已在探针里
+# 会话交接 — 2026-10-07 — 版本 0.5.0 — OpenGL 非索引绘制已合并
 
 > 先读这一节，再改代码。`HANDOVER.md` 是长文档，开头版本是 `0.5.0`。正文里 9 月的叙述已经过时。本文下半截仍保留 2026-09-23 审计记录。
 >
@@ -6,7 +6,11 @@
 
 ## 下一会话接着做
 
-停在分支 `gl-draw`，还没合并。它从 `main` 的 `6ffb683` 开出。`main` 上拉取请求 https://github.com/mionumbra/IGPU/pull/1 已合并（`d662fb2`），其后是交接提交 `6ffb683`。`gl-bind-current` 已经从本地和远程删除。下一会话先把 `gl-draw` 合进 `main`，再从合完的 `main` 开新分支。不要在 `main` 上重做非索引绘制。
+停在 `main`。拉取请求 https://github.com/mionumbra/IGPU/pull/2 已合并，合并提交 `edb0ccd`。写这份交接时 `origin/main` 就是这个提交。非索引 `igpu_draw` 已经在 `main` 上，不要重做。下一刀还没定，从合完交接的 `main` 开新分支。
+
+`gl-draw` 还在。本地和 `origin/gl-draw` 都是 `31c6982`，那是合并前的尖端，已经包含在 `edb0ccd` 里。
+
+`gl-bind-current` 在合并拉取请求 #1 之后删过，这一会话又在 `fb4a9a5` 上建回来并推送。那是合并提交 `d662fb2` 的第二个父提交，改动已经在 `main` 里。不要为它再开拉取请求，也不要把它当成还没合并的工作。
 
 已经落地的 OpenGL 只在探针里，Windows 的 GameMaker DLL 不含它：
 
@@ -125,7 +129,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 像素 | `255 / 16711680 / 16711680` |
 | GL 索引像素 | `255 / 16711680`，随后右半边也是 `255` |
 | GL 非索引像素 | `255 / 0`，随后右半边也是 `255` |
-| Git | 分支 `gl-draw`，从 `main` 的 `6ffb683` 开出。还没合并。 |
+| Git | `main` 合并提交 `edb0ccd`（拉取请求 #2）。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。三个都已推送。 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
 
