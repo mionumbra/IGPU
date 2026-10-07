@@ -1,4 +1,4 @@
-# 会话交接 — 2026-10-07 — 版本 0.5.0 — OpenGL 顶点颜色的拉取请求还开着
+# 会话交接 — 2026-10-07 — 版本 0.5.0 — OpenGL 顶点颜色已合并
 
 > 先读这一节，再改代码。`HANDOVER.md` 是长文档，开头版本是 `0.5.0`。正文里 9 月的叙述已经过时。本文下半截仍保留 2026-09-23 审计记录。
 >
@@ -6,7 +6,7 @@
 
 ## 下一会话接着做
 
-停在分支 `gl-vertex-colour`，不是 `main`。拉取请求 https://github.com/mionumbra/IGPU/pull/3 开着，还没合并。不要再为顶点颜色开第二个拉取请求，也不要在 `main` 上重做这一刀。评审意见留在这个分支上改。合并之前，`main` 和 `origin/main` 都是 `3f52b1e`。写这份交接时，这个分支在文档提交之前的尖端是 `a51e39a`。文档无法写下包含自己的那次提交，以 `git rev-parse --short HEAD` 为准。
+停在 `main`。拉取请求 https://github.com/mionumbra/IGPU/pull/3 已合并，合并提交 `0885e67`。写这份交接时 `origin/main` 就是这个提交。顶点颜色已经在 `main` 上，不要重做，也不要再为它开拉取请求。`gl-vertex-colour` 还在，尖端是 `7c0c6e4`，已经包含在 `0885e67` 里。这份文档自己的提交在 `0885e67` 之后，以 `git rev-parse --short HEAD` 为准。
 
 拉取请求 https://github.com/mionumbra/IGPU/pull/2 已经合并，合并提交 `edb0ccd`，非索引 `igpu_draw` 在 `main` 上。不要重做。
 
@@ -29,7 +29,7 @@
 
 非索引的 `igpu_draw` 已在探针里证明。`GlBackend::draw` 转到 `gl_draw`。它画进调用方已经 current 的帧缓冲，不清屏，不改帧缓冲绑定和视口，也不调用 `UseProgram`。三角形列表的前 6 个顶点只把左半边画成红 `255`，右半边保持清屏黑 `0`。从顶点 6 起、`vertex_count = -1` 再把右半边画成红，左半边仍是红。图元 `6` 和任何一个非 0 的状态句柄都被拒绝，像素保持 `0`。索引缓冲不能当成顶点缓冲。
 
-动手前先切到 `gl-vertex-colour` 并拉取，再跑下面三件事，确认树还是绿的：
+动手前先在 `main` 上拉取，再跑下面三件事，确认树还是绿的：
 
 ```
 pwsh -File tools\verify_handover.ps1
@@ -139,7 +139,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 索引像素 | `255 / 16711680`，随后右半边也是 `255` |
 | GL 非索引像素 | `255 / 0`，随后右半边也是 `255` |
 | GL 顶点颜色 | `255 / 16711680`；随后 float2 绘制是 `0 / 0`；alpha 0 仍是 `255`；从第 6 个顶点画进纹理时是 `0 / 16711680` |
-| Git | `main` / `origin/main` 是 `3f52b1e`。拉取请求 #2 的合并提交是 `edb0ccd`。`gl-vertex-colour` 在写这份交接之前是 `a51e39a`，拉取请求 #3 开着。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
+| Git | 拉取请求 #3 的合并提交是 `0885e67`。写这份交接时 `origin/main` 就是它。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 的合并提交是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
 
