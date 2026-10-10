@@ -24,6 +24,12 @@ namespace igpu
     std::int64_t gl_texture_read_level(std::uint64_t texture, std::int32_t x, std::int32_t y, std::int32_t layer,
                                        std::int32_t mip);
 
+    std::int64_t gl_sampler_state_create_filters_range(std::int32_t magnification, std::int32_t minification,
+                                                       std::int32_t mip, std::int32_t address_u, std::int32_t address_v,
+                                                       std::int32_t address_w, float level_offset, float finest,
+                                                       float coarsest);
+    bool gl_state_release(std::uint64_t handle);
+
     bool gl_draw(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                  std::int64_t first_vertex, std::int64_t vertex_count, std::int64_t blend_state,
                  std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state);
