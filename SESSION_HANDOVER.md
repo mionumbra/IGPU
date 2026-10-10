@@ -1,4 +1,4 @@
-# 会话交接 — 2026-10-11 — 版本 0.5.0 — 钳制与重复已在 main，下一刀未定
+# 会话交接 — 2026-10-11 — 版本 0.5.0 — 线性放大已在探针里，下一刀未定
 
 > 先读这一节，再改代码。`HANDOVER.md` 是长文档，开头版本是 `0.5.0`。正文里 9 月的叙述已经过时。本文下半截仍保留 2026-09-23 审计记录。
 >
@@ -8,7 +8,7 @@
 
 **合并规则，先读这一段。** 功能分支必须推送到 `origin`。进入 `main` 只能通过 GitHub 拉取请求（pull request）：先推送分支，再开拉取请求，由拉取请求合并。不要在本地 `merge`（包括 `--no-ff` 和快进）之后直接 `push origin main`。交接文档自己的修改也走拉取请求，不要直接推 `main`。已经用拉取请求合并过的旧分支不要再开一次。`9c56d05`（最近点采样）和 `84b40f5`（钳制与重复）是在这条规则写明之前直接推进 `main` 的，不要照做。
 
-停在 `main`。写这份交接时，`origin/main` 是拉取请求 #5 的合并提交 `332e1a8`。那一笔只写了合并规则。钳制与重复的代码合并提交是 `84b40f5`，没有走拉取请求，不要照做。`gl-address` 已推送，尖端 `95867cd`，已经包含在 `84b40f5` 里。不要重做这一刀的代码，也不要再为它开拉取请求。这份交接自己的提交在 `332e1a8` 之后，以 `git rev-parse --short HEAD` 为准。
+停在 `gl-linear`。写这份交接时，`origin/main` 是拉取请求 #6 的合并提交 `eb47059`。线性放大还没有进入 `main`。进入 `main` 只能通过拉取请求。钳制与重复的代码合并提交是 `84b40f5`，没有走拉取请求，不要照做。`gl-address` 已推送，尖端 `95867cd`，已经包含在 `84b40f5` 里。不要重做那一刀，也不要再为它开拉取请求。这份交接自己的提交以 `git rev-parse --short HEAD` 为准。
 
 计划在 `superpowers/plans/2026-10-10-gl-address.md`。更早的最近点采样计划在 `superpowers/plans/2026-10-10-gl-sample.md`。两份都已经证明，不要重做：
 
@@ -18,13 +18,15 @@
 
 被采样的纹理若是当前颜色附件，调用失败，错误含有 `the texture is the current color target`，源像素不变。没有 `igpu_tex` 的程序失败，错误含有 `no sampler uniform 'igpu_tex'`，目标保持 `0`。句柄 0 仍是那次最近点采样。纹理句柄 0 失败，错误含有 `unknown texture handle`。`igpu_buffer_create(96, 0, 1, 0)` 仍是步长 8，配上纹理坐标布局失败，错误含有 `stride does not match`。
 
-最近点采样器只在探针里，已经进入 `main`。`igpu_sampler_state_create` 接受三轴相同的钳制或重复，放大、缩小和级间过滤都是最近点，各向异性是 1，比较是 0，级数偏移是 0，最细级数是 0。句柄记在 CPU 上，不创建 GL 采样器对象。`igpu_draw_sampled` 在这一次绘制里把源纹理的 S、T 包裹设成对应值，返回前写回绘制前的值。句柄 0 不改包裹。不调用 `glActiveTexture`，也不改过滤。
+最近点采样器只在探针里，已经进入 `main`。`igpu_sampler_state_create` 接受三轴相同的钳制或重复。放大是最近点或线性，缩小和级间过滤仍是最近点。各向异性是 1，比较是 0，级数偏移是 0，最细级数是 0。句柄记在 CPU 上，不创建 GL 采样器对象。`igpu_draw_sampled` 在这一次绘制里把源纹理的 S、T 包裹设成对应值。放大为线性时，把 `GL_TEXTURE_MAG_FILTER` 设成 `GL_LINEAR`，返回前写回绘制前的包裹和放大过滤。句柄 0 不改包裹，也不改过滤。不调用 `glActiveTexture`，不改 `GL_TEXTURE_MIN_FILTER`。
 
 `u = 1.0625` 在重复下两边都是红 `255`，在钳制采样器下两边都是蓝 `16711680`。随后句柄 0 仍是蓝，重复没有留下来。`u = -0.0625` 在重复下是蓝，在钳制下是红。句柄 0、`u = 0.484375` 两边仍是红 `255`。
 
-线性放大失败，错误含有 `nearest`。镜像和三轴不一致失败，错误含有 `clamp or repeat`。比较和各向异性大于 1 仍失败，错误含有 `does not implement`。级数偏移失败，错误含有 `no mip`。未知句柄和已经释放的句柄失败，错误含有 `unknown sampler handle`，像素不变。`igpu_draw` 和 `igpu_draw_indexed` 拿到活着的采样器仍失败，错误含有 `draws with no extra state`。被采样的纹理若是当前颜色附件，重复采样器也同样失败。`SamplerState` 在这份 OpenGL 后端上为 true。Windows 的 GameMaker DLL 仍没有 OpenGL 后端，那里 `SamplerState` 仍只跟着 Direct3D。
+`u = 0.5` 在线性放大、钳制下两边都是 `8388736`（红 128、蓝 128）。`u = 1.5` 在线性放大加重复下也是 `8388736`。同一个 `u = 1.5` 在线性放大加钳制下是边缘纹素的蓝 `16711680`。随后句柄 0、`u = 0.484375` 两边仍是红 `255`，`u = 1.0625` 两边仍是蓝 `16711680`。线性过滤和重复都没有留下来。
 
-混合、深度、光栅、边框色、镜像、线性过滤、各向异性、比较、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。再下一刀还没定。那些平台上的 GameMaker 运行这台机器证明不了。纹理单元保持调用方原来的值；探针的默认单元是 0。
+缩小或级间过滤为线性时失败，错误含有 `nearest`。镜像和三轴不一致失败，错误含有 `clamp or repeat`。比较和各向异性大于 1 仍失败，错误含有 `does not implement`。级数偏移失败，错误含有 `no mip`。未知句柄和已经释放的句柄失败，错误含有 `unknown sampler handle`，像素不变。`igpu_draw` 和 `igpu_draw_indexed` 拿到活着的采样器仍失败，错误含有 `draws with no extra state`。被采样的纹理若是当前颜色附件，重复采样器也同样失败。`SamplerState` 在这份 OpenGL 后端上为 true。Windows 的 GameMaker DLL 仍没有 OpenGL 后端，那里 `SamplerState` 仍只跟着 Direct3D。
+
+混合、深度、光栅、边框色、镜像、线性缩小、各向异性、比较、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。再下一刀还没定。那些平台上的 GameMaker 运行这台机器证明不了。纹理单元保持调用方原来的值；探针的默认单元是 0。
 
 更早的 OpenGL 也在 `main` 上，不要重做，也不要再开拉取请求。拉取请求 https://github.com/mionumbra/IGPU/pull/5 的合并提交是 `332e1a8`，只写了「必须走拉取请求」这条规则。拉取请求 https://github.com/mionumbra/IGPU/pull/4 的合并提交是 `83afeb8`，图元 1、2、3、5。`gl-primitives` 尖端 `3e0a1f2` 已经包含在里面。拉取请求 https://github.com/mionumbra/IGPU/pull/3 的合并提交是 `0885e67`，顶点颜色。`gl-vertex-colour` 尖端 `7c0c6e4`。拉取请求 https://github.com/mionumbra/IGPU/pull/2 的合并提交是 `edb0ccd`，非索引 `igpu_draw`。`gl-draw` 尖端 `31c6982`。`gl-bind-current` 尖端 `fb4a9a5` 已经包含在 `main` 里。
 
@@ -53,7 +55,7 @@ cmake --build --preset win-x64-release-vs18 --target igpu_gl_probe
 out\build\win-x64-release\src\Release\igpu_gl_probe.exe
 ```
 
-探针退出码 0，并打印这三十三行和 `PASS`：
+探针退出码 0，并打印这三十八行和 `PASS`：
 
 ```
 pixels       : 255 / 16711680 / 16711680
@@ -89,6 +91,11 @@ wrap restored: 16711680 / 16711680
 wrap negative: 16711680 / 16711680
 wrap edge    : 255 / 255
 wrap nearest : 255 / 255
+linear seam  : 8388736 / 8388736
+linear repeat: 8388736 / 8388736
+linear edge  : 16711680 / 16711680
+linear point : 255 / 255
+linear wrap  : 16711680 / 16711680
 ```
 
 可执行文件在 `src\Release` 下，不在预设目录的 `Release` 根上。
@@ -182,7 +189,8 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 图元 1/2/3/5 | 三角带 `255 / 0`，随后右边也是 `255`。点是单个纹素 `255`，邻居是 `0`。线列表是 `255 / 0 / 255`。线带随后右边也是 `255` |
 | GL 纹理采样 | 源 `255 / 16711680`。前 3 个顶点是 `255 / 0`，尾巴是 `255 / 16711680`。常数 `u = 0.484375` 是 `255 / 255` |
 | GL 包裹 | 重复 `u = 1.0625` 为 `255 / 255`，钳制和句柄 0 为 `16711680 / 16711680` |
-| Git | 写这份交接时 `origin/main` 是 `332e1a8`（拉取请求 #5）。钳制与重复的合并提交是 `84b40f5`。`gl-address` 在 `95867cd`。最近点采样的合并提交是 `9c56d05`。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
+| GL 线性放大 | `u = 0.5` 钳制是 `8388736 / 8388736`。`u = 1.5` 重复是同一混合，钳制是 `16711680 / 16711680`。随后句柄 0 在 `u = 0.484375` 仍是 `255 / 255` |
+| Git | 写这份交接时 `origin/main` 是 `eb47059`（拉取请求 #6）。线性放大在 `gl-linear`，还没有进入 `main`。钳制与重复的合并提交是 `84b40f5`。`gl-address` 在 `95867cd`。最近点采样的合并提交是 `9c56d05`。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
 
@@ -215,7 +223,7 @@ out\build\win-x64-release\src\Release\igpu_gl_probe.exe
 
 着色器是 `#version 120`。入口必须是 `main`。空方言和 `"glsl"` 可以编译。`"hlsl"` 被拒绝。顶点阶段和像素阶段都绑上之后才链成一个程序，属性 0 叫 `in_pos`。属性 1 在颜色程序里是 `in_colour`，在采样程序里是 `in_uv`。不声明 `in_colour` 的程序仍然能链上。阶段绑错会失败，原来的绑定还在。`shader_bind(0, stage)` 解绑该阶段。
 
-绘制接受图元 `1`、`2`、`3`、`4`、`5`（点列表、线列表、线带、三角形列表、三角带），并且只接受一个目标、layer 0、mip 0。混合、深度、光栅句柄必须是 0。`igpu_draw`、`igpu_draw_indexed` 和 `igpu_draw_to_render_targets` 的采样器句柄也必须是 0。`igpu_draw_sampled` 可以带一个最近点的钳制或重复采样器，句柄 0 不改包裹。图元 `6` 是扇形，拒绝且不改像素。图元 `0` 和 `7` 拒绝，错误含有 `does not draw this primitive`。非零的混合、深度、光栅，以及非采样绘制上的非零采样器，拒绝且错误含有 `draws with no extra state`。点大小和线宽保持 1。`igpu_draw` 与 `igpu_draw_indexed` 不改帧缓冲、视口和程序。`igpu_draw_to_render_targets` 会恢复帧缓冲和视口。布局接受一个 `float2` 位置（usage `1`，type `2`，step `0`，stride 0 或 8），也接受 float2 后面接一个 4 字节颜色（usage `2`，type `5`），缓冲步长必须显式写成 12，也接受 float2 位置后面接 float2 纹理坐标（usage `4`，type `2`），缓冲步长必须显式写成 16。步长 0 仍是位置缓冲。`igpu_draw_sampled` 已从 `not_yet` 转成 `gl_draw_sampled`。绘制按这个步长绑属性 0 和属性 1，返回前都关掉。其它布局和步长仍拒绝。顶点缓冲是静态的，一次写满。索引缓冲也是静态的，16 位，`bind` 为 2，stride 为 0，长度是 2 的倍数。`igpu_draw` 和 `igpu_draw_indexed` 都画进当前帧缓冲，不清屏。探针用 `gl_color_target_begin` 把 IGPU 纹理绑成当前目标，画完再还原。读回把 RGBA 收成 `r | (g << 8) | (b << 16)`，丢掉 alpha。`gl_row = height - 1 - y`，所以 `y = 0` 是裁剪空间的上方。画进纹理的 `igpu_draw_to_render_targets` 返回前恢复 `GL_FRAMEBUFFER_BINDING` 和 `GL_VIEWPORT`，不解开调用方绑好的程序。`igpu_draw` 和 `igpu_draw_indexed` 不动帧缓冲、视口和程序；它们恢复顶点数组和数组缓冲。索引绘制另外恢复元素数组缓冲。
+绘制接受图元 `1`、`2`、`3`、`4`、`5`（点列表、线列表、线带、三角形列表、三角带），并且只接受一个目标、layer 0、mip 0。混合、深度、光栅句柄必须是 0。`igpu_draw`、`igpu_draw_indexed` 和 `igpu_draw_to_render_targets` 的采样器句柄也必须是 0。`igpu_draw_sampled` 可以带一个钳制或重复采样器。放大是最近点或线性，缩小和级间过滤必须是最近点。句柄 0 不改包裹，也不改放大过滤。图元 `6` 是扇形，拒绝且不改像素。图元 `0` 和 `7` 拒绝，错误含有 `does not draw this primitive`。非零的混合、深度、光栅，以及非采样绘制上的非零采样器，拒绝且错误含有 `draws with no extra state`。点大小和线宽保持 1。`igpu_draw` 与 `igpu_draw_indexed` 不改帧缓冲、视口和程序。`igpu_draw_to_render_targets` 会恢复帧缓冲和视口。布局接受一个 `float2` 位置（usage `1`，type `2`，step `0`，stride 0 或 8），也接受 float2 后面接一个 4 字节颜色（usage `2`，type `5`），缓冲步长必须显式写成 12，也接受 float2 位置后面接 float2 纹理坐标（usage `4`，type `2`），缓冲步长必须显式写成 16。步长 0 仍是位置缓冲。`igpu_draw_sampled` 已从 `not_yet` 转成 `gl_draw_sampled`。绘制按这个步长绑属性 0 和属性 1，返回前都关掉。其它布局和步长仍拒绝。顶点缓冲是静态的，一次写满。索引缓冲也是静态的，16 位，`bind` 为 2，stride 为 0，长度是 2 的倍数。`igpu_draw` 和 `igpu_draw_indexed` 都画进当前帧缓冲，不清屏。探针用 `gl_color_target_begin` 把 IGPU 纹理绑成当前目标，画完再还原。读回把 RGBA 收成 `r | (g << 8) | (b << 16)`，丢掉 alpha。`gl_row = height - 1 - y`，所以 `y = 0` 是裁剪空间的上方。画进纹理的 `igpu_draw_to_render_targets` 返回前恢复 `GL_FRAMEBUFFER_BINDING` 和 `GL_VIEWPORT`，不解开调用方绑好的程序。`igpu_draw` 和 `igpu_draw_indexed` 不动帧缓冲、视口和程序；它们恢复顶点数组和数组缓冲。索引绘制另外恢复元素数组缓冲。
 
 `supports()` 里的局部量 `native` 等于 `d3d11_backend()`。交接脚本把裸的 `return native` 当成这份构建上的恒 true。OpenGL 多出来的 true 写成 `native || opengl_backend()`。不要把 `native` 改回「任意后端」，否则 GL 会继承计算、三维纹理和查询。
 
