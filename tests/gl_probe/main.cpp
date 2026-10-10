@@ -855,6 +855,212 @@ int main()
         return fail("igpu_draw section left the framebuffer or viewport bound");
     }
 
+    const float strip_vertices[] = {
+        0.f, -1.f, 0.f, 1.f, -0.25f, -1.f, -1.f, 0.f,
+        0.f, -1.f, 0.f, 1.f, 0.25f, -1.f, 1.f, 0.f,
+    };
+    const std::uint16_t strip_indices[] = {0, 1, 2, 3, 4, 5, 6, 7};
+    const auto strip_buffer = igpu_buffer_create(64, 0, 1, 8);
+    const auto strip_index_buffer = igpu_buffer_create(16, 0, 2, 0);
+    const auto strip_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto strip_indexed_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto strip_target_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (strip_buffer == 0 || strip_index_buffer == 0 || strip_texture == 0 ||
+        strip_indexed_texture == 0 || strip_target_texture == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(strip_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<float*>(strip_vertices), 64)) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(strip_index_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<std::uint16_t*>(strip_indices), 16)))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    auto strip_pixels_are = [&](std::int64_t texture, std::int64_t left, std::int64_t right,
+                                const char* label) {
+        const auto got_left = igpu_texture_read(static_cast<std::uint64_t>(texture), 1, 4, 0, 0);
+        const auto got_right = igpu_texture_read(static_cast<std::uint64_t>(texture), 6, 4, 0, 0);
+        if (got_left != left || got_right != right)
+        {
+            std::fprintf(stderr, "%s left=%lld right=%lld\n", label,
+                         static_cast<long long>(got_left), static_cast<long long>(got_right));
+            return false;
+        }
+        return true;
+    };
+    if (!strip_pixels_are(strip_texture, 0, 0, "fresh strip texture"))
+    {
+        return fail("fresh strip texture was not clear black");
+    }
+
+    std::int32_t strip_saved_fbo = 0;
+    std::int32_t strip_held_viewport[4] = {};
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(strip_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("strip color target begin failed");
+    }
+    const auto reject_strip = [&](std::int32_t primitive, std::int64_t blend, std::int64_t depth,
+                                  std::int64_t raster, std::int64_t sampler, const char* what,
+                                  const char* error_part) {
+        if (igpu_draw(static_cast<std::uint64_t>(strip_buffer), 0, static_cast<std::uint64_t>(layout),
+                      primitive, 0, 4, 1, blend, depth, raster, sampler))
+        {
+            igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+            std::fprintf(stderr, "%s was accepted\n", what);
+            return false;
+        }
+        if (igpu_get_last_error().find(error_part) == std::string::npos)
+        {
+            igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+            std::fprintf(stderr, "%s error: %s\n", what, igpu_get_last_error().c_str());
+            return false;
+        }
+        return true;
+    };
+    if (!reject_strip(0, 0, 0, 0, 0, "primitive 0", "does not draw this primitive") ||
+        !reject_strip(7, 0, 0, 0, 0, "primitive 7", "does not draw this primitive") ||
+        !reject_strip(6, 0, 0, 0, 0, "triangle fan", "trianglefan") ||
+        !reject_strip(5, 1, 0, 0, 0, "strip blend", "draws with no extra state") ||
+        !reject_strip(5, 0, 1, 0, 0, "strip depth", "draws with no extra state") ||
+        !reject_strip(5, 0, 0, 1, 0, "strip raster", "draws with no extra state") ||
+        !reject_strip(5, 0, 0, 0, 1, "strip sampler", "draws with no extra state"))
+    {
+        return fail("strip rejection check failed");
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    if (!strip_pixels_are(strip_texture, 0, 0, "rejected strip"))
+    {
+        return fail("a rejected strip draw changed a pixel");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(strip_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("strip color target begin failed");
+    }
+    GLint strip_fbo = 0;
+    GLint strip_viewport[4] = {};
+    GLint strip_program = 0;
+    glGetIntegerv(0x8CA6, &strip_fbo);
+    glGetIntegerv(GL_VIEWPORT, strip_viewport);
+    glGetIntegerv(0x8B8D, &strip_program);
+    if (!igpu_draw(static_cast<std::uint64_t>(strip_buffer), 0, static_cast<std::uint64_t>(layout),
+                   5, 0, 4, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    GLint strip_fbo_after = 0;
+    GLint strip_viewport_after[4] = {};
+    GLint strip_program_after = 0;
+    GLboolean strip_cull = glIsEnabled(0x0B44);
+    glGetIntegerv(0x8CA6, &strip_fbo_after);
+    glGetIntegerv(GL_VIEWPORT, strip_viewport_after);
+    glGetIntegerv(0x8B8D, &strip_program_after);
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    if (strip_cull != GL_FALSE || strip_fbo_after != strip_fbo || strip_program_after != strip_program ||
+        strip_viewport_after[0] != strip_viewport[0] || strip_viewport_after[1] != strip_viewport[1] ||
+        strip_viewport_after[2] != strip_viewport[2] || strip_viewport_after[3] != strip_viewport[3])
+    {
+        return fail("igpu_draw strip changed the framebuffer, viewport, program, or cull face");
+    }
+    const auto strip_left = igpu_texture_read(static_cast<std::uint64_t>(strip_texture), 1, 4, 0, 0);
+    const auto strip_right = igpu_texture_read(static_cast<std::uint64_t>(strip_texture), 6, 4, 0, 0);
+    std::printf("strip pixels  : %lld / %lld\n", static_cast<long long>(strip_left),
+                static_cast<long long>(strip_right));
+    if (strip_left != 255 || strip_right != 0)
+    {
+        return fail("triangle strip did not paint only the left sample");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(strip_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("strip color target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(strip_buffer), 0, static_cast<std::uint64_t>(layout),
+                   5, 4, -1, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    const auto strip_tail_left = igpu_texture_read(static_cast<std::uint64_t>(strip_texture), 1, 4, 0, 0);
+    const auto strip_tail_right = igpu_texture_read(static_cast<std::uint64_t>(strip_texture), 6, 4, 0, 0);
+    std::printf("strip tail    : %lld / %lld\n", static_cast<long long>(strip_tail_left),
+                static_cast<long long>(strip_tail_right));
+    if (strip_tail_left != 255 || strip_tail_right != 255)
+    {
+        return fail("triangle strip tail did not paint only the right sample");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(strip_indexed_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("indexed strip color target begin failed");
+    }
+    if (!igpu_draw_indexed(static_cast<std::uint64_t>(strip_buffer), static_cast<std::uint64_t>(layout),
+                           static_cast<std::uint64_t>(strip_index_buffer), 5, 0, 4, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    const auto strip_index_left = igpu_texture_read(static_cast<std::uint64_t>(strip_indexed_texture), 1, 4, 0, 0);
+    const auto strip_index_right = igpu_texture_read(static_cast<std::uint64_t>(strip_indexed_texture), 6, 4, 0, 0);
+    std::printf("strip indexed : %lld / %lld\n", static_cast<long long>(strip_index_left),
+                static_cast<long long>(strip_index_right));
+    if (strip_index_left != 255 || strip_index_right != 0)
+    {
+        return fail("indexed triangle strip did not paint only the left sample");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(strip_indexed_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("indexed strip color target begin failed");
+    }
+    if (!igpu_draw_indexed(static_cast<std::uint64_t>(strip_buffer), static_cast<std::uint64_t>(layout),
+                           static_cast<std::uint64_t>(strip_index_buffer), 5, 4, -1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    const auto strip_index_tail_left =
+        igpu_texture_read(static_cast<std::uint64_t>(strip_indexed_texture), 1, 4, 0, 0);
+    const auto strip_index_tail_right =
+        igpu_texture_read(static_cast<std::uint64_t>(strip_indexed_texture), 6, 4, 0, 0);
+    std::printf("strip index tail: %lld / %lld\n", static_cast<long long>(strip_index_tail_left),
+                static_cast<long long>(strip_index_tail_right));
+    if (strip_index_tail_left != 255 || strip_index_tail_right != 255)
+    {
+        return fail("indexed triangle strip tail did not paint only the right sample");
+    }
+
+    const auto strip_target_bytes = encode_u64(static_cast<std::uint64_t>(strip_target_texture));
+    const auto strip_zero_bytes = encode_u64(0);
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(strip_buffer), static_cast<std::uint64_t>(layout),
+                                     5, 0, 4, as_array(strip_target_bytes), as_array(strip_zero_bytes),
+                                     as_array(strip_zero_bytes), 0, 0, 0, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    GLint strip_target_viewport[4] = {};
+    GLint strip_target_fbo = 0;
+    glGetIntegerv(GL_VIEWPORT, strip_target_viewport);
+    glGetIntegerv(0x8CA6, &strip_target_fbo);
+    if (strip_target_viewport[2] != 1 || strip_target_viewport[3] != 1 || strip_target_fbo != 0)
+    {
+        return fail("strip draw-to-targets left the framebuffer or viewport bound");
+    }
+    const auto strip_target_left = igpu_texture_read(static_cast<std::uint64_t>(strip_target_texture), 1, 4, 0, 0);
+    const auto strip_target_right = igpu_texture_read(static_cast<std::uint64_t>(strip_target_texture), 6, 4, 0, 0);
+    std::printf("strip target  : %lld / %lld\n", static_cast<long long>(strip_target_left),
+                static_cast<long long>(strip_target_right));
+    if (strip_target_left != 255 || strip_target_right != 0)
+    {
+        return fail("draw-to-targets triangle strip did not paint only the left sample");
+    }
+
     void* context = gl_probe_context();
     igpu_shutdown();
     if (!wglMakeCurrent(nullptr, nullptr) || !wglDeleteContext(static_cast<HGLRC>(context)))
