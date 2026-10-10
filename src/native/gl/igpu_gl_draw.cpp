@@ -97,6 +97,41 @@ namespace igpu
             fns.DisableVertexAttribArray(0);
             fns.DisableVertexAttribArray(1);
         }
+
+        bool gl_primitive_mode(std::int32_t primitive, GLenum& mode)
+        {
+            switch (primitive)
+            {
+            case 1: mode = GL_POINTS; return true;
+            case 2: mode = GL_LINES; return true;
+            case 3: mode = GL_LINE_STRIP; return true;
+            case 4: mode = GL_TRIANGLES; return true;
+            case 5: mode = GL_TRIANGLE_STRIP; return true;
+            default: return false;
+            }
+        }
+
+        bool gl_draw_accepted(const char* entry, std::int32_t primitive, std::int64_t blend_state,
+                              std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state,
+                              GLenum& mode)
+        {
+            if (primitive == 6)
+            {
+                set_last_error(std::string(entry) + ": the 'trianglefan' primitive has no backend equivalent");
+                return false;
+            }
+            if (!gl_primitive_mode(primitive, mode))
+            {
+                set_last_error(std::string(entry) + ": the opengl backend does not draw this primitive");
+                return false;
+            }
+            if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
+            {
+                set_last_error(std::string(entry) + ": the opengl backend draws with no extra state");
+                return false;
+            }
+            return true;
+        }
     }
 
     void gl_resources_release()
@@ -326,19 +361,15 @@ namespace igpu
                                          std::int64_t depth_state, std::int64_t raster_state,
                                          std::int64_t sampler_state)
     {
-        if (primitive == 6)
+        GLenum mode = GL_TRIANGLES;
+        if (!gl_draw_accepted("igpu_draw_to_render_targets", primitive, blend_state, depth_state, raster_state,
+                              sampler_state, mode))
         {
-            set_last_error("igpu_draw_to_render_targets: the 'trianglefan' primitive has no backend equivalent");
             return false;
         }
         if (targets.size() != 1 || layers.size() != 1 || mips.size() != 1)
         {
             set_last_error("igpu_draw_to_render_targets: the opengl backend accepts one target");
-            return false;
-        }
-        if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0 || primitive != 4)
-        {
-            set_last_error("igpu_draw_to_render_targets: the opengl backend only draws a triangle list with no extra state");
             return false;
         }
         std::int64_t target = 0;
@@ -396,7 +427,7 @@ namespace igpu
         glViewport(0, 0, texture->second.width, texture->second.height);
         fns.BindBuffer(GL_ARRAY_BUFFER, buffer->second.id);
         bind_vertices(buffer->second, first_vertex);
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(vertex_count));
+        glDrawArrays(mode, 0, static_cast<GLsizei>(vertex_count));
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, 0);
         glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2], previous_viewport[3]);
@@ -409,14 +440,9 @@ namespace igpu
                  std::int64_t first_vertex, std::int64_t vertex_count, std::int64_t blend_state,
                  std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state)
     {
-        if (primitive == 6)
+        GLenum mode = GL_TRIANGLES;
+        if (!gl_draw_accepted("igpu_draw", primitive, blend_state, depth_state, raster_state, sampler_state, mode))
         {
-            set_last_error("igpu_draw: the 'trianglefan' primitive has no backend equivalent");
-            return false;
-        }
-        if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0 || primitive != 4)
-        {
-            set_last_error("igpu_draw: the opengl backend only draws a triangle list with no extra state");
             return false;
         }
         const auto vertex = g_buffers.find(vertex_buffer);
@@ -469,7 +495,7 @@ namespace igpu
         fns.BindVertexArray(g_vertex_array);
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
         bind_vertices(vertex->second, 0);
-        glDrawArrays(GL_TRIANGLES, static_cast<GLint>(first_vertex), static_cast<GLsizei>(vertex_count));
+        glDrawArrays(mode, static_cast<GLint>(first_vertex), static_cast<GLsizei>(vertex_count));
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindVertexArray(0);
@@ -481,14 +507,10 @@ namespace igpu
                          std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
                          std::int64_t sampler_state)
     {
-        if (primitive == 6)
+        GLenum mode = GL_TRIANGLES;
+        if (!gl_draw_accepted("igpu_draw_indexed", primitive, blend_state, depth_state, raster_state, sampler_state,
+                              mode))
         {
-            set_last_error("igpu_draw_indexed: the 'trianglefan' primitive has no backend equivalent");
-            return false;
-        }
-        if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0 || primitive != 4)
-        {
-            set_last_error("igpu_draw_indexed: the opengl backend only draws a triangle list with no extra state");
             return false;
         }
         const auto vertex = g_buffers.find(vertex_buffer);
@@ -551,7 +573,7 @@ namespace igpu
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
         bind_vertices(vertex->second, 0);
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, index->second.id);
-        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(index_count), GL_UNSIGNED_SHORT,
+        glDrawElements(mode, static_cast<GLsizei>(index_count), GL_UNSIGNED_SHORT,
                        reinterpret_cast<const void*>(static_cast<std::uintptr_t>(first_index * kIndexSize)));
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
