@@ -55,6 +55,8 @@ namespace igpu
         LOAD(VertexAttribPointer, "glVertexAttribPointer")
         LOAD(GenVertexArrays, "glGenVertexArrays")
         LOAD(BindVertexArray, "glBindVertexArray")
+        LOAD(GetUniformLocation, "glGetUniformLocation")
+        LOAD(Uniform1i, "glUniform1i")
 #undef LOAD
         return true;
     }

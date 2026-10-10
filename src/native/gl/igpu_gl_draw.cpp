@@ -23,6 +23,10 @@
 #define GL_CURRENT_PROGRAM 0x8B8D
 #endif
 
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
 namespace igpu
 {
     namespace
@@ -83,6 +87,12 @@ namespace igpu
             {
                 fns.EnableVertexAttribArray(1);
                 fns.VertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, buffer.stride,
+                                        reinterpret_cast<const void*>(base + 8));
+            }
+            else if (buffer.stride == 16)
+            {
+                fns.EnableVertexAttribArray(1);
+                fns.VertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, buffer.stride,
                                         reinterpret_cast<const void*>(base + 8));
             }
             else
@@ -168,15 +178,16 @@ namespace igpu
     {
         const bool position = usage == 0 && bind == 1 && size > 0 && size % 8 == 0 && (stride == 0 || stride == 8);
         const bool coloured = usage == 0 && bind == 1 && size > 0 && size % 12 == 0 && stride == 12;
+        const bool textured = usage == 0 && bind == 1 && size > 0 && size % 16 == 0 && stride == 16;
         const bool index = usage == 0 && bind == 2 && stride == 0 && size > 0 && size % 2 == 0;
-        if (!position && !coloured && !index)
+        if (!position && !coloured && !textured && !index)
         {
-            set_last_error("igpu_buffer_create: the opengl backend only accepts a static float2 vertex buffer, a static position-and-colour vertex buffer, or a static 16-bit index buffer");
+            set_last_error("igpu_buffer_create: the opengl backend only accepts a static float2 vertex buffer, a static position-and-colour vertex buffer, a static position-and-texcoord vertex buffer, or a static 16-bit index buffer");
             return 0;
         }
         const auto& fns = igpu_gl_fns();
         const GLenum target = index ? GL_ELEMENT_ARRAY_BUFFER : GL_ARRAY_BUFFER;
-        const std::int32_t stored_stride = index ? 0 : (coloured ? 12 : 8);
+        const std::int32_t stored_stride = index ? 0 : (textured ? 16 : (coloured ? 12 : 8));
         GLuint id = 0;
         fns.GenBuffers(1, &id);
         fns.BindBuffer(target, id);
@@ -227,7 +238,7 @@ namespace igpu
     {
         if (shader == 0 || instance_stride != 0)
         {
-            set_last_error("igpu_input_layout_create: the opengl backend only accepts a float2 position, or a float2 position followed by a colour");
+            set_last_error("igpu_input_layout_create: the opengl backend only accepts a float2 position, a float2 position followed by a colour, or a float2 position followed by a float2 texcoord");
             return 0;
         }
         auto element_is = [&](std::size_t index, std::int64_t expect_usage, std::int64_t expect_type) {
@@ -245,13 +256,15 @@ namespace igpu
         const bool position = element_count == 1 && (vertex_stride == 0 || vertex_stride == 8) && element_is(0, 1, 2);
         const bool coloured = element_count == 2 && (vertex_stride == 0 || vertex_stride == 12) &&
                               element_is(0, 1, 2) && element_is(1, 2, 5);
-        if (!position && !coloured)
+        const bool textured = element_count == 2 && (vertex_stride == 0 || vertex_stride == 16) &&
+                              element_is(0, 1, 2) && element_is(1, 4, 2);
+        if (!position && !coloured && !textured)
         {
-            set_last_error("igpu_input_layout_create: the opengl backend only accepts a float2 position, or a float2 position followed by a colour");
+            set_last_error("igpu_input_layout_create: the opengl backend only accepts a float2 position, a float2 position followed by a colour, or a float2 position followed by a float2 texcoord");
             return 0;
         }
         const std::uint64_t handle = g_next_layout++;
-        g_layouts.emplace(handle, coloured ? 12 : 8);
+        g_layouts.emplace(handle, textured ? 16 : (coloured ? 12 : 8));
         return static_cast<std::int64_t>(handle);
     }
 
@@ -275,6 +288,8 @@ namespace igpu
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         GLuint framebuffer = 0;
         fns.GenFramebuffers(1, &framebuffer);
         fns.BindFramebuffer(GL_FRAMEBUFFER, framebuffer);
@@ -579,6 +594,97 @@ namespace igpu
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(previous_element));
         fns.BindVertexArray(0);
+        return true;
+    }
+
+    bool gl_draw_sampled(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
+                         std::int64_t first_vertex, std::int64_t vertex_count, std::uint64_t texture,
+                         std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
+                         std::int64_t sampler_state)
+    {
+        GLenum mode = GL_TRIANGLES;
+        if (!gl_draw_accepted("igpu_draw_sampled", primitive, blend_state, depth_state, raster_state, sampler_state,
+                              mode))
+        {
+            return false;
+        }
+        const auto source = g_textures.find(texture);
+        if (source == g_textures.end())
+        {
+            set_last_error("igpu_draw_sampled: unknown texture handle");
+            return false;
+        }
+        const auto vertex = g_buffers.find(vertex_buffer);
+        if (vertex == g_buffers.end())
+        {
+            set_last_error("igpu_draw_sampled: unknown buffer or layout");
+            return false;
+        }
+        const auto layout_it = g_layouts.find(layout);
+        if (layout_it == g_layouts.end() || layout_it->second != vertex->second.stride)
+        {
+            set_last_error("igpu_draw_sampled: the vertex buffer stride does not match the input layout");
+            return false;
+        }
+        if (vertex->second.bind != 1 || vertex->second.stride <= 0)
+        {
+            set_last_error("igpu_draw_sampled: the vertex buffer was not created with IgpuBufferBind.Vertex");
+            return false;
+        }
+        const std::int64_t vertex_total = vertex->second.size / vertex->second.stride;
+        if (vertex_count < 0)
+        {
+            vertex_count = vertex_total - first_vertex;
+        }
+        if (first_vertex < 0 || vertex_count <= 0)
+        {
+            set_last_error("igpu_draw_sampled: the resolved vertex count is zero");
+            return false;
+        }
+        if (first_vertex + vertex_count > vertex_total)
+        {
+            set_last_error("igpu_draw_sampled: the vertex range is outside the buffer");
+            return false;
+        }
+        GLint program = 0;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+        if (program == 0)
+        {
+            set_last_error("igpu_draw_sampled: no shader program is bound");
+            return false;
+        }
+        GLint draw_fbo = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &draw_fbo);
+        if (static_cast<GLuint>(draw_fbo) == source->second.framebuffer)
+        {
+            set_last_error("igpu_draw_sampled: the texture is the current color target");
+            return false;
+        }
+        const auto& fns = igpu_gl_fns();
+        const GLint sampler = fns.GetUniformLocation(static_cast<GLuint>(program), "igpu_tex");
+        if (sampler < 0)
+        {
+            set_last_error("igpu_draw_sampled: the bound program has no sampler uniform 'igpu_tex'");
+            return false;
+        }
+        if (g_vertex_array == 0)
+        {
+            fns.GenVertexArrays(1, &g_vertex_array);
+        }
+        GLint previous_array = 0;
+        GLint previous_texture = 0;
+        glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
+        glBindTexture(GL_TEXTURE_2D, source->second.texture);
+        fns.Uniform1i(sampler, 0);
+        fns.BindVertexArray(g_vertex_array);
+        fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
+        bind_vertices(vertex->second, 0);
+        glDrawArrays(mode, static_cast<GLint>(first_vertex), static_cast<GLsizei>(vertex_count));
+        unbind_vertices();
+        fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
+        fns.BindVertexArray(0);
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
         return true;
     }
 }

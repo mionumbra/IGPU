@@ -1,12 +1,12 @@
 # IGPU — 交接文档
 
 > 最后更新：2026-10-10
-> 状态：**0.5.0**。公开函数 60 个。Windows D3D11 已跑通像素测试。OpenGL 后端只在探针里，Windows 的 GameMaker DLL 没有它。索引绘制、非索引 `igpu_draw`、顶点颜色，以及图元 1、2、3、5 都已合并进 `main`。顶点颜色左红 `255`、右蓝 `16711680`。三角带左 `255`、右 `0`，随后右边也是 `255`。
+> 状态：**0.5.0**。公开函数 60 个。Windows D3D11 已跑通像素测试。OpenGL 后端只在探针里，Windows 的 GameMaker DLL 没有它。索引绘制、非索引 `igpu_draw`、顶点颜色，以及图元 1、2、3、5 都已合并进 `main`。顶点颜色左红 `255`、右蓝 `16711680`。三角带左 `255`、右 `0`，随后右边也是 `255`。最近点纹理采样在探针里，已经进入 `main`：源左 `255` 右 `16711680`，采样尾巴右边是 `16711680`，常数 `u = 0.484375` 两边都是 `255`。
 > 版本：`0.5.0`
 > Git：分支 `main`，合并提交 HEAD `83afeb8`（此值易腐烂——以 `git rev-parse --short HEAD` 为准）。拉取请求 #2、#3、#4 都已合并。`gl-primitives` 停在 `3e0a1f2`，已经包含在 `83afeb8` 里。`gl-vertex-colour` 停在 `7c0c6e4`，已经包含在 `0885e67` 里。`gl-draw` 停在 `31c6982`。`gl-bind-current` 停在 `fb4a9a5`，是拉取请求 #1 合并前的尖端，已经包含在 `main` 里。
 > **接手第一件事：读 `SESSION_HANDOVER.md` 开头，再跑 `pwsh -File tools\verify_handover.ps1`**
 >
-> 📄 **2026-10-10 的交接在 `SESSION_HANDOVER.md` 开头。** 图元 1、2、3、5 已随拉取请求 #4 进入 `main`，不要重做。顶点颜色已随拉取请求 #3 进入 `main`。非索引 `igpu_draw` 已随拉取请求 #2 进入 `main`。图元 6 仍拒绝。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和成功的 `glsl_es` 编译也还不要做。下一刀还没定。9 月审计记录仍在 `SESSION_HANDOVER.md` 下半截。
+> 📄 **2026-10-10 的交接在 `SESSION_HANDOVER.md` 开头。** 图元 1、2、3、5 已随拉取请求 #4 进入 `main`，不要重做。顶点颜色已随拉取请求 #3 进入 `main`。非索引 `igpu_draw` 已随拉取请求 #2 进入 `main`。图元 6 仍拒绝。最近点纹理采样已进入 `main`。Git Bash 在 `D:\Program Files\Git\bin\bash.exe`，不在 PowerShell 的 `PATH` 里。采样器状态对象、混合、深度、光栅、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询、ES 2，以及成功的 `glsl_es` 编译，都先不要做。再下一刀还没定。9 月审计记录仍在 `SESSION_HANDOVER.md` 下半截。
 >
 > 🔴 本次会话用**真实引擎源码**做了审计，发现并修复了若干问题。
 > 详细结论见 `tools/engine_audit.md`；本文档 §0.0 是摘要。
@@ -125,7 +125,7 @@ extgen --config config.json
 
 当前的优先级是：
 
-1. **OpenGL 图元 1、2、3、5 已合并进 `main`（拉取请求 #4，`83afeb8`）。** 顶点颜色早先随拉取请求 #3（`0885e67`）进入 `main`。非索引 `igpu_draw` 早先随拉取请求 #2（`edb0ccd`）进入 `main`。`GlBackend::draw` 转到 `gl_draw`。三角带左 `255`、右 `0`，随后右边也是 `255`。点只点亮纹素中心。线列表空隙 `(3,4)` 是 `0`。图元 6 仍拒绝。Windows 的 GameMaker DLL 仍没有 OpenGL 后端。不要加 ANGLE，也不要改三个指针的 `igpu_init`。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询、ES 2，以及成功的 `glsl_es` 编译，都先不要做。下一刀还没定。分工和命令写在 `SESSION_HANDOVER.md` 开头。
+1. **OpenGL 最近点纹理采样已进入 `main`。** 图元 1、2、3、5 早先随拉取请求 #4（`83afeb8`）进入 `main`。顶点颜色早先随拉取请求 #3（`0885e67`）进入 `main`。非索引 `igpu_draw` 早先随拉取请求 #2（`edb0ccd`）进入 `main`。`GlBackend::draw_sampled` 转到 `gl_draw_sampled`。源纹理左 `255`、右 `16711680`，采样尾巴右边是 `16711680`。图元 6 仍拒绝。Windows 的 GameMaker DLL 仍没有 OpenGL 后端。不要加 ANGLE，也不要改三个指针的 `igpu_init`。采样器状态对象、混合、深度、光栅、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询、ES 2，以及成功的 `glsl_es` 编译，都先不要做。再下一刀还没定。分工和命令写在 `SESSION_HANDOVER.md` 开头。
 
 接手时先读 `SESSION_HANDOVER.md` 开头。比较采样的偏移、最细、最粗和线性过滤上的各向异性已经在 Direct3D 11 上用像素证明。实例化、间接、面片、画进纹理和采样绘制都会应用并恢复管线状态。
 
@@ -1179,6 +1179,9 @@ node $cli run --no-errors-only      # PASS 退出码 0，FAIL 退出码 1
 
 # 查 GML 文档
 node $cli manual read <fn>
+
+# Git Bash 不在 PATH 里
+& "D:\Program Files\Git\bin\bash.exe" --version
 
 # Git
 git log --oneline

@@ -256,10 +256,13 @@ namespace igpu
                     vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips, blend_state,
                     depth_state, raster_state, sampler_state);
             }
-            bool draw_sampled(std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t, std::uint64_t,
-                              std::int64_t, std::int64_t, std::int64_t, std::int64_t) override
+            bool draw_sampled(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
+                              std::int64_t first_vertex, std::int64_t vertex_count, std::uint64_t texture,
+                              std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
+                              std::int64_t sampler_state) override
             {
-                return not_yet("igpu_draw_sampled");
+                return gl_draw_sampled(vertex_buffer, layout, primitive, first_vertex, vertex_count, texture,
+                                       blend_state, depth_state, raster_state, sampler_state);
             }
 
             bool reflect_uniforms(const void*, std::size_t, UniformLayout& out) override
@@ -521,6 +524,7 @@ namespace igpu
                 fns.AttachShader(program, shaders[pixel->second].shader);
                 fns.BindAttribLocation(program, 0, "in_pos");
                 fns.BindAttribLocation(program, 1, "in_colour");
+                fns.BindAttribLocation(program, 1, "in_uv");
                 fns.LinkProgram(program);
                 GLint ok = 0;
                 fns.GetProgramiv(program, GL_LINK_STATUS, &ok);

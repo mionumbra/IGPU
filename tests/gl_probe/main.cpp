@@ -1283,6 +1283,279 @@ int main()
         return fail("draw-to-targets line did not paint only the left sample");
     }
 
+    if (!igpu_shader_bind(colour_vert, 0) || !igpu_shader_bind(colour_frag, 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto sample_source = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto sample_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (sample_source == 0 || sample_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    std::int32_t sample_saved_fbo = 0;
+    std::int32_t sample_held_viewport[4] = {};
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sample_source), sample_saved_fbo,
+                                     sample_held_viewport))
+    {
+        return fail("sample source target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(colour_buffer), 0, static_cast<std::uint64_t>(colour_layout),
+                   4, 0, 12, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    const auto sample_source_left = igpu_texture_read(static_cast<std::uint64_t>(sample_source), 1, 4, 0, 0);
+    const auto sample_source_right = igpu_texture_read(static_cast<std::uint64_t>(sample_source), 6, 4, 0, 0);
+    std::printf("sample source : %lld / %lld\n", static_cast<long long>(sample_source_left),
+                static_cast<long long>(sample_source_right));
+    if (sample_source_left != 255 || sample_source_right != 16711680)
+    {
+        return fail("sample source was not red on the left and blue on the right");
+    }
+
+    const char* sample_vs =
+        "#version 120\n"
+        "attribute vec2 in_pos;\n"
+        "attribute vec2 in_uv;\n"
+        "varying vec2 v_uv;\n"
+        "void main() {\n"
+        "  gl_Position = vec4(in_pos, 0.0, 1.0);\n"
+        "  v_uv = in_uv;\n"
+        "}\n";
+    const char* sample_ps =
+        "#version 120\n"
+        "uniform sampler2D igpu_tex;\n"
+        "varying vec2 v_uv;\n"
+        "void main() { gl_FragColor = texture2D(igpu_tex, v_uv); }\n";
+    const auto sample_vert = igpu_shader_compile(sample_vs, "main", 0, "glsl");
+    const auto sample_frag = igpu_shader_compile(sample_ps, "main", 1, "glsl");
+    if (sample_vert == 0 || sample_frag == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    struct SampleVertex
+    {
+        float x;
+        float y;
+        float u;
+        float v;
+    };
+    static_assert(sizeof(SampleVertex) == 16, "sample vertex must be tightly packed");
+    const SampleVertex sample_vertices[6] = {
+        {-1.f, -1.f, 0.f, 0.f}, {1.f, -1.f, 1.f, 0.f}, {-1.f, 1.f, 0.f, 1.f},
+        {1.f, -1.f, 1.f, 0.f},  {1.f, 1.f, 1.f, 1.f},  {-1.f, 1.f, 0.f, 1.f},
+    };
+    const auto sample_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(sample_vertices)), 0, 1, 16);
+    if (sample_buffer == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(sample_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<SampleVertex*>(sample_vertices), sizeof(sample_vertices))))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto sample_usage = encode_i32_2(1, 4);
+    const auto sample_type = encode_i32_2(2, 2);
+    const auto sample_step = encode_i32_2(0, 0);
+    const auto sample_layout = igpu_input_layout_create(
+        sample_vert, as_array(sample_usage), as_array(sample_type), as_array(sample_step), 2, 16, 0);
+    if (sample_layout == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(sample_vert, 0) || !igpu_shader_bind(sample_frag, 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sample_dest), sample_saved_fbo, sample_held_viewport))
+    {
+        return fail("sample dest target begin failed");
+    }
+    if (!igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout),
+                           4, 0, 3, static_cast<std::uint64_t>(sample_source), 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    const auto sample_left = igpu_texture_read(static_cast<std::uint64_t>(sample_dest), 1, 4, 0, 0);
+    const auto sample_right = igpu_texture_read(static_cast<std::uint64_t>(sample_dest), 6, 4, 0, 0);
+    std::printf("sample pixels : %lld / %lld\n", static_cast<long long>(sample_left),
+                static_cast<long long>(sample_right));
+    if (sample_left != 255 || sample_right != 0)
+    {
+        return fail("sampled draw did not paint only the left texel from the texture");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sample_dest), sample_saved_fbo, sample_held_viewport))
+    {
+        return fail("sample tail target begin failed");
+    }
+    if (!igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout),
+                           4, 3, -1, static_cast<std::uint64_t>(sample_source), 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    const auto sample_tail_left = igpu_texture_read(static_cast<std::uint64_t>(sample_dest), 1, 4, 0, 0);
+    const auto sample_tail_right = igpu_texture_read(static_cast<std::uint64_t>(sample_dest), 6, 4, 0, 0);
+    const auto sample_source_after_left = igpu_texture_read(static_cast<std::uint64_t>(sample_source), 1, 4, 0, 0);
+    const auto sample_source_after_right = igpu_texture_read(static_cast<std::uint64_t>(sample_source), 6, 4, 0, 0);
+    std::printf("sample tail   : %lld / %lld\n", static_cast<long long>(sample_tail_left),
+                static_cast<long long>(sample_tail_right));
+    if (sample_tail_left != 255 || sample_tail_right != 16711680)
+    {
+        return fail("sampled tail was not red on the left and blue on the right");
+    }
+    if (sample_source_after_left != 255 || sample_source_after_right != 16711680)
+    {
+        return fail("sampled draw changed the source texture");
+    }
+
+    const SampleVertex nearest_vertices[6] = {
+        {-1.f, -1.f, 0.484375f, 0.5f}, {1.f, -1.f, 0.484375f, 0.5f}, {-1.f, 1.f, 0.484375f, 0.5f},
+        {1.f, -1.f, 0.484375f, 0.5f},  {1.f, 1.f, 0.484375f, 0.5f},  {-1.f, 1.f, 0.484375f, 0.5f},
+    };
+    const auto nearest_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(nearest_vertices)), 0, 1, 16);
+    const auto nearest_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (nearest_buffer == 0 || nearest_dest == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(nearest_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<SampleVertex*>(nearest_vertices), sizeof(nearest_vertices))))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(nearest_dest), sample_saved_fbo, sample_held_viewport))
+    {
+        return fail("nearest target begin failed");
+    }
+    if (!igpu_draw_sampled(static_cast<std::uint64_t>(nearest_buffer), static_cast<std::uint64_t>(sample_layout),
+                           4, 0, 6, static_cast<std::uint64_t>(sample_source), 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    const auto nearest_left = igpu_texture_read(static_cast<std::uint64_t>(nearest_dest), 1, 4, 0, 0);
+    const auto nearest_right = igpu_texture_read(static_cast<std::uint64_t>(nearest_dest), 6, 4, 0, 0);
+    std::printf("sample nearest: %lld / %lld\n", static_cast<long long>(nearest_left),
+                static_cast<long long>(nearest_right));
+    if (nearest_left != 255 || nearest_right != 255)
+    {
+        return fail("nearest sample at u=0.484375 was not pure red");
+    }
+
+    GLint sample_bound_texture = 1;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &sample_bound_texture);
+    if (sample_bound_texture != 0)
+    {
+        return fail("sampled draw left a texture bound");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sample_source), sample_saved_fbo, sample_held_viewport))
+    {
+        return fail("feedback target begin failed");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout),
+                          4, 0, 6, static_cast<std::uint64_t>(sample_source), 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("sampling the current color target was accepted");
+    }
+    if (std::string(igpu_get_last_error()).find("the texture is the current color target") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(sample_source), 1, 4, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_source), 6, 4, 0, 0) != 16711680)
+    {
+        return fail("rejected feedback draw changed the source texture");
+    }
+
+    const auto sample_reject = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (sample_reject == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(frag, 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sample_reject), sample_saved_fbo, sample_held_viewport))
+    {
+        return fail("reject target begin failed");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout),
+                          4, 0, 6, static_cast<std::uint64_t>(sample_source), 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("a program without igpu_tex was accepted");
+    }
+    if (std::string(igpu_get_last_error()).find("no sampler uniform 'igpu_tex'") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(sample_reject), 1, 4, 0, 0) != 0 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_reject), 6, 4, 0, 0) != 0)
+    {
+        return fail("rejected sample changed pixels");
+    }
+
+    if (!igpu_shader_bind(sample_frag, 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sample_reject), sample_saved_fbo, sample_held_viewport))
+    {
+        return fail("state reject target begin failed");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout),
+                          4, 0, 6, static_cast<std::uint64_t>(sample_source), 0, 0, 0, 1) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("a nonzero sampler handle was not rejected");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout),
+                          4, 0, 6, 0, 0, 0, 0, 0) ||
+        std::string(igpu_get_last_error()).find("unknown texture handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("texture 0 was not rejected");
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(sample_reject), 1, 4, 0, 0) != 0 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_reject), 6, 4, 0, 0) != 0)
+    {
+        return fail("rejected sampler handle or texture 0 changed pixels");
+    }
+
+    const auto stride_zero = igpu_buffer_create(96, 0, 1, 0);
+    if (stride_zero == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sample_reject), sample_saved_fbo, sample_held_viewport))
+    {
+        return fail("stride reject target begin failed");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(stride_zero), static_cast<std::uint64_t>(sample_layout),
+                          4, 0, 6, static_cast<std::uint64_t>(sample_source), 0, 0, 0, 0) ||
+        std::string(igpu_get_last_error()).find("stride does not match") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("stride 0 buffer was accepted as texcoord data");
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(sample_reject), 1, 4, 0, 0) != 0)
+    {
+        return fail("rejected stride 0 sample changed pixels");
+    }
+
     void* context = gl_probe_context();
     igpu_shutdown();
     if (!wglMakeCurrent(nullptr, nullptr) || !wglDeleteContext(static_cast<HGLRC>(context)))

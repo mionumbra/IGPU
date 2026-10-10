@@ -1,4 +1,4 @@
-# 会话交接 — 2026-10-10 — 版本 0.5.0 — OpenGL 点、线、三角带已合并
+# 会话交接 — 2026-10-10 — 版本 0.5.0 — OpenGL 最近点纹理采样已在探针里
 
 > 先读这一节，再改代码。`HANDOVER.md` 是长文档，开头版本是 `0.5.0`。正文里 9 月的叙述已经过时。本文下半截仍保留 2026-09-23 审计记录。
 >
@@ -18,7 +18,13 @@
 
 已知的小缺口，不是下一刀：未知布局句柄的错误写成「the vertex buffer stride does not match the input layout」。调用失败，像素不变。`first_index + index_count` 和 `first_vertex + vertex_count` 在特别大的正数上可能回绕，再被收成 `GLsizei`。Direct3D 有同样的写法。探针里的 13 个索引和 12 个顶点不会走到这里。非索引线带的两段各是 2 个顶点，`GL_LINES` 和 `GL_LINE_STRIP` 对这两段画出来一样。区分它们的是索引路径上一次画 3 个顶点。不要为了这个再开一刀。
 
-下一刀还没定。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。那些平台上的 GameMaker 运行这台机器证明不了。
+最近点纹理采样只在探针里，已经进入 `main`。`igpu_draw_sampled` 把 `g_textures` 里的 rgba8 绑到当前二维纹理，把当前程序的 `uniform sampler2D igpu_tex` 设为 0，画进调用方已经 current 的帧缓冲。不清屏，不改帧缓冲、视口和程序。返回前恢复 `GL_TEXTURE_BINDING_2D`。过滤是创建时设下的最近点，包裹是钳制到边缘。不创建采样器对象，不调用 `glActiveTexture`。
+
+源纹理左红 `255`、右蓝 `16711680`。采样四边形的前 3 个顶点只让目标左边变成 `255`，右边保持 `0`。从第 3 个顶点、`vertex_count = -1` 再画，右边变成 `16711680`。常数 `u = 0.484375` 的全屏四边形两边都是 `255`。源纹理在这些绘制之后不变。
+
+被采样的纹理若是当前颜色附件，调用失败，错误含有 `the texture is the current color target`，源像素不变。没有 `igpu_tex` 的程序失败，错误含有 `no sampler uniform 'igpu_tex'`，目标保持 `0`。采样器句柄非 0 失败，错误含有 `draws with no extra state`。纹理句柄 0 失败，错误含有 `unknown texture handle`。`igpu_buffer_create(96, 0, 1, 0)` 仍是步长 8，配上纹理坐标布局失败，错误含有 `stride does not match`。
+
+采样器状态对象、混合、深度、光栅、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。再下一刀还没定。那些平台上的 GameMaker 运行这台机器证明不了。
 
 `gl-draw` 还在。本地和 `origin/gl-draw` 都是 `31c6982`，那是合并前的尖端，已经包含在 `edb0ccd` 里。
 
@@ -33,6 +39,8 @@
 
 非索引的 `igpu_draw` 已在探针里证明。`GlBackend::draw` 转到 `gl_draw`。它画进调用方已经 current 的帧缓冲，不清屏，不改帧缓冲绑定和视口，也不调用 `UseProgram`。三角形列表的前 6 个顶点只把左半边画成红 `255`，右半边保持清屏黑 `0`。从顶点 6 起、`vertex_count = -1` 再把右半边画成红，左半边仍是红。图元 `6` 和任何一个非 0 的状态句柄都被拒绝，像素保持 `0`。索引缓冲不能当成顶点缓冲。
 
+Git Bash 在 `D:\Program Files\Git`。`bash.exe` 是 `D:\Program Files\Git\bin\bash.exe`，PowerShell 的 `PATH` 里没有它。需要 bash 时用这个路径，不要当成没安装。
+
 动手前先在 `main` 上拉取，再跑下面三件事，确认树还是绿的：
 
 ```
@@ -41,7 +49,7 @@ cmake --build --preset win-x64-release-vs18 --target igpu_gl_probe
 out\build\win-x64-release\src\Release\igpu_gl_probe.exe
 ```
 
-探针退出码 0，并打印这二十三行和 `PASS`：
+探针退出码 0，并打印这二十七行和 `PASS`：
 
 ```
 pixels       : 255 / 16711680 / 16711680
@@ -67,6 +75,10 @@ line strip    : 255 / 0
 line strip tail: 255 / 255
 line indexed  : 255 / 255
 line target   : 255 / 0
+sample source : 255 / 16711680
+sample pixels : 255 / 0
+sample tail   : 255 / 16711680
+sample nearest: 255 / 255
 ```
 
 可执行文件在 `src\Release` 下，不在预设目录的 `Release` 根上。
@@ -157,6 +169,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 非索引像素 | `255 / 0`，随后右半边也是 `255` |
 | GL 顶点颜色 | `255 / 16711680`；随后 float2 绘制是 `0 / 0`；alpha 0 仍是 `255`；从第 6 个顶点画进纹理时是 `0 / 16711680` |
 | GL 图元 1/2/3/5 | 三角带 `255 / 0`，随后右边也是 `255`。点是单个纹素 `255`，邻居是 `0`。线列表是 `255 / 0 / 255`。线带随后右边也是 `255` |
+| GL 纹理采样 | 源 `255 / 16711680`。前 3 个顶点是 `255 / 0`，尾巴是 `255 / 16711680`。常数 `u = 0.484375` 是 `255 / 255` |
 | Git | 拉取请求 #4 的合并提交是 `83afeb8`。写这份交接时 `origin/main` 就是它。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 的合并提交是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 的合并提交是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
@@ -182,15 +195,15 @@ out\build\win-x64-release\src\Release\igpu_gl_probe.exe
 
 - `tests/gl_probe/wgl_host.cpp` 拥有窗口和 `HGLRC`。`gl_probe_forget()` 只把句柄置空，不删除。
 - `src/native/gl/igpu_gl_loader.cpp` 用 `wglGetProcAddress` 装 GL 2.0 入口。`<GL/gl.h>` 之前要先 include `<Windows.h>`。
-- `src/native/gl/igpu_gl_backend.cpp` 是 `GlBackend`。`draw_indexed` 已经转到 `gl_draw_indexed`。`draw` 转到 `gl_draw`。没实现的虚函数返回 0 或 false，错误以 `: the opengl backend does not implement this call yet` 结尾。
+- `src/native/gl/igpu_gl_backend.cpp` 是 `GlBackend`。`draw_indexed` 已经转到 `gl_draw_indexed`。`draw` 转到 `gl_draw`。`draw_sampled` 转到 `gl_draw_sampled`。没实现的虚函数返回 0 或 false，错误以 `: the opengl backend does not implement this call yet` 结尾。
 - `src/native/gl/igpu_gl_draw.cpp` 管缓冲、布局、纹理、绘制、读回。
 - `src/CMakeLists.txt` 把核心源、`d3d11`、`gl` 和 `code_gen` 编进 `igpu_gl_probe`，并定义 `IGPU_HAS_OPENGL`、`NOMINMAX`、`WIN32_LEAN_AND_MEAN`。DLL 目标没有这些。
 
 已经为 true 的能力：`ShaderCompileRuntime`、`ShaderStageVertex`、`ShaderStagePixel`、`Texture2D`、`InputLayout`、`VertexBuffer`、`IndexBuffer`、`Draw`、`DrawIndexed`、`DrawStateRestore`。`formats.surface_rgba8unorm` 为 true，另外七个格式为 false。`igpu_get_feature_level()` 在 GL 上是 `0`（`Unknown`）。没有 DXGI 适配器时，显存和后缓冲尺寸是 0，设备名来自 `GL_RENDERER`。方言是 `glsl`。
 
-着色器是 `#version 120`。入口必须是 `main`。空方言和 `"glsl"` 可以编译。`"hlsl"` 被拒绝。顶点阶段和像素阶段都绑上之后才链成一个程序，属性 0 叫 `in_pos`，属性 1 叫 `in_colour`。不声明 `in_colour` 的程序仍然能链上。阶段绑错会失败，原来的绑定还在。`shader_bind(0, stage)` 解绑该阶段。
+着色器是 `#version 120`。入口必须是 `main`。空方言和 `"glsl"` 可以编译。`"hlsl"` 被拒绝。顶点阶段和像素阶段都绑上之后才链成一个程序，属性 0 叫 `in_pos`。属性 1 在颜色程序里是 `in_colour`，在采样程序里是 `in_uv`。不声明 `in_colour` 的程序仍然能链上。阶段绑错会失败，原来的绑定还在。`shader_bind(0, stage)` 解绑该阶段。
 
-绘制接受图元 `1`、`2`、`3`、`4`、`5`（点列表、线列表、线带、三角形列表、三角带），并且只接受一个目标、layer 0、mip 0、四个状态句柄都是 0。图元 `6` 是扇形，拒绝且不改像素。图元 `0` 和 `7` 拒绝，错误含有 `does not draw this primitive`。非零状态句柄拒绝，错误含有 `draws with no extra state`。点大小和线宽保持 1。`igpu_draw` 与 `igpu_draw_indexed` 不改帧缓冲、视口和程序。`igpu_draw_to_render_targets` 会恢复帧缓冲和视口。布局接受一个 `float2` 位置（usage `1`，type `2`，step `0`，stride 0 或 8），也接受 float2 后面接一个 4 字节颜色（usage `2`，type `5`），缓冲步长必须显式写成 12。绘制按这个步长绑属性 0 和属性 1，返回前都关掉。其它布局和步长仍拒绝。顶点缓冲是静态的，一次写满。索引缓冲也是静态的，16 位，`bind` 为 2，stride 为 0，长度是 2 的倍数。`igpu_draw` 和 `igpu_draw_indexed` 都画进当前帧缓冲，不清屏。探针用 `gl_color_target_begin` 把 IGPU 纹理绑成当前目标，画完再还原。读回把 RGBA 收成 `r | (g << 8) | (b << 16)`，丢掉 alpha。`gl_row = height - 1 - y`，所以 `y = 0` 是裁剪空间的上方。画进纹理的 `igpu_draw_to_render_targets` 返回前恢复 `GL_FRAMEBUFFER_BINDING` 和 `GL_VIEWPORT`，不解开调用方绑好的程序。`igpu_draw` 和 `igpu_draw_indexed` 不动帧缓冲、视口和程序；它们恢复顶点数组和数组缓冲。索引绘制另外恢复元素数组缓冲。
+绘制接受图元 `1`、`2`、`3`、`4`、`5`（点列表、线列表、线带、三角形列表、三角带），并且只接受一个目标、layer 0、mip 0、四个状态句柄都是 0。图元 `6` 是扇形，拒绝且不改像素。图元 `0` 和 `7` 拒绝，错误含有 `does not draw this primitive`。非零状态句柄拒绝，错误含有 `draws with no extra state`。点大小和线宽保持 1。`igpu_draw` 与 `igpu_draw_indexed` 不改帧缓冲、视口和程序。`igpu_draw_to_render_targets` 会恢复帧缓冲和视口。布局接受一个 `float2` 位置（usage `1`，type `2`，step `0`，stride 0 或 8），也接受 float2 后面接一个 4 字节颜色（usage `2`，type `5`），缓冲步长必须显式写成 12，也接受 float2 位置后面接 float2 纹理坐标（usage `4`，type `2`），缓冲步长必须显式写成 16。步长 0 仍是位置缓冲。`igpu_draw_sampled` 已从 `not_yet` 转成 `gl_draw_sampled`。绘制按这个步长绑属性 0 和属性 1，返回前都关掉。其它布局和步长仍拒绝。顶点缓冲是静态的，一次写满。索引缓冲也是静态的，16 位，`bind` 为 2，stride 为 0，长度是 2 的倍数。`igpu_draw` 和 `igpu_draw_indexed` 都画进当前帧缓冲，不清屏。探针用 `gl_color_target_begin` 把 IGPU 纹理绑成当前目标，画完再还原。读回把 RGBA 收成 `r | (g << 8) | (b << 16)`，丢掉 alpha。`gl_row = height - 1 - y`，所以 `y = 0` 是裁剪空间的上方。画进纹理的 `igpu_draw_to_render_targets` 返回前恢复 `GL_FRAMEBUFFER_BINDING` 和 `GL_VIEWPORT`，不解开调用方绑好的程序。`igpu_draw` 和 `igpu_draw_indexed` 不动帧缓冲、视口和程序；它们恢复顶点数组和数组缓冲。索引绘制另外恢复元素数组缓冲。
 
 `supports()` 里的局部量 `native` 等于 `d3d11_backend()`。交接脚本把裸的 `return native` 当成这份构建上的恒 true。OpenGL 多出来的 true 写成 `native || opengl_backend()`。不要把 `native` 改回「任意后端」，否则 GL 会继承计算、三维纹理和查询。
 
@@ -268,6 +281,7 @@ HEAD      add3cf2   (main)
 | 引擎源码 | `D:\Users\User\Documents\gml_ext\OpenGM\` | 审计依据（去混淆，非官方） |
 | gm-cli | `D:\node.js\node_cache\_npx\166e0ec5f4c2d768\...\gm-cli\dist\cli.js` | 跑集成测试 |
 | YoYo.lib 符号 | `...\runtime-2026.0.0.23\yyc\Win32\lib\x64\YoYo.lib` | 符号层交叉验证 |
+| Git Bash | `D:\Program Files\Git\bin\bash.exe` | PowerShell 的 `PATH` 里没有 bash。需要时用这个路径 |
 
 > `OpenGM` 是**去混淆的派生源码**，不是官方发布。本次结论都用
 > `YoYo.lib` 符号做了交叉验证，两者一致 —— 但**不要把源码当稳定 API**。
