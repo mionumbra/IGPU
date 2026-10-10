@@ -1,4 +1,4 @@
-# 会话交接 — 2026-10-10 — 版本 0.5.0 — OpenGL 钳制与重复采样已进入 main
+# 会话交接 — 2026-10-11 — 版本 0.5.0 — 钳制与重复已在 main，下一刀未定
 
 > 先读这一节，再改代码。`HANDOVER.md` 是长文档，开头版本是 `0.5.0`。正文里 9 月的叙述已经过时。本文下半截仍保留 2026-09-23 审计记录。
 >
@@ -8,7 +8,7 @@
 
 **合并规则，先读这一段。** 功能分支必须推送到 `origin`。进入 `main` 只能通过 GitHub 拉取请求（pull request）：先推送分支，再开拉取请求，由拉取请求合并。不要在本地 `merge`（包括 `--no-ff` 和快进）之后直接 `push origin main`。交接文档自己的修改也走拉取请求，不要直接推 `main`。已经用拉取请求合并过的旧分支不要再开一次。`9c56d05`（最近点采样）和 `84b40f5`（钳制与重复）是在这条规则写明之前直接推进 `main` 的，不要照做。
 
-停在 `main`。钳制与重复的合并提交是 `84b40f5`。`gl-address` 已推送，尖端是 `95867cd`，已经包含在 `84b40f5` 里。不要重做这一刀的代码。这份文档自己的提交在 `84b40f5` 之后，以 `git rev-parse --short HEAD` 为准。
+停在 `main`。写这份交接时，`origin/main` 是拉取请求 #5 的合并提交 `332e1a8`。那一笔只写了合并规则。钳制与重复的代码合并提交是 `84b40f5`，没有走拉取请求，不要照做。`gl-address` 已推送，尖端 `95867cd`，已经包含在 `84b40f5` 里。不要重做这一刀的代码，也不要再为它开拉取请求。这份交接自己的提交在 `332e1a8` 之后，以 `git rev-parse --short HEAD` 为准。
 
 计划在 `superpowers/plans/2026-10-10-gl-address.md`。更早的最近点采样计划在 `superpowers/plans/2026-10-10-gl-sample.md`。两份都已经证明，不要重做：
 
@@ -26,7 +26,7 @@
 
 混合、深度、光栅、边框色、镜像、线性过滤、各向异性、比较、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。再下一刀还没定。那些平台上的 GameMaker 运行这台机器证明不了。纹理单元保持调用方原来的值；探针的默认单元是 0。
 
-更早的 OpenGL 也在 `main` 上，不要重做，也不要再开拉取请求。拉取请求 https://github.com/mionumbra/IGPU/pull/4 的合并提交是 `83afeb8`，图元 1、2、3、5。`gl-primitives` 尖端 `3e0a1f2` 已经包含在里面。拉取请求 https://github.com/mionumbra/IGPU/pull/3 的合并提交是 `0885e67`，顶点颜色。`gl-vertex-colour` 尖端 `7c0c6e4`。拉取请求 https://github.com/mionumbra/IGPU/pull/2 的合并提交是 `edb0ccd`，非索引 `igpu_draw`。`gl-draw` 尖端 `31c6982`。`gl-bind-current` 尖端 `fb4a9a5` 已经包含在 `main` 里。
+更早的 OpenGL 也在 `main` 上，不要重做，也不要再开拉取请求。拉取请求 https://github.com/mionumbra/IGPU/pull/5 的合并提交是 `332e1a8`，只写了「必须走拉取请求」这条规则。拉取请求 https://github.com/mionumbra/IGPU/pull/4 的合并提交是 `83afeb8`，图元 1、2、3、5。`gl-primitives` 尖端 `3e0a1f2` 已经包含在里面。拉取请求 https://github.com/mionumbra/IGPU/pull/3 的合并提交是 `0885e67`，顶点颜色。`gl-vertex-colour` 尖端 `7c0c6e4`。拉取请求 https://github.com/mionumbra/IGPU/pull/2 的合并提交是 `edb0ccd`，非索引 `igpu_draw`。`gl-draw` 尖端 `31c6982`。`gl-bind-current` 尖端 `fb4a9a5` 已经包含在 `main` 里。
 
 顶点颜色只在探针里。布局是 float2 位置再加一个 colour，缓冲步长必须显式写成 12。布局步长传 0 时内部记成 12，缓冲仍要 12。`in_pos` 在属性位置 0，`in_colour` 在属性位置 1。字节序是 R、G、B、A，不交换红蓝。左半边读回红 `255`，右半边是蓝 `16711680`。这一笔探针画的是 12 个顶点；只画前 6 个会让右边保持清屏黑。alpha 0 仍写出红，这次绘制不打开混合。随后用 float2 布局再画，两个采样点是 `0`，颜色属性已经关掉。`igpu_draw_to_render_targets` 从第 6 个顶点起画时，右半边是蓝，左半边保持清屏黑。Windows 的 GameMaker DLL 仍没有 OpenGL 后端。
 
@@ -182,7 +182,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 图元 1/2/3/5 | 三角带 `255 / 0`，随后右边也是 `255`。点是单个纹素 `255`，邻居是 `0`。线列表是 `255 / 0 / 255`。线带随后右边也是 `255` |
 | GL 纹理采样 | 源 `255 / 16711680`。前 3 个顶点是 `255 / 0`，尾巴是 `255 / 16711680`。常数 `u = 0.484375` 是 `255 / 255` |
 | GL 包裹 | 重复 `u = 1.0625` 为 `255 / 255`，钳制和句柄 0 为 `16711680 / 16711680` |
-| Git | 钳制与重复的合并提交是 `84b40f5`。写这份交接时 `origin/main` 就是它。`gl-address` 在 `95867cd`。最近点采样的合并提交是 `9c56d05`。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
+| Git | 写这份交接时 `origin/main` 是 `332e1a8`（拉取请求 #5）。钳制与重复的合并提交是 `84b40f5`。`gl-address` 在 `95867cd`。最近点采样的合并提交是 `9c56d05`。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
 
