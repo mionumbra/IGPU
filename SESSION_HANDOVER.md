@@ -18,7 +18,7 @@
 
 已知的小缺口，不是下一刀：未知布局句柄的错误写成「the vertex buffer stride does not match the input layout」。调用失败，像素不变。`first_index + index_count` 和 `first_vertex + vertex_count` 在特别大的正数上可能回绕，再被收成 `GLsizei`。Direct3D 有同样的写法。探针里的 13 个索引和 12 个顶点不会走到这里。非索引线带的两段各是 2 个顶点，`GL_LINES` 和 `GL_LINE_STRIP` 对这两段画出来一样。区分它们的是索引路径上一次画 3 个顶点。不要为了这个再开一刀。
 
-最近点纹理采样只在探针里，在分支 `gl-sample`，还没有合并进 `main`。`igpu_draw_sampled` 把 `g_textures` 里的 rgba8 绑到当前二维纹理，把当前程序的 `uniform sampler2D igpu_tex` 设为 0，画进调用方已经 current 的帧缓冲。不清屏，不改帧缓冲、视口和程序。返回前恢复 `GL_TEXTURE_BINDING_2D`。过滤是创建时设下的最近点，包裹是钳制到边缘。不创建采样器对象，不调用 `glActiveTexture`。
+最近点纹理采样只在探针里，已经进入 `main`。`igpu_draw_sampled` 把 `g_textures` 里的 rgba8 绑到当前二维纹理，把当前程序的 `uniform sampler2D igpu_tex` 设为 0，画进调用方已经 current 的帧缓冲。不清屏，不改帧缓冲、视口和程序。返回前恢复 `GL_TEXTURE_BINDING_2D`。过滤是创建时设下的最近点，包裹是钳制到边缘。不创建采样器对象，不调用 `glActiveTexture`。
 
 源纹理左红 `255`、右蓝 `16711680`。采样四边形的前 3 个顶点只让目标左边变成 `255`，右边保持 `0`。从第 3 个顶点、`vertex_count = -1` 再画，右边变成 `16711680`。常数 `u = 0.484375` 的全屏四边形两边都是 `255`。源纹理在这些绘制之后不变。
 
@@ -38,6 +38,8 @@
 - `igpu_draw_to_render_targets` 拒绝 `bind != 1` 的缓冲。索引缓冲的 stride 是 0，不拒绝的话范围检查会放行，`glDrawArrays` 会读过那 24 个字节。
 
 非索引的 `igpu_draw` 已在探针里证明。`GlBackend::draw` 转到 `gl_draw`。它画进调用方已经 current 的帧缓冲，不清屏，不改帧缓冲绑定和视口，也不调用 `UseProgram`。三角形列表的前 6 个顶点只把左半边画成红 `255`，右半边保持清屏黑 `0`。从顶点 6 起、`vertex_count = -1` 再把右半边画成红，左半边仍是红。图元 `6` 和任何一个非 0 的状态句柄都被拒绝，像素保持 `0`。索引缓冲不能当成顶点缓冲。
+
+Git Bash 在 `D:\Program Files\Git`。`bash.exe` 是 `D:\Program Files\Git\bin\bash.exe`，PowerShell 的 `PATH` 里没有它。需要 bash 时用这个路径，不要当成没安装。
 
 动手前先在 `main` 上拉取，再跑下面三件事，确认树还是绿的：
 
@@ -279,6 +281,7 @@ HEAD      add3cf2   (main)
 | 引擎源码 | `D:\Users\User\Documents\gml_ext\OpenGM\` | 审计依据（去混淆，非官方） |
 | gm-cli | `D:\node.js\node_cache\_npx\166e0ec5f4c2d768\...\gm-cli\dist\cli.js` | 跑集成测试 |
 | YoYo.lib 符号 | `...\runtime-2026.0.0.23\yyc\Win32\lib\x64\YoYo.lib` | 符号层交叉验证 |
+| Git Bash | `D:\Program Files\Git\bin\bash.exe` | PowerShell 的 `PATH` 里没有 bash。需要时用这个路径 |
 
 > `OpenGM` 是**去混淆的派生源码**，不是官方发布。本次结论都用
 > `YoYo.lib` 符号做了交叉验证，两者一致 —— 但**不要把源码当稳定 API**。
