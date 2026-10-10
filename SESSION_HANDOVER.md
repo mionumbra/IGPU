@@ -1,4 +1,4 @@
-# 会话交接 — 2026-10-10 — 版本 0.5.0 — OpenGL 最近点纹理采样已在探针里
+# 会话交接 — 2026-10-10 — 版本 0.5.0 — OpenGL 最近点纹理采样已进入 main
 
 > 先读这一节，再改代码。`HANDOVER.md` 是长文档，开头版本是 `0.5.0`。正文里 9 月的叙述已经过时。本文下半截仍保留 2026-09-23 审计记录。
 >
@@ -6,29 +6,25 @@
 
 ## 下一会话接着做
 
-停在 `main`。拉取请求 https://github.com/mionumbra/IGPU/pull/4 已合并，合并提交 `83afeb8`。写这份交接时 `origin/main` 就是这个提交。图元 1、2、3、5 已经在 `main` 上，不要重做，也不要再为它们开拉取请求。`gl-primitives` 还在，尖端是 `3e0a1f2`，已经包含在 `83afeb8` 里。这份文档自己的提交在 `83afeb8` 之后，以 `git rev-parse --short HEAD` 为准。
+停在 `main`。写这份交接时，最近点纹理采样的合并提交是 `9c56d05`，`origin/main` 就是它。这一刀没有拉取请求，是本地合并后直接推送的。`gl-sample` 还在，尖端是 `b871e87`，已经包含在 `9c56d05` 里。不要重做，也不要再为它开拉取请求。这份文档自己的提交在 `9c56d05` 之后，以 `git rev-parse --short HEAD` 为准。
 
-拉取请求 https://github.com/mionumbra/IGPU/pull/3 已经合并，合并提交 `0885e67`，顶点颜色在 `main` 上。不要重做。`gl-vertex-colour` 还在，尖端是 `7c0c6e4`，已经包含在 `0885e67` 里。
+计划在 `superpowers/plans/2026-10-10-gl-sample.md`。探针已经证明，不要重做：
 
-拉取请求 https://github.com/mionumbra/IGPU/pull/2 已经合并，合并提交 `edb0ccd`，非索引 `igpu_draw` 在 `main` 上。不要重做。
+最近点纹理采样只在探针里。`igpu_draw_sampled` 把 `g_textures` 里的 rgba8 绑到当前二维纹理，把当前程序的 `uniform sampler2D igpu_tex` 设为 0，画进调用方已经 current 的帧缓冲。不清屏，不改帧缓冲、视口和程序。返回前恢复 `GL_TEXTURE_BINDING_2D`。过滤是创建时设下的最近点，包裹是钳制到边缘。不创建采样器对象，不调用 `glActiveTexture`。属性 0 是 `in_pos`，属性 1 在采样程序里是 `in_uv`。位置加纹理坐标的缓冲步长必须显式写成 16。步长 0 仍是位置缓冲。
+
+源纹理左红 `255`、右蓝 `16711680`。采样四边形的前 3 个顶点只让目标左边变成 `255`，右边保持 `0`。从第 3 个顶点、`vertex_count = -1` 再画，右边变成 `16711680`。常数 `u = 0.484375` 的全屏四边形两边都是 `255`。源纹理在这些绘制之后不变。
+
+被采样的纹理若是当前颜色附件，调用失败，错误含有 `the texture is the current color target`，源像素不变。没有 `igpu_tex` 的程序失败，错误含有 `no sampler uniform 'igpu_tex'`，目标保持 `0`。采样器句柄非 0 失败，错误含有 `draws with no extra state`。纹理句柄 0 失败，错误含有 `unknown texture handle`。`igpu_buffer_create(96, 0, 1, 0)` 仍是步长 8，配上纹理坐标布局失败，错误含有 `stride does not match`。
+
+再下一刀还没定。采样器状态对象、混合、深度、光栅、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。那些平台上的 GameMaker 运行这台机器证明不了。纹理单元保持调用方原来的值；探针的默认单元是 0。包裹已经在创建纹理时设成钳制到边缘，但探针的纹理坐标都在 `[0,1]` 里，分不出钳制和重复。不要为了补这一笔去改过滤。
+
+更早的 OpenGL 也在 `main` 上，不要重做，也不要再开拉取请求。拉取请求 https://github.com/mionumbra/IGPU/pull/4 的合并提交是 `83afeb8`，图元 1、2、3、5。`gl-primitives` 尖端 `3e0a1f2` 已经包含在里面。拉取请求 https://github.com/mionumbra/IGPU/pull/3 的合并提交是 `0885e67`，顶点颜色。`gl-vertex-colour` 尖端 `7c0c6e4`。拉取请求 https://github.com/mionumbra/IGPU/pull/2 的合并提交是 `edb0ccd`，非索引 `igpu_draw`。`gl-draw` 尖端 `31c6982`。`gl-bind-current` 尖端 `fb4a9a5` 已经包含在 `main` 里。
 
 顶点颜色只在探针里。布局是 float2 位置再加一个 colour，缓冲步长必须显式写成 12。布局步长传 0 时内部记成 12，缓冲仍要 12。`in_pos` 在属性位置 0，`in_colour` 在属性位置 1。字节序是 R、G、B、A，不交换红蓝。左半边读回红 `255`，右半边是蓝 `16711680`。这一笔探针画的是 12 个顶点；只画前 6 个会让右边保持清屏黑。alpha 0 仍写出红，这次绘制不打开混合。随后用 float2 布局再画，两个采样点是 `0`，颜色属性已经关掉。`igpu_draw_to_render_targets` 从第 6 个顶点起画时，右半边是蓝，左半边保持清屏黑。Windows 的 GameMaker DLL 仍没有 OpenGL 后端。
 
 图元 1、2、3、5 只在探针里。点列表放在纹素中心，点大小和线宽保持 1，邻纹素是 `0`。线列表两段之间的 `(3,4)` 是 `0`，`(1,4)` 和 `(6,4)` 是 `255`。线带先画一段，右边保持 `0`，再从下一个顶点画，右边变成 `255`。索引线带一次画 3 个顶点，左右都是 `255`；若被当成 `GL_LINES`，第三顶点会被丢下，右边保持 `0`。三角带的采样点在第二条三角形里：四顶点若被当成 `GL_TRIANGLES`，左边保持 `0`。实际读回是左 `255`、右 `0`，随后右边也是 `255`。图元 0 和 7 拒绝，错误含有 `does not draw this primitive`。图元 6 仍拒绝，错误含有 `trianglefan`。任何一个非 0 的状态句柄都拒绝，错误含有 `draws with no extra state`，像素不变。`igpu_draw` 和 `igpu_draw_indexed` 不改帧缓冲、视口和程序。`igpu_draw_to_render_targets` 会恢复帧缓冲和视口。Windows 的 GameMaker DLL 仍没有 OpenGL 后端。
 
 已知的小缺口，不是下一刀：未知布局句柄的错误写成「the vertex buffer stride does not match the input layout」。调用失败，像素不变。`first_index + index_count` 和 `first_vertex + vertex_count` 在特别大的正数上可能回绕，再被收成 `GLsizei`。Direct3D 有同样的写法。探针里的 13 个索引和 12 个顶点不会走到这里。非索引线带的两段各是 2 个顶点，`GL_LINES` 和 `GL_LINE_STRIP` 对这两段画出来一样。区分它们的是索引路径上一次画 3 个顶点。不要为了这个再开一刀。
-
-最近点纹理采样只在探针里，已经进入 `main`。`igpu_draw_sampled` 把 `g_textures` 里的 rgba8 绑到当前二维纹理，把当前程序的 `uniform sampler2D igpu_tex` 设为 0，画进调用方已经 current 的帧缓冲。不清屏，不改帧缓冲、视口和程序。返回前恢复 `GL_TEXTURE_BINDING_2D`。过滤是创建时设下的最近点，包裹是钳制到边缘。不创建采样器对象，不调用 `glActiveTexture`。
-
-源纹理左红 `255`、右蓝 `16711680`。采样四边形的前 3 个顶点只让目标左边变成 `255`，右边保持 `0`。从第 3 个顶点、`vertex_count = -1` 再画，右边变成 `16711680`。常数 `u = 0.484375` 的全屏四边形两边都是 `255`。源纹理在这些绘制之后不变。
-
-被采样的纹理若是当前颜色附件，调用失败，错误含有 `the texture is the current color target`，源像素不变。没有 `igpu_tex` 的程序失败，错误含有 `no sampler uniform 'igpu_tex'`，目标保持 `0`。采样器句柄非 0 失败，错误含有 `draws with no extra state`。纹理句柄 0 失败，错误含有 `unknown texture handle`。`igpu_buffer_create(96, 0, 1, 0)` 仍是步长 8，配上纹理坐标布局失败，错误含有 `stride does not match`。
-
-采样器状态对象、混合、深度、光栅、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。再下一刀还没定。那些平台上的 GameMaker 运行这台机器证明不了。
-
-`gl-draw` 还在。本地和 `origin/gl-draw` 都是 `31c6982`，那是合并前的尖端，已经包含在 `edb0ccd` 里。
-
-`gl-bind-current` 在合并拉取请求 #1 之后删过，这一会话又在 `fb4a9a5` 上建回来并推送。那是合并提交 `d662fb2` 的第二个父提交，改动已经在 `main` 里。不要为它再开拉取请求，也不要把它当成还没合并的工作。
 
 已经落地的 OpenGL 只在探针里，Windows 的 GameMaker DLL 不含它：
 
@@ -170,7 +166,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 顶点颜色 | `255 / 16711680`；随后 float2 绘制是 `0 / 0`；alpha 0 仍是 `255`；从第 6 个顶点画进纹理时是 `0 / 16711680` |
 | GL 图元 1/2/3/5 | 三角带 `255 / 0`，随后右边也是 `255`。点是单个纹素 `255`，邻居是 `0`。线列表是 `255 / 0 / 255`。线带随后右边也是 `255` |
 | GL 纹理采样 | 源 `255 / 16711680`。前 3 个顶点是 `255 / 0`，尾巴是 `255 / 16711680`。常数 `u = 0.484375` 是 `255 / 255` |
-| Git | 拉取请求 #4 的合并提交是 `83afeb8`。写这份交接时 `origin/main` 就是它。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 的合并提交是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 的合并提交是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
+| Git | 最近点采样的合并提交是 `9c56d05`。写这份交接时 `origin/main` 就是它。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
 
