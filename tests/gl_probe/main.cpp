@@ -1,6 +1,7 @@
 #include "wgl_host.h"
 
 #include "IGPU_native.h"
+#include "igpu_capabilities.h"
 
 #include "core/GMExtWire.h"
 #include "native/gl/igpu_gl_draw.h"
@@ -1514,11 +1515,11 @@ int main()
         return fail("state reject target begin failed");
     }
     if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout),
-                          4, 0, 6, static_cast<std::uint64_t>(sample_source), 0, 0, 0, 1) ||
-        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+                          4, 0, 6, static_cast<std::uint64_t>(sample_source), 0, 0, 0, 99) ||
+        std::string(igpu_get_last_error()).find("unknown sampler handle") == std::string::npos)
     {
         igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
-        return fail("a nonzero sampler handle was not rejected");
+        return fail("an unknown sampler handle was not rejected");
     }
     if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout),
                           4, 0, 6, 0, 0, 0, 0, 0) ||
@@ -1554,6 +1555,250 @@ int main()
     if (igpu_texture_read(static_cast<std::uint64_t>(sample_reject), 1, 4, 0, 0) != 0)
     {
         return fail("rejected stride 0 sample changed pixels");
+    }
+
+    const auto wrap_repeat = igpu_sampler_state_create(0, 0, 0, 1, 1, 1, 1, 0, 0, 0.f, 0.f, -1.f);
+    const auto wrap_clamp = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (wrap_repeat == 0 || wrap_clamp == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto wrap_buffer = igpu_buffer_create(96, 0, 1, 16);
+    const auto wrap_repeat_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto wrap_clamp_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto wrap_restored_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto wrap_negative_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto wrap_edge_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto wrap_nearest_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto wrap_black_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (wrap_buffer == 0 || wrap_repeat_dest == 0 || wrap_clamp_dest == 0 || wrap_restored_dest == 0 ||
+        wrap_negative_dest == 0 || wrap_edge_dest == 0 || wrap_nearest_dest == 0 || wrap_black_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto write_uv = [&](float u, float v) -> bool {
+        SampleVertex verts[6] = {
+            {-1.f, -1.f, u, v}, {1.f, -1.f, u, v}, {-1.f, 1.f, u, v},
+            {1.f, -1.f, u, v},  {1.f, 1.f, u, v},  {-1.f, 1.f, u, v},
+        };
+        return igpu_buffer_write(static_cast<std::uint64_t>(wrap_buffer), 0,
+                                 gm::wire::GMBuffer(verts, sizeof(verts)));
+    };
+    const auto sample_uv = [&](std::int64_t dest, std::int64_t sampler) -> bool {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(dest), saved, viewport))
+        {
+            return false;
+        }
+        const bool drew = igpu_draw_sampled(
+            static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+            static_cast<std::uint64_t>(sample_source), 0, 0, 0, sampler);
+        igpu::gl_color_target_end(saved, viewport);
+        return drew;
+    };
+    if (!igpu_shader_bind(sample_vert, 0) || !igpu_shader_bind(sample_frag, 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!write_uv(1.0625f, 0.5f) || !sample_uv(wrap_repeat_dest, wrap_repeat))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto wrap_repeat_left = igpu_texture_read(static_cast<std::uint64_t>(wrap_repeat_dest), 1, 4, 0, 0);
+    const auto wrap_repeat_right = igpu_texture_read(static_cast<std::uint64_t>(wrap_repeat_dest), 6, 4, 0, 0);
+    std::printf("wrap repeat  : %lld / %lld\n", static_cast<long long>(wrap_repeat_left),
+                static_cast<long long>(wrap_repeat_right));
+    if (wrap_repeat_left != 255 || wrap_repeat_right != 255)
+    {
+        return fail("repeat sample at u=1.0625 was not pure red");
+    }
+    if (!sample_uv(wrap_clamp_dest, wrap_clamp))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto wrap_clamp_left = igpu_texture_read(static_cast<std::uint64_t>(wrap_clamp_dest), 1, 4, 0, 0);
+    const auto wrap_clamp_right = igpu_texture_read(static_cast<std::uint64_t>(wrap_clamp_dest), 6, 4, 0, 0);
+    std::printf("wrap clamp   : %lld / %lld\n", static_cast<long long>(wrap_clamp_left),
+                static_cast<long long>(wrap_clamp_right));
+    if (wrap_clamp_left != 16711680 || wrap_clamp_right != 16711680)
+    {
+        return fail("clamp sample at u=1.0625 was not pure blue");
+    }
+    if (!sample_uv(wrap_restored_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto wrap_restored_left = igpu_texture_read(static_cast<std::uint64_t>(wrap_restored_dest), 1, 4, 0, 0);
+    const auto wrap_restored_right = igpu_texture_read(static_cast<std::uint64_t>(wrap_restored_dest), 6, 4, 0, 0);
+    std::printf("wrap restored: %lld / %lld\n", static_cast<long long>(wrap_restored_left),
+                static_cast<long long>(wrap_restored_right));
+    if (wrap_restored_left != 16711680 || wrap_restored_right != 16711680)
+    {
+        return fail("sampler 0 did not stay clamped after a repeat draw");
+    }
+    if (!write_uv(-0.0625f, 0.5f) || !sample_uv(wrap_negative_dest, wrap_repeat))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto wrap_negative_left = igpu_texture_read(static_cast<std::uint64_t>(wrap_negative_dest), 1, 4, 0, 0);
+    const auto wrap_negative_right = igpu_texture_read(static_cast<std::uint64_t>(wrap_negative_dest), 6, 4, 0, 0);
+    std::printf("wrap negative: %lld / %lld\n", static_cast<long long>(wrap_negative_left),
+                static_cast<long long>(wrap_negative_right));
+    if (wrap_negative_left != 16711680 || wrap_negative_right != 16711680)
+    {
+        return fail("repeat sample at u=-0.0625 was not pure blue");
+    }
+    if (!sample_uv(wrap_edge_dest, wrap_clamp))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto wrap_edge_left = igpu_texture_read(static_cast<std::uint64_t>(wrap_edge_dest), 1, 4, 0, 0);
+    const auto wrap_edge_right = igpu_texture_read(static_cast<std::uint64_t>(wrap_edge_dest), 6, 4, 0, 0);
+    std::printf("wrap edge    : %lld / %lld\n", static_cast<long long>(wrap_edge_left),
+                static_cast<long long>(wrap_edge_right));
+    if (wrap_edge_left != 255 || wrap_edge_right != 255)
+    {
+        return fail("clamp sample at u=-0.0625 was not pure red");
+    }
+    if (!write_uv(0.484375f, 0.5f) || !sample_uv(wrap_nearest_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto wrap_nearest_left = igpu_texture_read(static_cast<std::uint64_t>(wrap_nearest_dest), 1, 4, 0, 0);
+    const auto wrap_nearest_right = igpu_texture_read(static_cast<std::uint64_t>(wrap_nearest_dest), 6, 4, 0, 0);
+    std::printf("wrap nearest : %lld / %lld\n", static_cast<long long>(wrap_nearest_left),
+                static_cast<long long>(wrap_nearest_right));
+    if (wrap_nearest_left != 255 || wrap_nearest_right != 255)
+    {
+        return fail("sampler 0 at u=0.484375 was not pure red after wrap draws");
+    }
+    if (igpu_texture_read(static_cast<std::uint64_t>(sample_source), 1, 4, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_source), 6, 4, 0, 0) != 16711680)
+    {
+        return fail("wrap draws changed the source texture");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(wrap_black_dest), sample_saved_fbo,
+                                     sample_held_viewport))
+    {
+        return fail("wrap reject target begin failed");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+                          static_cast<std::uint64_t>(sample_source), 0, 0, 0, 99) ||
+        std::string(igpu_get_last_error()).find("unknown sampler handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("unknown sampler 99 was accepted");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(wrap_buffer), 0, static_cast<std::uint64_t>(sample_layout), 4, 0, 6, 1,
+                  0, 0, 0, wrap_repeat) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("igpu_draw accepted a sampler");
+    }
+    if (igpu_draw_indexed(static_cast<std::uint64_t>(indexed_vertices_buffer), static_cast<std::uint64_t>(layout),
+                          static_cast<std::uint64_t>(indexed_index_buffer), 4, 0, 6, 0, 0, 0, wrap_repeat) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("igpu_draw_indexed accepted a sampler");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+                          static_cast<std::uint64_t>(sample_source), 1, 0, 0, 0) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("blend state was accepted on a sampled draw");
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(wrap_black_dest), 1, 4, 0, 0) != 0 ||
+        igpu_texture_read(static_cast<std::uint64_t>(wrap_black_dest), 6, 4, 0, 0) != 0)
+    {
+        return fail("rejected wrap draw changed pixels");
+    }
+    if (!write_uv(1.0625f, 0.5f) || !sample_uv(wrap_restored_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (igpu_texture_read(static_cast<std::uint64_t>(wrap_restored_dest), 1, 4, 0, 0) != 16711680)
+    {
+        return fail("unknown sampler 99 left the texture repeating");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sample_source), sample_saved_fbo,
+                                     sample_held_viewport))
+    {
+        return fail("wrap feedback target begin failed");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+                          static_cast<std::uint64_t>(sample_source), 0, 0, 0, wrap_repeat) ||
+        std::string(igpu_get_last_error()).find("the texture is the current color target") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("repeat sampler was allowed to sample the current color target");
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(sample_source), 1, 4, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_source), 6, 4, 0, 0) != 16711680)
+    {
+        return fail("rejected repeat feedback changed the source texture");
+    }
+
+    const auto wrap_linear = igpu_sampler_state_create(1, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (wrap_linear != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
+    {
+        return fail("linear magnification was accepted");
+    }
+    const auto wrap_mirror = igpu_sampler_state_create(0, 0, 0, 2, 2, 2, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (wrap_mirror != 0 || std::string(igpu_get_last_error()).find("clamp or repeat") == std::string::npos)
+    {
+        return fail("mirror addressing was accepted");
+    }
+    const auto wrap_mixed = igpu_sampler_state_create(0, 0, 0, 1, 0, 1, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (wrap_mixed != 0 || std::string(igpu_get_last_error()).find("clamp or repeat") == std::string::npos)
+    {
+        return fail("mixed address axes were accepted");
+    }
+    const auto wrap_compare = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 1, 0.f, 0.f, -1.f);
+    if (wrap_compare != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)
+    {
+        return fail("comparison sampler was accepted");
+    }
+    const auto wrap_aniso = igpu_sampler_state_create(1, 1, 1, 1, 1, 1, 2, 0, 0, 0.f, 0.f, -1.f);
+    if (wrap_aniso != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)
+    {
+        return fail("anisotropic sampler was accepted");
+    }
+    const auto wrap_lod = igpu_sampler_state_create(0, 0, 0, 1, 1, 1, 1, 0, 0, 1.f, 0.f, -1.f);
+    if (wrap_lod != 0 || std::string(igpu_get_last_error()).find("no mip") == std::string::npos)
+    {
+        return fail("level offset was accepted");
+    }
+    if (!igpu_state_release(static_cast<std::uint64_t>(wrap_repeat)) ||
+        igpu_state_release(static_cast<std::uint64_t>(wrap_repeat)) ||
+        std::string(igpu_get_last_error()).find("unknown sampler handle") == std::string::npos)
+    {
+        return fail("sampler release did not retire the handle");
+    }
+    if (sample_uv(wrap_black_dest, wrap_repeat) ||
+        std::string(igpu_get_last_error()).find("unknown sampler handle") == std::string::npos)
+    {
+        return fail("released sampler was accepted");
+    }
+    if (igpu_texture_read(static_cast<std::uint64_t>(wrap_black_dest), 1, 4, 0, 0) != 0)
+    {
+        return fail("released sampler changed pixels");
+    }
+    if (!sample_uv(wrap_clamp_dest, wrap_clamp) ||
+        igpu_texture_read(static_cast<std::uint64_t>(wrap_clamp_dest), 1, 4, 0, 0) != 16711680)
+    {
+        return fail("releasing the repeat sampler broke the clamp sampler");
+    }
+    if (!igpu_supports(static_cast<std::int32_t>(igpu::Capability::SamplerState)))
+    {
+        return fail("SamplerState is false on the OpenGL backend");
     }
 
     void* context = gl_probe_context();
