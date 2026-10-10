@@ -653,8 +653,20 @@ namespace igpu
             set_last_error("igpu_draw_sampled: no shader program is bound");
             return false;
         }
+        GLint draw_fbo = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &draw_fbo);
+        if (static_cast<GLuint>(draw_fbo) == source->second.framebuffer)
+        {
+            set_last_error("igpu_draw_sampled: the texture is the current color target");
+            return false;
+        }
         const auto& fns = igpu_gl_fns();
         const GLint sampler = fns.GetUniformLocation(static_cast<GLuint>(program), "igpu_tex");
+        if (sampler < 0)
+        {
+            set_last_error("igpu_draw_sampled: the bound program has no sampler uniform 'igpu_tex'");
+            return false;
+        }
         if (g_vertex_array == 0)
         {
             fns.GenVertexArrays(1, &g_vertex_array);
@@ -664,10 +676,7 @@ namespace igpu
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
         glBindTexture(GL_TEXTURE_2D, source->second.texture);
-        if (sampler >= 0)
-        {
-            fns.Uniform1i(sampler, 0);
-        }
+        fns.Uniform1i(sampler, 0);
         fns.BindVertexArray(g_vertex_array);
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
         bind_vertices(vertex->second, 0);
