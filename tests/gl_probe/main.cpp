@@ -1746,10 +1746,114 @@ int main()
         return fail("rejected repeat feedback changed the source texture");
     }
 
-    const auto wrap_linear = igpu_sampler_state_create(1, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
-    if (wrap_linear != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
+    const auto linear_clamp = igpu_sampler_state_create(1, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    const auto linear_repeat = igpu_sampler_state_create(1, 0, 0, 1, 1, 1, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (linear_clamp == 0 || linear_repeat == 0)
     {
-        return fail("linear magnification was accepted");
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto linear_min = igpu_sampler_state_create(0, 1, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (linear_min != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
+    {
+        return fail("linear minification was accepted");
+    }
+    const auto linear_mip = igpu_sampler_state_create(0, 0, 1, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (linear_mip != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
+    {
+        return fail("linear mip filtering was accepted");
+    }
+    const auto linear_seam_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto linear_repeat_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto linear_edge_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto linear_point_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto linear_wrap_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (linear_seam_dest == 0 || linear_repeat_dest == 0 || linear_edge_dest == 0 || linear_point_dest == 0 ||
+        linear_wrap_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!write_uv(0.5f, 0.5f) || !sample_uv(linear_seam_dest, linear_clamp))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto linear_seam_left = igpu_texture_read(static_cast<std::uint64_t>(linear_seam_dest), 1, 4, 0, 0);
+    const auto linear_seam_right = igpu_texture_read(static_cast<std::uint64_t>(linear_seam_dest), 6, 4, 0, 0);
+    std::printf("linear seam  : %lld / %lld\n", static_cast<long long>(linear_seam_left),
+                static_cast<long long>(linear_seam_right));
+    if (linear_seam_left != 8388736 || linear_seam_right != 8388736)
+    {
+        return fail("linear magnification at u=0.5 was not half red and half blue");
+    }
+    if (!write_uv(1.5f, 0.5f) || !sample_uv(linear_repeat_dest, linear_repeat))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto linear_repeat_left = igpu_texture_read(static_cast<std::uint64_t>(linear_repeat_dest), 1, 4, 0, 0);
+    const auto linear_repeat_right = igpu_texture_read(static_cast<std::uint64_t>(linear_repeat_dest), 6, 4, 0, 0);
+    std::printf("linear repeat: %lld / %lld\n", static_cast<long long>(linear_repeat_left),
+                static_cast<long long>(linear_repeat_right));
+    if (linear_repeat_left != 8388736 || linear_repeat_right != 8388736)
+    {
+        return fail("repeat plus linear at u=1.5 was not the interior half blend");
+    }
+    if (!sample_uv(linear_edge_dest, linear_clamp))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto linear_edge_left = igpu_texture_read(static_cast<std::uint64_t>(linear_edge_dest), 1, 4, 0, 0);
+    const auto linear_edge_right = igpu_texture_read(static_cast<std::uint64_t>(linear_edge_dest), 6, 4, 0, 0);
+    std::printf("linear edge  : %lld / %lld\n", static_cast<long long>(linear_edge_left),
+                static_cast<long long>(linear_edge_right));
+    if (linear_edge_left != 16711680 || linear_edge_right != 16711680)
+    {
+        return fail("clamp plus linear at u=1.5 was not the edge texel");
+    }
+    if (!write_uv(0.484375f, 0.5f) || !sample_uv(linear_point_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto linear_point_left = igpu_texture_read(static_cast<std::uint64_t>(linear_point_dest), 1, 4, 0, 0);
+    const auto linear_point_right = igpu_texture_read(static_cast<std::uint64_t>(linear_point_dest), 6, 4, 0, 0);
+    std::printf("linear point : %lld / %lld\n", static_cast<long long>(linear_point_left),
+                static_cast<long long>(linear_point_right));
+    if (linear_point_left != 255 || linear_point_right != 255)
+    {
+        return fail("sampler 0 at u=0.484375 was not pure red after linear draws");
+    }
+    if (!write_uv(1.0625f, 0.5f) || !sample_uv(linear_wrap_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto linear_wrap_left = igpu_texture_read(static_cast<std::uint64_t>(linear_wrap_dest), 1, 4, 0, 0);
+    const auto linear_wrap_right = igpu_texture_read(static_cast<std::uint64_t>(linear_wrap_dest), 6, 4, 0, 0);
+    std::printf("linear wrap  : %lld / %lld\n", static_cast<long long>(linear_wrap_left),
+                static_cast<long long>(linear_wrap_right));
+    if (linear_wrap_left != 16711680 || linear_wrap_right != 16711680)
+    {
+        return fail("sampler 0 at u=1.0625 was not pure blue after linear draws");
+    }
+    if (igpu_texture_read(static_cast<std::uint64_t>(sample_source), 1, 4, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_source), 6, 4, 0, 0) != 16711680)
+    {
+        return fail("linear draws changed the source texture");
+    }
+    std::int32_t linear_saved = 0;
+    std::int32_t linear_viewport[4] = {};
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(wrap_black_dest), linear_saved, linear_viewport))
+    {
+        return fail("linear reject target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(wrap_buffer), 0, static_cast<std::uint64_t>(sample_layout), 4, 0, 6, 1, 0,
+                  0, 0, linear_clamp) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(linear_saved, linear_viewport);
+        return fail("igpu_draw accepted a linear sampler");
+    }
+    igpu::gl_color_target_end(linear_saved, linear_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(wrap_black_dest), 1, 4, 0, 0) != 0)
+    {
+        return fail("rejected linear draw changed pixels");
     }
     const auto wrap_mirror = igpu_sampler_state_create(0, 0, 0, 2, 2, 2, 1, 0, 0, 0.f, 0.f, -1.f);
     if (wrap_mirror != 0 || std::string(igpu_get_last_error()).find("clamp or repeat") == std::string::npos)
