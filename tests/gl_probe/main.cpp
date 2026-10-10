@@ -1061,6 +1061,228 @@ int main()
         return fail("draw-to-targets triangle strip did not paint only the left sample");
     }
 
+    const float point_vertices[] = {-0.625f, -0.125f, 0.625f, -0.125f};
+    const std::uint16_t point_indices[] = {0, 1};
+    const auto point_buffer = igpu_buffer_create(16, 0, 1, 8);
+    const auto point_index_buffer = igpu_buffer_create(4, 0, 2, 0);
+    const auto point_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto point_indexed_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (point_buffer == 0 || point_index_buffer == 0 || point_texture == 0 || point_indexed_texture == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(point_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<float*>(point_vertices), 16)) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(point_index_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<std::uint16_t*>(point_indices), 4)))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(point_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("point color target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(point_buffer), 0, static_cast<std::uint64_t>(layout),
+                   1, 0, 1, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    const auto point_left = igpu_texture_read(static_cast<std::uint64_t>(point_texture), 1, 4, 0, 0);
+    const auto point_right = igpu_texture_read(static_cast<std::uint64_t>(point_texture), 6, 4, 0, 0);
+    const auto point_neighbor_x = igpu_texture_read(static_cast<std::uint64_t>(point_texture), 2, 4, 0, 0);
+    const auto point_neighbor_y = igpu_texture_read(static_cast<std::uint64_t>(point_texture), 1, 3, 0, 0);
+    std::printf("point pixels  : %lld / %lld\n", static_cast<long long>(point_left),
+                static_cast<long long>(point_right));
+    if (point_left != 255 || point_right != 0 || point_neighbor_x != 0 || point_neighbor_y != 0)
+    {
+        return fail("point list did not light only the left pixel center");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(point_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("point color target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(point_buffer), 0, static_cast<std::uint64_t>(layout),
+                   1, 1, -1, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    GLfloat point_size = 0.f;
+    GLfloat line_width = 0.f;
+    glGetFloatv(0x0B11, &point_size);
+    glGetFloatv(0x0B21, &line_width);
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    const auto point_tail_left = igpu_texture_read(static_cast<std::uint64_t>(point_texture), 1, 4, 0, 0);
+    const auto point_tail_right = igpu_texture_read(static_cast<std::uint64_t>(point_texture), 6, 4, 0, 0);
+    const auto point_tail_neighbor = igpu_texture_read(static_cast<std::uint64_t>(point_texture), 5, 4, 0, 0);
+    std::printf("point tail    : %lld / %lld\n", static_cast<long long>(point_tail_left),
+                static_cast<long long>(point_tail_right));
+    if (point_tail_left != 255 || point_tail_right != 255 || point_tail_neighbor != 0 ||
+        point_size != 1.f || line_width != 1.f)
+    {
+        return fail("point tail changed the point size, line width, or a neighbor");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(point_indexed_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("indexed point color target begin failed");
+    }
+    if (!igpu_draw_indexed(static_cast<std::uint64_t>(point_buffer), static_cast<std::uint64_t>(layout),
+                           static_cast<std::uint64_t>(point_index_buffer), 1, 0, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    const auto point_index_left = igpu_texture_read(static_cast<std::uint64_t>(point_indexed_texture), 1, 4, 0, 0);
+    const auto point_index_right = igpu_texture_read(static_cast<std::uint64_t>(point_indexed_texture), 6, 4, 0, 0);
+    std::printf("point indexed : %lld / %lld\n", static_cast<long long>(point_index_left),
+                static_cast<long long>(point_index_right));
+    if (point_index_left != 255 || point_index_right != 0)
+    {
+        return fail("indexed point did not light only the left pixel");
+    }
+
+    const float line_vertices[] = {
+        -0.875f, -0.125f, -0.375f, -0.125f, 0.375f, -0.125f, 0.875f, -0.125f,
+    };
+    const auto line_buffer = igpu_buffer_create(32, 0, 1, 8);
+    const auto line_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto line_target_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (line_buffer == 0 || line_texture == 0 || line_target_texture == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(line_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<float*>(line_vertices), 32)))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(line_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("line color target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(line_buffer), 0, static_cast<std::uint64_t>(layout),
+                   2, 0, 4, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    const auto line_left = igpu_texture_read(static_cast<std::uint64_t>(line_texture), 1, 4, 0, 0);
+    const auto line_gap = igpu_texture_read(static_cast<std::uint64_t>(line_texture), 3, 4, 0, 0);
+    const auto line_right = igpu_texture_read(static_cast<std::uint64_t>(line_texture), 6, 4, 0, 0);
+    const auto line_off = igpu_texture_read(static_cast<std::uint64_t>(line_texture), 1, 1, 0, 0);
+    std::printf("line pixels   : %lld / %lld / %lld\n", static_cast<long long>(line_left),
+                static_cast<long long>(line_gap), static_cast<long long>(line_right));
+    if (line_left != 255 || line_gap != 0 || line_right != 255 || line_off != 0)
+    {
+        return fail("line list did not keep the gap and the off-row pixel clear");
+    }
+
+    const float line_strip_vertices[] = {-0.875f, -0.125f, -0.375f, -0.125f, 0.875f, -0.125f};
+    const std::uint16_t line_strip_indices[] = {0, 1, 2};
+    const auto line_strip_buffer = igpu_buffer_create(24, 0, 1, 8);
+    const auto line_strip_index_buffer = igpu_buffer_create(6, 0, 2, 0);
+    const auto line_strip_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto line_strip_indexed_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (line_strip_buffer == 0 || line_strip_index_buffer == 0 || line_strip_texture == 0 ||
+        line_strip_indexed_texture == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(line_strip_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<float*>(line_strip_vertices), 24)) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(line_strip_index_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<std::uint16_t*>(line_strip_indices), 6)))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(line_strip_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("line strip color target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(line_strip_buffer), 0, static_cast<std::uint64_t>(layout),
+                   3, 0, 2, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    const auto line_strip_left = igpu_texture_read(static_cast<std::uint64_t>(line_strip_texture), 1, 4, 0, 0);
+    const auto line_strip_right = igpu_texture_read(static_cast<std::uint64_t>(line_strip_texture), 6, 4, 0, 0);
+    std::printf("line strip    : %lld / %lld\n", static_cast<long long>(line_strip_left),
+                static_cast<long long>(line_strip_right));
+    if (line_strip_left != 255 || line_strip_right != 0)
+    {
+        return fail("line strip first segment painted the right sample");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(line_strip_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("line strip color target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(line_strip_buffer), 0, static_cast<std::uint64_t>(layout),
+                   3, 1, -1, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    const auto line_strip_tail_left = igpu_texture_read(static_cast<std::uint64_t>(line_strip_texture), 1, 4, 0, 0);
+    const auto line_strip_tail_right = igpu_texture_read(static_cast<std::uint64_t>(line_strip_texture), 6, 4, 0, 0);
+    const auto line_strip_off = igpu_texture_read(static_cast<std::uint64_t>(line_strip_texture), 1, 1, 0, 0);
+    std::printf("line strip tail: %lld / %lld\n", static_cast<long long>(line_strip_tail_left),
+                static_cast<long long>(line_strip_tail_right));
+    if (line_strip_tail_left != 255 || line_strip_tail_right != 255 || line_strip_off != 0)
+    {
+        return fail("line strip tail did not light the right sample on the same row");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(line_strip_indexed_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("indexed line strip color target begin failed");
+    }
+    if (!igpu_draw_indexed(static_cast<std::uint64_t>(line_strip_buffer), static_cast<std::uint64_t>(layout),
+                           static_cast<std::uint64_t>(line_strip_index_buffer), 3, 0, 3, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    const auto line_index_left =
+        igpu_texture_read(static_cast<std::uint64_t>(line_strip_indexed_texture), 1, 4, 0, 0);
+    const auto line_index_right =
+        igpu_texture_read(static_cast<std::uint64_t>(line_strip_indexed_texture), 6, 4, 0, 0);
+    std::printf("line indexed  : %lld / %lld\n", static_cast<long long>(line_index_left),
+                static_cast<long long>(line_index_right));
+    if (line_index_left != 255 || line_index_right != 255)
+    {
+        return fail("indexed line strip did not light both samples in one draw");
+    }
+
+    const auto line_target_bytes = encode_u64(static_cast<std::uint64_t>(line_target_texture));
+    const auto line_zero_bytes = encode_u64(0);
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(line_buffer), static_cast<std::uint64_t>(layout),
+                                     2, 0, 2, as_array(line_target_bytes), as_array(line_zero_bytes),
+                                     as_array(line_zero_bytes), 0, 0, 0, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    GLint line_target_viewport[4] = {};
+    GLint line_target_fbo = 0;
+    glGetIntegerv(GL_VIEWPORT, line_target_viewport);
+    glGetIntegerv(0x8CA6, &line_target_fbo);
+    if (line_target_viewport[2] != 1 || line_target_viewport[3] != 1 || line_target_fbo != 0)
+    {
+        return fail("line draw-to-targets left the framebuffer or viewport bound");
+    }
+    const auto line_target_left = igpu_texture_read(static_cast<std::uint64_t>(line_target_texture), 1, 4, 0, 0);
+    const auto line_target_right = igpu_texture_read(static_cast<std::uint64_t>(line_target_texture), 6, 4, 0, 0);
+    std::printf("line target   : %lld / %lld\n", static_cast<long long>(line_target_left),
+                static_cast<long long>(line_target_right));
+    if (line_target_left != 255 || line_target_right != 0)
+    {
+        return fail("draw-to-targets line did not paint only the left sample");
+    }
+
     void* context = gl_probe_context();
     igpu_shutdown();
     if (!wglMakeCurrent(nullptr, nullptr) || !wglDeleteContext(static_cast<HGLRC>(context)))
