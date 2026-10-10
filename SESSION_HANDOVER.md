@@ -1,4 +1,4 @@
-# 会话交接 — 2026-10-07 — 版本 0.5.0 — OpenGL 点、线、三角带已在探针里
+# 会话交接 — 2026-10-10 — 版本 0.5.0 — OpenGL 点、线、三角带已合并
 
 > 先读这一节，再改代码。`HANDOVER.md` 是长文档，开头版本是 `0.5.0`。正文里 9 月的叙述已经过时。本文下半截仍保留 2026-09-23 审计记录。
 >
@@ -6,15 +6,19 @@
 
 ## 下一会话接着做
 
-这一刀在分支 `gl-primitives`，还没有合并进 `main`。`main` 仍停在顶点颜色合并之后。拉取请求 https://github.com/mionumbra/IGPU/pull/3 已合并，合并提交 `0885e67`。写这份交接时 `origin/main` 就是这个提交。顶点颜色已经在 `main` 上，不要重做，也不要再为它开拉取请求。`gl-vertex-colour` 还在，尖端是 `7c0c6e4`，已经包含在 `0885e67` 里。这份文档自己的提交在 `0885e67` 之后，以 `git rev-parse --short HEAD` 为准。
+停在 `main`。拉取请求 https://github.com/mionumbra/IGPU/pull/4 已合并，合并提交 `83afeb8`。写这份交接时 `origin/main` 就是这个提交。图元 1、2、3、5 已经在 `main` 上，不要重做，也不要再为它们开拉取请求。`gl-primitives` 还在，尖端是 `3e0a1f2`，已经包含在 `83afeb8` 里。这份文档自己的提交在 `83afeb8` 之后，以 `git rev-parse --short HEAD` 为准。
+
+拉取请求 https://github.com/mionumbra/IGPU/pull/3 已经合并，合并提交 `0885e67`，顶点颜色在 `main` 上。不要重做。`gl-vertex-colour` 还在，尖端是 `7c0c6e4`，已经包含在 `0885e67` 里。
 
 拉取请求 https://github.com/mionumbra/IGPU/pull/2 已经合并，合并提交 `edb0ccd`，非索引 `igpu_draw` 在 `main` 上。不要重做。
 
 顶点颜色只在探针里。布局是 float2 位置再加一个 colour，缓冲步长必须显式写成 12。布局步长传 0 时内部记成 12，缓冲仍要 12。`in_pos` 在属性位置 0，`in_colour` 在属性位置 1。字节序是 R、G、B、A，不交换红蓝。左半边读回红 `255`，右半边是蓝 `16711680`。这一笔探针画的是 12 个顶点；只画前 6 个会让右边保持清屏黑。alpha 0 仍写出红，这次绘制不打开混合。随后用 float2 布局再画，两个采样点是 `0`，颜色属性已经关掉。`igpu_draw_to_render_targets` 从第 6 个顶点起画时，右半边是蓝，左半边保持清屏黑。Windows 的 GameMaker DLL 仍没有 OpenGL 后端。
 
-已知的小缺口，不是下一刀：未知布局句柄的错误写成「the vertex buffer stride does not match the input layout」。调用失败，像素不变。`first_index + index_count` 和 `first_vertex + vertex_count` 在特别大的正数上可能回绕，再被收成 `GLsizei`。Direct3D 有同样的写法。探针里的 13 个索引和 12 个顶点不会走到这里。
+图元 1、2、3、5 只在探针里。点列表放在纹素中心，点大小和线宽保持 1，邻纹素是 `0`。线列表两段之间的 `(3,4)` 是 `0`，`(1,4)` 和 `(6,4)` 是 `255`。线带先画一段，右边保持 `0`，再从下一个顶点画，右边变成 `255`。索引线带一次画 3 个顶点，左右都是 `255`；若被当成 `GL_LINES`，第三顶点会被丢下，右边保持 `0`。三角带的采样点在第二条三角形里：四顶点若被当成 `GL_TRIANGLES`，左边保持 `0`。实际读回是左 `255`、右 `0`，随后右边也是 `255`。图元 0 和 7 拒绝，错误含有 `does not draw this primitive`。图元 6 仍拒绝，错误含有 `trianglefan`。任何一个非 0 的状态句柄都拒绝，错误含有 `draws with no extra state`，像素不变。`igpu_draw` 和 `igpu_draw_indexed` 不改帧缓冲、视口和程序。`igpu_draw_to_render_targets` 会恢复帧缓冲和视口。Windows 的 GameMaker DLL 仍没有 OpenGL 后端。
 
-图元 1、2、3、5 已在探针里证明。图元 6 仍拒绝。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。那些平台上的 GameMaker 运行这台机器证明不了。下一刀还没定。
+已知的小缺口，不是下一刀：未知布局句柄的错误写成「the vertex buffer stride does not match the input layout」。调用失败，像素不变。`first_index + index_count` 和 `first_vertex + vertex_count` 在特别大的正数上可能回绕，再被收成 `GLsizei`。Direct3D 有同样的写法。探针里的 13 个索引和 12 个顶点不会走到这里。非索引线带的两段各是 2 个顶点，`GL_LINES` 和 `GL_LINE_STRIP` 对这两段画出来一样。区分它们的是索引路径上一次画 3 个顶点。不要为了这个再开一刀。
+
+下一刀还没定。采样器、混合、深度、多目标、立方体、三维、实例化、间接、计算、统一缓冲、查询都还不要开。ES 2 和 `glsl_es` 的成功编译也还不要做。那些平台上的 GameMaker 运行这台机器证明不了。
 
 `gl-draw` 还在。本地和 `origin/gl-draw` 都是 `31c6982`，那是合并前的尖端，已经包含在 `edb0ccd` 里。
 
@@ -29,7 +33,7 @@
 
 非索引的 `igpu_draw` 已在探针里证明。`GlBackend::draw` 转到 `gl_draw`。它画进调用方已经 current 的帧缓冲，不清屏，不改帧缓冲绑定和视口，也不调用 `UseProgram`。三角形列表的前 6 个顶点只把左半边画成红 `255`，右半边保持清屏黑 `0`。从顶点 6 起、`vertex_count = -1` 再把右半边画成红，左半边仍是红。图元 `6` 和任何一个非 0 的状态句柄都被拒绝，像素保持 `0`。索引缓冲不能当成顶点缓冲。
 
-动手前停在分支 `gl-primitives`。这一刀还没有进 `main`；在 `main` 上跑探针仍是原来的十行。合并之后才改回在 `main` 上拉取。先跑下面三件事，确认树还是绿的：
+动手前先在 `main` 上拉取，再跑下面三件事，确认树还是绿的：
 
 ```
 pwsh -File tools\verify_handover.ps1
@@ -153,7 +157,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 非索引像素 | `255 / 0`，随后右半边也是 `255` |
 | GL 顶点颜色 | `255 / 16711680`；随后 float2 绘制是 `0 / 0`；alpha 0 仍是 `255`；从第 6 个顶点画进纹理时是 `0 / 16711680` |
 | GL 图元 1/2/3/5 | 三角带 `255 / 0`，随后右边也是 `255`。点是单个纹素 `255`，邻居是 `0`。线列表是 `255 / 0 / 255`。线带随后右边也是 `255` |
-| Git | 拉取请求 #3 的合并提交是 `0885e67`。写这份交接时 `origin/main` 就是它。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 的合并提交是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
+| Git | 拉取请求 #4 的合并提交是 `83afeb8`。写这份交接时 `origin/main` 就是它。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 的合并提交是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 的合并提交是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
 
