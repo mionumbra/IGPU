@@ -6,7 +6,9 @@
 
 ## 下一会话接着做
 
-停在 `main`。写这份交接时，钳制与重复的合并提交是 `84b40f5`，`origin/main` 就是它。这一刀没有拉取请求，是本地合并后直接推送的。`gl-address` 还在，尖端是 `95867cd`，已经包含在 `84b40f5` 里。不要重做，也不要再为它开拉取请求。这份文档自己的提交在 `84b40f5` 之后，以 `git rev-parse --short HEAD` 为准。
+**合并规则，先读这一段。** 功能分支必须推送到 `origin`。进入 `main` 只能通过 GitHub 拉取请求（pull request）：先推送分支，再开拉取请求，由拉取请求合并。不要在本地 `merge`（包括 `--no-ff` 和快进）之后直接 `push origin main`。交接文档自己的修改也走拉取请求，不要直接推 `main`。已经用拉取请求合并过的旧分支不要再开一次。`9c56d05`（最近点采样）和 `84b40f5`（钳制与重复）是在这条规则写明之前直接推进 `main` 的，不要照做。
+
+停在 `main`。钳制与重复的合并提交是 `84b40f5`。`gl-address` 已推送，尖端是 `95867cd`，已经包含在 `84b40f5` 里。不要重做这一刀的代码。这份文档自己的提交在 `84b40f5` 之后，以 `git rev-parse --short HEAD` 为准。
 
 计划在 `superpowers/plans/2026-10-10-gl-address.md`。更早的最近点采样计划在 `superpowers/plans/2026-10-10-gl-sample.md`。两份都已经证明，不要重做：
 
@@ -148,6 +150,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 
 这是整个扩展的规则，不是某一条功能的规则。
 
+- 功能分支必须推送到 `origin`，并且只通过 GitHub 拉取请求合并进 `main`。不要本地合并后直接推 `main`。`9c56d05` 和 `84b40f5` 是例外，不要再这么做。
 - 公开接口是跨后端的。`spec.gmidl`、公共头和 GML 里不出现 d3d、dxgi、hlsl、`_5_0`、ID3D。方言提示字符串 `hlsl` / `glsl` / `glsl_es` / `msl` / `spirv` 除外。复用 GameMaker 已有的名字：`bm_*`、`cmpfunc_*`、`cull_*`、`tf_*`、`surface_*`、`IgpuAddressMode`。
 - 调用链是 `spec.gmidl` → extgen 生成的 `code_gen` → `src/native/IGPU_native.cpp` 的薄包装 → `igpu::` 门面（`igpu_gpu.cpp`）→ `Backend` 虚函数。选具体后端的地方有两处，都在绑定设备时：`bind_device()` 装 `make_d3d11_backend`；`bind_current_context()` 只在定义了 `IGPU_HAS_OPENGL` 的探针里装 `GlBackend`。Direct3D 的实现仍在 `d3d11/igpu_d3d11_backend.cpp` 的 `namespace igpu::d3d11_impl`。
 - 门面在虚函数调用之前执行 `require_device`。虚函数不写默认参数。公共头可以有默认参数。
