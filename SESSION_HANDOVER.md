@@ -1,4 +1,4 @@
-# 会话交接 — 2026-10-10 — 版本 0.5.0 — OpenGL 钳制与重复采样已在探针里
+# 会话交接 — 2026-10-10 — 版本 0.5.0 — OpenGL 钳制与重复采样已进入 main
 
 > 先读这一节，再改代码。`HANDOVER.md` 是长文档，开头版本是 `0.5.0`。正文里 9 月的叙述已经过时。本文下半截仍保留 2026-09-23 审计记录。
 >
@@ -6,9 +6,9 @@
 
 ## 下一会话接着做
 
-停在 `main`。写这份交接时，最近点纹理采样的合并提交是 `9c56d05`，`origin/main` 就是它。这一刀没有拉取请求，是本地合并后直接推送的。`gl-sample` 还在，尖端是 `b871e87`，已经包含在 `9c56d05` 里。不要重做，也不要再为它开拉取请求。这份文档自己的提交在 `9c56d05` 之后，以 `git rev-parse --short HEAD` 为准。
+停在 `main`。写这份交接时，钳制与重复的合并提交是 `84b40f5`，`origin/main` 就是它。这一刀没有拉取请求，是本地合并后直接推送的。`gl-address` 还在，尖端是 `95867cd`，已经包含在 `84b40f5` 里。不要重做，也不要再为它开拉取请求。这份文档自己的提交在 `84b40f5` 之后，以 `git rev-parse --short HEAD` 为准。
 
-计划在 `superpowers/plans/2026-10-10-gl-sample.md`。探针已经证明，不要重做：
+计划在 `superpowers/plans/2026-10-10-gl-address.md`。更早的最近点采样计划在 `superpowers/plans/2026-10-10-gl-sample.md`。两份都已经证明，不要重做：
 
 最近点纹理采样只在探针里。`igpu_draw_sampled` 把 `g_textures` 里的 rgba8 绑到当前二维纹理，把当前程序的 `uniform sampler2D igpu_tex` 设为 0，画进调用方已经 current 的帧缓冲。不清屏，不改帧缓冲、视口和程序。返回前恢复 `GL_TEXTURE_BINDING_2D`。过滤是创建时设下的最近点，包裹是钳制到边缘。不创建采样器对象，不调用 `glActiveTexture`。属性 0 是 `in_pos`，属性 1 在采样程序里是 `in_uv`。位置加纹理坐标的缓冲步长必须显式写成 16。步长 0 仍是位置缓冲。
 
@@ -16,7 +16,7 @@
 
 被采样的纹理若是当前颜色附件，调用失败，错误含有 `the texture is the current color target`，源像素不变。没有 `igpu_tex` 的程序失败，错误含有 `no sampler uniform 'igpu_tex'`，目标保持 `0`。句柄 0 仍是那次最近点采样。纹理句柄 0 失败，错误含有 `unknown texture handle`。`igpu_buffer_create(96, 0, 1, 0)` 仍是步长 8，配上纹理坐标布局失败，错误含有 `stride does not match`。
 
-最近点采样器只在探针里，在分支 `gl-address` 上，还没有合并进 `main`。`igpu_sampler_state_create` 接受三轴相同的钳制或重复，放大、缩小和级间过滤都是最近点，各向异性是 1，比较是 0，级数偏移是 0，最细级数是 0。句柄记在 CPU 上，不创建 GL 采样器对象。`igpu_draw_sampled` 在这一次绘制里把源纹理的 S、T 包裹设成对应值，返回前写回绘制前的值。句柄 0 不改包裹。不调用 `glActiveTexture`，也不改过滤。
+最近点采样器只在探针里，已经进入 `main`。`igpu_sampler_state_create` 接受三轴相同的钳制或重复，放大、缩小和级间过滤都是最近点，各向异性是 1，比较是 0，级数偏移是 0，最细级数是 0。句柄记在 CPU 上，不创建 GL 采样器对象。`igpu_draw_sampled` 在这一次绘制里把源纹理的 S、T 包裹设成对应值，返回前写回绘制前的值。句柄 0 不改包裹。不调用 `glActiveTexture`，也不改过滤。
 
 `u = 1.0625` 在重复下两边都是红 `255`，在钳制采样器下两边都是蓝 `16711680`。随后句柄 0 仍是蓝，重复没有留下来。`u = -0.0625` 在重复下是蓝，在钳制下是红。句柄 0、`u = 0.484375` 两边仍是红 `255`。
 
@@ -179,7 +179,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 图元 1/2/3/5 | 三角带 `255 / 0`，随后右边也是 `255`。点是单个纹素 `255`，邻居是 `0`。线列表是 `255 / 0 / 255`。线带随后右边也是 `255` |
 | GL 纹理采样 | 源 `255 / 16711680`。前 3 个顶点是 `255 / 0`，尾巴是 `255 / 16711680`。常数 `u = 0.484375` 是 `255 / 255` |
 | GL 包裹 | 重复 `u = 1.0625` 为 `255 / 255`，钳制和句柄 0 为 `16711680 / 16711680` |
-| Git | 最近点采样的合并提交是 `9c56d05`。写这份交接时 `origin/main` 就是它。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
+| Git | 钳制与重复的合并提交是 `84b40f5`。写这份交接时 `origin/main` 就是它。`gl-address` 在 `95867cd`。最近点采样的合并提交是 `9c56d05`。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
 
