@@ -38,6 +38,8 @@ using IgpuGlDisableVertexAttribArray = void(APIENTRY*)(GLuint);
 using IgpuGlVertexAttribPointer = void(APIENTRY*)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
 using IgpuGlGenVertexArrays = void(APIENTRY*)(GLsizei, GLuint*);
 using IgpuGlBindVertexArray = void(APIENTRY*)(GLuint);
+using IgpuGlGetUniformLocation = GLint(APIENTRY*)(GLuint, const char*);
+using IgpuGlUniform1i = void(APIENTRY*)(GLint, GLint);
 
 struct IgpuGlFns
 {
@@ -69,6 +71,8 @@ struct IgpuGlFns
     IgpuGlVertexAttribPointer VertexAttribPointer = nullptr;
     IgpuGlGenVertexArrays GenVertexArrays = nullptr;
     IgpuGlBindVertexArray BindVertexArray = nullptr;
+    IgpuGlGetUniformLocation GetUniformLocation = nullptr;
+    IgpuGlUniform1i Uniform1i = nullptr;
 };
 
 IgpuGlFns& igpu_gl_fns();
