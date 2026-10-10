@@ -102,6 +102,9 @@ namespace igpu
         {
             switch (primitive)
             {
+            case 1: mode = GL_POINTS; return true;
+            case 2: mode = GL_LINES; return true;
+            case 3: mode = GL_LINE_STRIP; return true;
             case 4: mode = GL_TRIANGLES; return true;
             case 5: mode = GL_TRIANGLE_STRIP; return true;
             default: return false;
