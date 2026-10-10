@@ -329,7 +329,7 @@ namespace igpu
         case Capability::BlendState:       return native;
         case Capability::DepthState:       return native;
         case Capability::RasterState:      return native;
-        case Capability::SamplerState:     return native;
+        case Capability::SamplerState:     return native || opengl_backend();
         case Capability::UniformReflection: return native;
 
         case Capability::None:

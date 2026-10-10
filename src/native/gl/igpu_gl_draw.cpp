@@ -54,6 +54,13 @@ namespace igpu
         std::uint64_t g_next_texture = 1;
         std::uint64_t g_next_layout = 1;
         std::unordered_map<std::uint64_t, int> g_layouts;
+        struct SamplerObject
+        {
+            bool repeat = false;
+        };
+
+        std::unordered_map<std::uint64_t, SamplerObject> g_samplers;
+        std::uint64_t g_next_sampler = 1;
         GLuint g_vertex_array = 0;
 
         bool read_i64(const gm::wire::GMValue& value, std::int64_t& out)
@@ -121,9 +128,8 @@ namespace igpu
             }
         }
 
-        bool gl_draw_accepted(const char* entry, std::int32_t primitive, std::int64_t blend_state,
-                              std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state,
-                              GLenum& mode)
+        bool gl_pipeline_accepted(const char* entry, std::int32_t primitive, std::int64_t blend_state,
+                                  std::int64_t depth_state, std::int64_t raster_state, GLenum& mode)
         {
             if (primitive == 6)
             {
@@ -135,7 +141,23 @@ namespace igpu
                 set_last_error(std::string(entry) + ": the opengl backend does not draw this primitive");
                 return false;
             }
-            if (blend_state != 0 || depth_state != 0 || raster_state != 0 || sampler_state != 0)
+            if (blend_state != 0 || depth_state != 0 || raster_state != 0)
+            {
+                set_last_error(std::string(entry) + ": the opengl backend draws with no extra state");
+                return false;
+            }
+            return true;
+        }
+
+        bool gl_draw_accepted(const char* entry, std::int32_t primitive, std::int64_t blend_state,
+                              std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state,
+                              GLenum& mode)
+        {
+            if (!gl_pipeline_accepted(entry, primitive, blend_state, depth_state, raster_state, mode))
+            {
+                return false;
+            }
+            if (sampler_state != 0)
             {
                 set_last_error(std::string(entry) + ": the opengl backend draws with no extra state");
                 return false;
@@ -168,6 +190,8 @@ namespace igpu
         g_buffers.clear();
         g_textures.clear();
         g_layouts.clear();
+        g_samplers.clear();
+        g_next_sampler = 1;
         g_vertex_array = 0;
         g_next_buffer = 1;
         g_next_texture = 1;
@@ -603,8 +627,7 @@ namespace igpu
                          std::int64_t sampler_state)
     {
         GLenum mode = GL_TRIANGLES;
-        if (!gl_draw_accepted("igpu_draw_sampled", primitive, blend_state, depth_state, raster_state, sampler_state,
-                              mode))
+        if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, blend_state, depth_state, raster_state, mode))
         {
             return false;
         }
@@ -667,6 +690,17 @@ namespace igpu
             set_last_error("igpu_draw_sampled: the bound program has no sampler uniform 'igpu_tex'");
             return false;
         }
+        bool repeat = false;
+        if (sampler_state != 0)
+        {
+            const auto sampler_it = g_samplers.find(static_cast<std::uint64_t>(sampler_state));
+            if (sampler_it == g_samplers.end())
+            {
+                set_last_error("igpu_draw_sampled: unknown sampler handle");
+                return false;
+            }
+            repeat = sampler_it->second.repeat;
+        }
         if (g_vertex_array == 0)
         {
             fns.GenVertexArrays(1, &g_vertex_array);
@@ -676,6 +710,16 @@ namespace igpu
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
         glBindTexture(GL_TEXTURE_2D, source->second.texture);
+        GLint previous_wrap_s = GL_CLAMP_TO_EDGE;
+        GLint previous_wrap_t = GL_CLAMP_TO_EDGE;
+        if (sampler_state != 0)
+        {
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, &previous_wrap_s);
+            glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, &previous_wrap_t);
+            const GLint wrap = repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+        }
         fns.Uniform1i(sampler, 0);
         fns.BindVertexArray(g_vertex_array);
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
@@ -684,7 +728,51 @@ namespace igpu
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindVertexArray(0);
+        if (sampler_state != 0)
+        {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, previous_wrap_s);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, previous_wrap_t);
+        }
         glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
+        return true;
+    }
+
+    std::int64_t gl_sampler_state_create_filters_range(std::int32_t magnification, std::int32_t minification,
+                                                       std::int32_t mip, std::int32_t address_u, std::int32_t address_v,
+                                                       std::int32_t address_w, float level_offset, float finest,
+                                                       float coarsest)
+    {
+        // One mip. finest must be the base level. A non-negative coarsest
+        // cannot select another level on this backend.
+        if (magnification != 0 || minification != 0 || mip != 0)
+        {
+            set_last_error("igpu_sampler_state_create: the opengl backend only samples the nearest texel");
+            return 0;
+        }
+        const bool clamp = address_u == 0 && address_v == 0 && address_w == 0;
+        const bool repeat = address_u == 1 && address_v == 1 && address_w == 1;
+        if (!clamp && !repeat)
+        {
+            set_last_error("igpu_sampler_state_create: the opengl backend only accepts clamp or repeat on every axis");
+            return 0;
+        }
+        if (level_offset != 0.f || finest != 0.f || !(coarsest >= 0.f))
+        {
+            set_last_error("igpu_sampler_state_create: the opengl backend has no mip chain");
+            return 0;
+        }
+        const std::uint64_t handle = g_next_sampler++;
+        g_samplers.emplace(handle, SamplerObject{repeat});
+        return static_cast<std::int64_t>(handle);
+    }
+
+    bool gl_state_release(std::uint64_t handle)
+    {
+        if (g_samplers.erase(handle) == 0)
+        {
+            set_last_error("igpu_state_release: unknown sampler handle");
+            return false;
+        }
         return true;
     }
 }
