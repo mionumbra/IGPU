@@ -171,12 +171,16 @@ namespace igpu
                 return gl_sampler_state_create_filters_range(
                     magnification, minification, mip, address_u, address_v, address_w, level_offset, finest, coarsest);
             }
-            std::int64_t sampler_state_create_filters_border_range(std::int32_t, std::int32_t, std::int32_t, std::int32_t,
-                                                                   std::int32_t, std::int32_t, float, float, float, float,
-                                                                   float, float, float) override
+            std::int64_t sampler_state_create_filters_border_range(std::int32_t magnification, std::int32_t minification,
+                                                                   std::int32_t mip, std::int32_t address_u,
+                                                                   std::int32_t address_v, std::int32_t address_w,
+                                                                   float red, float green, float blue, float alpha,
+                                                                   float level_offset, float finest,
+                                                                   float coarsest) override
             {
-                not_yet("igpu_sampler_state_create");
-                return 0;
+                return gl_sampler_state_create_filters_border_range(
+                    magnification, minification, mip, address_u, address_v, address_w, red, green, blue, alpha,
+                    level_offset, finest, coarsest);
             }
             std::int64_t sampler_state_create_compare(std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t,
                                                       std::int32_t, std::int32_t, std::int32_t, float, float, float) override
