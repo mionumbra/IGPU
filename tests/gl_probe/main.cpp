@@ -2029,16 +2029,250 @@ int main()
     {
         return fail("mirror draws changed the source texture");
     }
-    const auto wrap_mixed = igpu_sampler_state_create(0, 0, 0, 1, 0, 1, 1, 0, 0, 0.f, 0.f, -1.f);
-    if (wrap_mixed != 0 || std::string(igpu_get_last_error()).find("clamp, repeat, or mirror") == std::string::npos)
+    const auto axes_repeat = igpu_sampler_state_create(0, 0, 0, 1, 0, 2, 1, 0, 0, 0.f, 0.f, -1.f);
+    const auto axes_tall = igpu_sampler_state_create(0, 0, 0, 0, 1, 2, 1, 0, 0, 0.f, 0.f, -1.f);
+    const auto axes_mirror = igpu_sampler_state_create(0, 0, 0, 2, 1, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    const auto axes_low = igpu_sampler_state_create(0, 0, 0, 2, 0, 1, 1, 0, 0, 0.f, 0.f, -1.f);
+    const auto axes_wide = igpu_sampler_state_create(0, 0, 0, 0, 0, 1, 1, 0, 0, 0.f, 0.f, -1.f);
+    const auto axes_linear = igpu_sampler_state_create(1, 0, 0, 2, 1, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (axes_repeat == 0 || axes_tall == 0 || axes_mirror == 0 || axes_low == 0 || axes_wide == 0 ||
+        axes_linear == 0)
     {
-        return fail("mixed address axes were accepted");
+        return fail(igpu_get_last_error().c_str());
     }
-    const auto wrap_mirror_mixed = igpu_sampler_state_create(0, 0, 0, 2, 1, 2, 1, 0, 0, 0.f, 0.f, -1.f);
-    if (wrap_mirror_mixed != 0 ||
+    const auto axes_unknown = igpu_sampler_state_create(0, 0, 0, 4, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (axes_unknown != 0 ||
         std::string(igpu_get_last_error()).find("clamp, repeat, or mirror") == std::string::npos)
     {
-        return fail("mirror mixed with repeat was accepted");
+        return fail("an unknown address mode was accepted");
+    }
+    const auto axes_tall_source = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto axes_repeat_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto axes_tall_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto axes_mirror_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto axes_low_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto axes_wide_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto axes_linear_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto axes_restore_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto axes_wrap_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto axes_plain_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto axes_reject_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (axes_tall_source == 0 || axes_repeat_dest == 0 || axes_tall_dest == 0 || axes_mirror_dest == 0 ||
+        axes_low_dest == 0 || axes_wide_dest == 0 || axes_linear_dest == 0 || axes_restore_dest == 0 ||
+        axes_wrap_dest == 0 || axes_plain_dest == 0 || axes_reject_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const float axes_pos[] = {
+        -1.f, -1.f, 1.f, -1.f, -1.f, 0.f, 1.f, -1.f, 1.f, 0.f, -1.f, 0.f,
+        -1.f, 0.f, 1.f, 0.f, -1.f, 1.f, 1.f, 0.f, 1.f, 1.f, -1.f, 1.f,
+    };
+    ColourVertex axes_vertices[12] = {};
+    for (int i = 0; i < 12; ++i)
+    {
+        axes_vertices[i].x = axes_pos[i * 2];
+        axes_vertices[i].y = axes_pos[i * 2 + 1];
+        const bool bottom = i < 6;
+        axes_vertices[i].r = bottom ? 255 : 0;
+        axes_vertices[i].g = 0;
+        axes_vertices[i].b = bottom ? 0 : 255;
+        axes_vertices[i].a = 255;
+    }
+    const auto axes_colour = igpu_buffer_create(static_cast<std::int64_t>(sizeof(axes_vertices)), 0, 1, 12);
+    if (axes_colour == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(axes_colour), 0,
+                           gm::wire::GMBuffer(axes_vertices, sizeof(axes_vertices))))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(colour_vert, 0) || !igpu_shader_bind(colour_frag, 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(axes_tall_source), sample_saved_fbo,
+                                     sample_held_viewport))
+    {
+        return fail("vertical source target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(axes_colour), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 12,
+                   1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(axes_tall_source), 1, 7, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(axes_tall_source), 1, 0, 0, 0) != 16711680)
+    {
+        return fail("vertical source was not red on the bottom and blue on the top");
+    }
+    if (!igpu_shader_bind(sample_vert, 0) || !igpu_shader_bind(sample_frag, 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto sample_from = [&](std::int64_t dest, std::int64_t sampler, std::int64_t source) -> bool {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(dest), saved, viewport))
+        {
+            return false;
+        }
+        const bool drew = igpu_draw_sampled(
+            static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+            static_cast<std::uint64_t>(source), 0, 0, 0, sampler);
+        igpu::gl_color_target_end(saved, viewport);
+        return drew;
+    };
+    if (!write_uv(1.0625f, 0.5f) || !sample_from(axes_repeat_dest, axes_repeat, sample_source))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto axes_repeat_left = igpu_texture_read(static_cast<std::uint64_t>(axes_repeat_dest), 1, 4, 0, 0);
+    const auto axes_repeat_right = igpu_texture_read(static_cast<std::uint64_t>(axes_repeat_dest), 6, 4, 0, 0);
+    std::printf("axes repeat  : %lld / %lld\n", static_cast<long long>(axes_repeat_left),
+                static_cast<long long>(axes_repeat_right));
+    if (axes_repeat_left != 255 || axes_repeat_right != 255)
+    {
+        return fail("repeat on U at u=1.0625 was not pure red");
+    }
+    if (!write_uv(0.5f, 1.0625f) || !sample_from(axes_tall_dest, axes_tall, axes_tall_source))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto axes_tall_left = igpu_texture_read(static_cast<std::uint64_t>(axes_tall_dest), 1, 4, 0, 0);
+    const auto axes_tall_right = igpu_texture_read(static_cast<std::uint64_t>(axes_tall_dest), 6, 4, 0, 0);
+    std::printf("axes tall    : %lld / %lld\n", static_cast<long long>(axes_tall_left),
+                static_cast<long long>(axes_tall_right));
+    if (axes_tall_left != 255 || axes_tall_right != 255)
+    {
+        return fail("repeat on V at v=1.0625 was not the bottom texel");
+    }
+    if (!write_uv(1.6f, 0.5f) || !sample_from(axes_mirror_dest, axes_mirror, sample_source))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto axes_mirror_left = igpu_texture_read(static_cast<std::uint64_t>(axes_mirror_dest), 1, 4, 0, 0);
+    const auto axes_mirror_right = igpu_texture_read(static_cast<std::uint64_t>(axes_mirror_dest), 6, 4, 0, 0);
+    std::printf("axes mirror  : %lld / %lld\n", static_cast<long long>(axes_mirror_left),
+                static_cast<long long>(axes_mirror_right));
+    if (axes_mirror_left != 255 || axes_mirror_right != 255)
+    {
+        return fail("mirror on U at u=1.6 was not pure red");
+    }
+    if (!write_uv(0.5f, -0.625f) || !sample_from(axes_low_dest, axes_low, axes_tall_source))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto axes_low_left = igpu_texture_read(static_cast<std::uint64_t>(axes_low_dest), 1, 4, 0, 0);
+    const auto axes_low_right = igpu_texture_read(static_cast<std::uint64_t>(axes_low_dest), 6, 4, 0, 0);
+    std::printf("axes low     : %lld / %lld\n", static_cast<long long>(axes_low_left),
+                static_cast<long long>(axes_low_right));
+    if (axes_low_left != 255 || axes_low_right != 255)
+    {
+        return fail("clamp on V at v=-0.625 was not the bottom texel");
+    }
+    if (!write_uv(0.5f, -0.0625f) || !sample_from(axes_wide_dest, axes_wide, axes_tall_source))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto axes_wide_left = igpu_texture_read(static_cast<std::uint64_t>(axes_wide_dest), 1, 4, 0, 0);
+    const auto axes_wide_right = igpu_texture_read(static_cast<std::uint64_t>(axes_wide_dest), 6, 4, 0, 0);
+    std::printf("axes wide    : %lld / %lld\n", static_cast<long long>(axes_wide_left),
+                static_cast<long long>(axes_wide_right));
+    if (axes_wide_left != 255 || axes_wide_right != 255)
+    {
+        return fail("repeat on W changed the T wrap");
+    }
+    if (!write_uv(1.5f, 0.5f) || !sample_from(axes_linear_dest, axes_linear, sample_source))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto axes_linear_left = igpu_texture_read(static_cast<std::uint64_t>(axes_linear_dest), 1, 4, 0, 0);
+    const auto axes_linear_right = igpu_texture_read(static_cast<std::uint64_t>(axes_linear_dest), 6, 4, 0, 0);
+    std::printf("axes linear  : %lld / %lld\n", static_cast<long long>(axes_linear_left),
+                static_cast<long long>(axes_linear_right));
+    if (axes_linear_left != 8388736 || axes_linear_right != 8388736)
+    {
+        return fail("linear mirror on U at u=1.5 was not half red and half blue");
+    }
+    if (!write_uv(0.5f, 1.0625f) || !sample_from(axes_restore_dest, 0, axes_tall_source))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto axes_restore_left = igpu_texture_read(static_cast<std::uint64_t>(axes_restore_dest), 1, 4, 0, 0);
+    const auto axes_restore_right = igpu_texture_read(static_cast<std::uint64_t>(axes_restore_dest), 6, 4, 0, 0);
+    std::printf("axes restore : %lld / %lld\n", static_cast<long long>(axes_restore_left),
+                static_cast<long long>(axes_restore_right));
+    if (axes_restore_left != 16711680 || axes_restore_right != 16711680)
+    {
+        return fail("sampler 0 at v=1.0625 was not the top texel");
+    }
+    if (!write_uv(1.6f, 0.5f) || !sample_from(axes_wrap_dest, 0, sample_source))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto axes_wrap_left = igpu_texture_read(static_cast<std::uint64_t>(axes_wrap_dest), 1, 4, 0, 0);
+    const auto axes_wrap_right = igpu_texture_read(static_cast<std::uint64_t>(axes_wrap_dest), 6, 4, 0, 0);
+    std::printf("axes wrap    : %lld / %lld\n", static_cast<long long>(axes_wrap_left),
+                static_cast<long long>(axes_wrap_right));
+    if (axes_wrap_left != 16711680 || axes_wrap_right != 16711680)
+    {
+        return fail("sampler 0 at u=1.6 was not the edge texel");
+    }
+    if (!write_uv(0.484375f, 0.5f) || !sample_from(axes_plain_dest, 0, sample_source))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto axes_plain_left = igpu_texture_read(static_cast<std::uint64_t>(axes_plain_dest), 1, 4, 0, 0);
+    const auto axes_plain_right = igpu_texture_read(static_cast<std::uint64_t>(axes_plain_dest), 6, 4, 0, 0);
+    std::printf("axes plain   : %lld / %lld\n", static_cast<long long>(axes_plain_left),
+                static_cast<long long>(axes_plain_right));
+    if (axes_plain_left != 255 || axes_plain_right != 255)
+    {
+        return fail("sampler 0 at u=0.484375 was not pure red after linear mixed axes");
+    }
+    std::int32_t axes_saved = 0;
+    std::int32_t axes_viewport[4] = {};
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(axes_reject_dest), axes_saved, axes_viewport))
+    {
+        return fail("axes reject target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(wrap_buffer), 0, static_cast<std::uint64_t>(sample_layout), 4, 0, 6, 1,
+                  0, 0, 0, axes_repeat) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(axes_saved, axes_viewport);
+        return fail("igpu_draw accepted a mixed-axis sampler");
+    }
+    if (igpu_draw_indexed(static_cast<std::uint64_t>(indexed_vertices_buffer), static_cast<std::uint64_t>(layout),
+                          static_cast<std::uint64_t>(indexed_index_buffer), 4, 0, 6, 0, 0, 0, axes_repeat) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(axes_saved, axes_viewport);
+        return fail("igpu_draw_indexed accepted a mixed-axis sampler");
+    }
+    const auto axes_target_bytes = encode_u64(static_cast<std::uint64_t>(axes_reject_dest));
+    const auto axes_zero_bytes = encode_u64(0);
+    if (igpu_draw_to_render_targets(static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout),
+                                    4, 0, 6, as_array(axes_target_bytes), as_array(axes_zero_bytes),
+                                    as_array(axes_zero_bytes), 0, 0, 0, axes_repeat) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(axes_saved, axes_viewport);
+        return fail("igpu_draw_to_render_targets accepted a mixed-axis sampler");
+    }
+    igpu::gl_color_target_end(axes_saved, axes_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(axes_reject_dest), 1, 4, 0, 0) != 0 ||
+        igpu_texture_read(static_cast<std::uint64_t>(axes_reject_dest), 6, 4, 0, 0) != 0)
+    {
+        return fail("rejected mixed-axis draw changed pixels");
+    }
+    if (igpu_texture_read(static_cast<std::uint64_t>(axes_tall_source), 1, 7, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(axes_tall_source), 1, 0, 0, 0) != 16711680 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_source), 1, 4, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_source), 6, 4, 0, 0) != 16711680)
+    {
+        return fail("mixed-axis draws changed a source texture");
     }
     const auto border_green = igpu_sampler_state_create(0, 0, 0, 3, 3, 3, 1, 65280, 0, 0.f, 0.f, -1.f);
     const auto border_red = igpu_sampler_state_create(0, 0, 0, 3, 3, 3, 1, 255, 0, 0.f, 0.f, -1.f);
