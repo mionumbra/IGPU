@@ -70,6 +70,7 @@ namespace igpu
             float border_green = 0.f;
             float border_blue = 0.f;
             float border_alpha = 1.f;
+            bool linear_min = false;
         };
 
         std::unordered_map<std::uint64_t, SamplerObject> g_samplers;
@@ -722,6 +723,7 @@ namespace igpu
         }
         std::int32_t address = 0;
         bool linear = false;
+        bool linear_min = false;
         GLfloat border_color[4] = {0.f, 0.f, 0.f, 1.f};
         if (sampler_state != 0)
         {
@@ -733,6 +735,7 @@ namespace igpu
             }
             address = sampler_it->second.address;
             linear = sampler_it->second.linear;
+            linear_min = sampler_it->second.linear_min;
             border_color[0] = sampler_it->second.border_red;
             border_color[1] = sampler_it->second.border_green;
             border_color[2] = sampler_it->second.border_blue;
@@ -750,6 +753,7 @@ namespace igpu
         GLint previous_wrap_s = GL_CLAMP_TO_EDGE;
         GLint previous_wrap_t = GL_CLAMP_TO_EDGE;
         GLint previous_mag = GL_NEAREST;
+        GLint previous_min = GL_NEAREST;
         GLfloat previous_border[4] = {0.f, 0.f, 0.f, 0.f};
         const bool border = address == 3;
         if (sampler_state != 0)
@@ -768,6 +772,11 @@ namespace igpu
             {
                 glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &previous_mag);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            }
+            if (linear_min)
+            {
+                glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &previous_min);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             }
         }
         fns.Uniform1i(sampler, 0);
@@ -790,6 +799,10 @@ namespace igpu
             {
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, previous_mag);
             }
+            if (linear_min)
+            {
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, previous_min);
+            }
         }
         glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
         return true;
@@ -802,8 +815,9 @@ namespace igpu
     {
         // One mip. finest must be the base level. A non-negative coarsest
         // cannot select another level on this backend.
-        // Magnification may be nearest or linear. Minification and mip stay nearest.
-        if (minification != 0 || mip != 0 || (magnification != 0 && magnification != 1))
+        // Magnification and minification may each be nearest or linear.
+        // Mip filtering stays nearest. GL_LINEAR minification is not a mip chain.
+        if (mip != 0 || (magnification != 0 && magnification != 1) || (minification != 0 && minification != 1))
         {
             set_last_error("igpu_sampler_state_create: the opengl backend only samples the nearest texel");
             return 0;
@@ -821,8 +835,9 @@ namespace igpu
             return 0;
         }
         const bool linear = magnification == 1;
+        const bool linear_min = minification == 1;
         const std::uint64_t handle = g_next_sampler++;
-        g_samplers.emplace(handle, SamplerObject{address_u, linear});
+        g_samplers.emplace(handle, SamplerObject{address_u, linear, 0.f, 0.f, 0.f, 1.f, linear_min});
         return static_cast<std::int64_t>(handle);
     }
 
