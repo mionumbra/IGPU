@@ -2065,6 +2065,10 @@ int main()
     {
         return fail("level offset was accepted");
     }
+    if (!write_uv(1.0625f, 0.5f))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
     if (!igpu_state_release(static_cast<std::uint64_t>(wrap_repeat)) ||
         igpu_state_release(static_cast<std::uint64_t>(wrap_repeat)) ||
         std::string(igpu_get_last_error()).find("unknown sampler handle") == std::string::npos)
