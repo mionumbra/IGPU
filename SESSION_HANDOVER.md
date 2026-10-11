@@ -1,4 +1,4 @@
-# 会话交接 — 2026-10-12 — 版本 0.5.0 — OpenGL 混合在 gl-blend，还没有进入 main
+# 会话交接 — 2026-10-12 — 版本 0.5.0 — OpenGL 混合随拉取请求 #12 进入 main
 
 > 先读这一节，再改代码。`HANDOVER.md` 是长文档，开头版本是 `0.5.0`。正文里 9 月的叙述已经过时。本文下半截仍保留 2026-09-23 审计记录。
 >
@@ -8,7 +8,7 @@
 
 **合并规则，先读这一段。** 功能分支必须推送到 `origin`。进入 `main` 只能通过 GitHub 拉取请求（pull request）：先推送分支，再开拉取请求，批准并合并。探针通过之后就做完这三步，不要留到下一会话。不要在本地 `merge`（包括 `--no-ff` 和快进）之后直接 `push origin main`。交接文档自己的修改也走拉取请求，不要直接推 `main`。已经用拉取请求合并过的旧分支不要再开一次。`9c56d05`（最近点采样）和 `84b40f5`（钳制与重复）是在这条规则写明之前直接推进 `main` 的，不要照做。
 
-停在 `gl-blend`。`gl-blend` 从拉取请求 #11 之后的 `origin/main`（`19148c1`）拉出。混轴包裹随拉取请求 #11 进入 `main`，功能提交 `13f926a`，合并提交 `19148c1`。不要重做混轴包裹，也不要再为它开拉取请求。混合在这条分支的探针里，还没有进入 `main`。深度、光栅、各向异性、比较、级间线性，以及边框采样器上的线性缩小，都先不要做。再下一刀还没定。这份交接自己的提交以 `git rev-parse --short HEAD` 为准。
+停在 `gl-blend`。`gl-blend` 从拉取请求 #11 之后的 `origin/main`（`19148c1`）拉出。混轴包裹随拉取请求 #11 进入 `main`，功能提交 `13f926a`，合并提交 `19148c1`。不要重做混轴包裹，也不要再为它开拉取请求。混合随拉取请求 #12 进入 `main`，功能提交 `8beb2a2`。深度、光栅、各向异性、比较、级间线性，以及边框采样器上的线性缩小，都先不要做。再下一刀还没定。这份交接自己的提交以 `git rev-parse --short HEAD` 为准。
 
 计划在 `superpowers/plans/2026-10-10-gl-address.md`。更早的最近点采样计划在 `superpowers/plans/2026-10-10-gl-sample.md`。两份都已经证明，不要重做：
 
@@ -28,7 +28,7 @@
 
 镜像寻址随拉取请求 #8 进入 `main`。边框寻址随拉取请求 #9 进入 `main`，功能提交 `38687b8`。线性缩小随拉取请求 #10 进入 `main`，功能提交 `8fe079a`，合并提交 `fb136fd`。混轴包裹随拉取请求 #11 进入 `main`，功能提交 `13f926a`，合并提交 `19148c1`。进入 `main` 只能通过拉取请求。
 
-混合在探针里，还没有进入 `main`。`igpu_blend_state_create` 接受 `bm_zero` 到 `bm_src_alpha_sat`（1–11），方程接受 `bm_eq_*`（1–5）。颜色因子放到 alpha 槽时，和 Direct3D 一样改成对应的 alpha 因子。句柄记在 CPU 上，和采样器共用编号，不创建 GL 对象。`igpu_draw`、`igpu_draw_indexed` 和 `igpu_draw_to_render_targets` 在这一次绘制里按记录打开或关掉混合，设置分开的因子和方程，并套上四个通道的写掩码，返回前写回。句柄 0 不改混合开关、因子、方程和写掩码。未知句柄和已经释放的句柄失败，错误含有 `unknown blend handle`，像素不变。负数句柄失败，错误含有 `not a state object`。深度和光栅仍必须是 0，错误含有 `draws with no extra state`。`igpu_draw_sampled` 拿到非 0 混合仍失败，错误含有 `draws with no extra state`。三角带上的假句柄 1 现在失败，错误含有 `unknown blend handle`。`BlendState` 在这份 OpenGL 后端上为 true。Windows 的 GameMaker DLL 仍没有 OpenGL 后端，那里 `BlendState` 仍只跟着 Direct3D。
+混合随拉取请求 #12 进入 `main`，功能提交 `8beb2a2`。`igpu_blend_state_create` 接受 `bm_zero` 到 `bm_src_alpha_sat`（1–11），方程接受 `bm_eq_*`（1–5）。颜色因子放到 alpha 槽时，和 Direct3D 一样改成对应的 alpha 因子。句柄记在 CPU 上，和采样器共用编号，不创建 GL 对象。`igpu_draw`、`igpu_draw_indexed` 和 `igpu_draw_to_render_targets` 在这一次绘制里按记录打开或关掉混合，设置分开的因子和方程，并套上四个通道的写掩码，返回前写回。句柄 0 不改混合开关、因子、方程和写掩码。未知句柄和已经释放的句柄失败，错误含有 `unknown blend handle`，像素不变。负数句柄失败，错误含有 `not a state object`。深度和光栅仍必须是 0，错误含有 `draws with no extra state`。`igpu_draw_sampled` 拿到非 0 混合仍失败，错误含有 `draws with no extra state`。三角带上的假句柄 1 现在失败，错误含有 `unknown blend handle`。`BlendState` 在这份 OpenGL 后端上为 true。Windows 的 GameMaker DLL 仍没有 OpenGL 后端，那里 `BlendState` 仍只跟着 Direct3D。
 
 不透明蓝是 `16711680`。src-alpha（因子 5、6，相加），红且 alpha 0 仍是 `16711680`。同一混合，红且 alpha 255 是 `255`。随后句柄 0、蓝且 alpha 0 是 `16711680`，混合开关回到关闭。源红、目标蓝、因子都是 one、方程 max 是 `16711935`。随后句柄 0、红且 alpha 0 是 `255`。索引绘制和画进纹理的 alpha 0 src-alpha 都保持 `16711680`。混合关闭且红通道不写，黑底上画红是 `0`。随后句柄 0 画红是 `255`。
 
@@ -239,7 +239,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 线性缩小 | 2×2 源，采样点 `(0.4, 0.5)`。放大最近点、缩小线性是 `255 / 5046450`。放大线性、缩小最近点是 `5046450 / 255`。随后句柄 0 是 `255 / 255`。级间线性仍拒绝。边框采样器上的线性缩小仍拒绝。 |
 | GL 混轴包裹 | U、V、W 可以不同，各自是钳制、重复或镜像。横纹 `u = 1.0625` 的 U 重复是 `255 / 255`。竖纹 `v = 1.0625` 的 V 重复是 `255 / 255`。`u = 1.6` 的 U 镜像是 `255 / 255`。`u = 1.5` 的线性 U 镜像是 `8388736 / 8388736`。随后句柄 0 在 `v = 1.0625` 是 `16711680 / 16711680`，在 `u = 1.6` 是 `16711680 / 16711680`，在 `u = 0.484375` 是 `255 / 255`。 |
 | GL 混合 | src-alpha、alpha 0 保持 `16711680`。alpha 255 写成 `255`。随后句柄 0、alpha 0 的蓝是 `16711680`。max 是 `16711935`，随后句柄 0 写成 `255`。索引和画进纹理的 alpha 0 保持 `16711680`。红通道不写时是 `0`，随后句柄 0 是 `255`。 |
-| Git | 写这份交接时 `origin/main` 是 `19148c1`（拉取请求 #11）。混轴包裹的功能提交是 `13f926a`，已经进入 `main`。`gl-blend` 从 `19148c1` 拉出，混合还没有进入 `main`。线性缩小的功能提交是 `8fe079a`。拉取请求 #10 的合并提交是 `fb136fd`。边框寻址随拉取请求 #9 进入 `main`，功能提交 `38687b8`。镜像寻址随拉取请求 #8 进入 `main`，功能提交是 `b57cc88`。线性放大的提交是 `9e4325f`。钳制与重复的合并提交是 `84b40f5`。`gl-address` 在 `95867cd`。最近点采样的合并提交是 `9c56d05`。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
+| Git | 写这份交接时 `origin/main` 是 `19148c1`（拉取请求 #11）。混轴包裹的功能提交是 `13f926a`，已经进入 `main`。混合随拉取请求 #12 进入 `main`，功能提交 `8beb2a2`。`gl-blend` 从 `19148c1` 拉出。线性缩小的功能提交是 `8fe079a`。拉取请求 #10 的合并提交是 `fb136fd`。边框寻址随拉取请求 #9 进入 `main`，功能提交 `38687b8`。镜像寻址随拉取请求 #8 进入 `main`，功能提交是 `b57cc88`。线性放大的提交是 `9e4325f`。钳制与重复的合并提交是 `84b40f5`。`gl-address` 在 `95867cd`。最近点采样的合并提交是 `9c56d05`。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
 
