@@ -65,6 +65,7 @@ namespace igpu
         struct SamplerObject
         {
             std::int32_t address = 0;
+            std::int32_t address_v = 0;
             bool linear = false;
             float border_red = 0.f;
             float border_green = 0.f;
@@ -722,6 +723,7 @@ namespace igpu
             return false;
         }
         std::int32_t address = 0;
+        std::int32_t address_v = 0;
         bool linear = false;
         bool linear_min = false;
         GLfloat border_color[4] = {0.f, 0.f, 0.f, 1.f};
@@ -734,6 +736,7 @@ namespace igpu
                 return false;
             }
             address = sampler_it->second.address;
+            address_v = sampler_it->second.address_v;
             linear = sampler_it->second.linear;
             linear_min = sampler_it->second.linear_min;
             border_color[0] = sampler_it->second.border_red;
@@ -760,9 +763,8 @@ namespace igpu
         {
             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, &previous_wrap_s);
             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, &previous_wrap_t);
-            const GLint wrap = gl_wrap(address);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, gl_wrap(address));
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, gl_wrap(address_v));
             if (border)
             {
                 glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, previous_border);
@@ -817,14 +819,16 @@ namespace igpu
         // cannot select another level on this backend.
         // Magnification and minification may each be nearest or linear.
         // Mip filtering stays nearest. GL_LINEAR minification is not a mip chain.
+        // U, V, and W may differ. W is checked and not stored; a 2D draw uses U and V.
         if (mip != 0 || (magnification != 0 && magnification != 1) || (minification != 0 && minification != 1))
         {
             set_last_error("igpu_sampler_state_create: the opengl backend only samples the nearest texel");
             return 0;
         }
-        const bool same = address_u == address_v && address_v == address_w;
-        const bool known = address_u == 0 || address_u == 1 || address_u == 2;
-        if (!same || !known)
+        const bool known_u = address_u == 0 || address_u == 1 || address_u == 2;
+        const bool known_v = address_v == 0 || address_v == 1 || address_v == 2;
+        const bool known_w = address_w == 0 || address_w == 1 || address_w == 2;
+        if (!known_u || !known_v || !known_w)
         {
             set_last_error("igpu_sampler_state_create: the opengl backend only accepts clamp, repeat, or mirror on every axis");
             return 0;
@@ -837,7 +841,7 @@ namespace igpu
         const bool linear = magnification == 1;
         const bool linear_min = minification == 1;
         const std::uint64_t handle = g_next_sampler++;
-        g_samplers.emplace(handle, SamplerObject{address_u, linear, 0.f, 0.f, 0.f, 1.f, linear_min});
+        g_samplers.emplace(handle, SamplerObject{address_u, address_v, linear, 0.f, 0.f, 0.f, 1.f, linear_min});
         return static_cast<std::int64_t>(handle);
     }
 
@@ -866,7 +870,7 @@ namespace igpu
         }
         const bool linear = magnification == 1;
         const std::uint64_t handle = g_next_sampler++;
-        g_samplers.emplace(handle, SamplerObject{3, linear, red, green, blue, alpha});
+        g_samplers.emplace(handle, SamplerObject{3, 3, linear, red, green, blue, alpha});
         return static_cast<std::int64_t>(handle);
     }
 
