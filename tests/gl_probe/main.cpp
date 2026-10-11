@@ -1856,14 +1856,199 @@ int main()
         return fail("rejected linear draw changed pixels");
     }
     const auto wrap_mirror = igpu_sampler_state_create(0, 0, 0, 2, 2, 2, 1, 0, 0, 0.f, 0.f, -1.f);
-    if (wrap_mirror != 0 || std::string(igpu_get_last_error()).find("clamp or repeat") == std::string::npos)
+    const auto linear_mirror = igpu_sampler_state_create(1, 0, 0, 2, 2, 2, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (wrap_mirror == 0 || linear_mirror == 0)
     {
-        return fail("mirror addressing was accepted");
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mirror_nearest_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto mirror_repeat_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto mirror_clamp_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto mirror_negative_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto mirror_point_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto mirror_linear_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto mirror_restore_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto mirror_plain_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (mirror_nearest_dest == 0 || mirror_repeat_dest == 0 || mirror_clamp_dest == 0 ||
+        mirror_negative_dest == 0 || mirror_point_dest == 0 || mirror_linear_dest == 0 ||
+        mirror_restore_dest == 0 || mirror_plain_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(sample_vert, 0) || !igpu_shader_bind(sample_frag, 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!write_uv(1.6f, 0.5f) || !sample_uv(mirror_nearest_dest, wrap_mirror))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mirror_nearest_left = igpu_texture_read(static_cast<std::uint64_t>(mirror_nearest_dest), 1, 4, 0, 0);
+    const auto mirror_nearest_right = igpu_texture_read(static_cast<std::uint64_t>(mirror_nearest_dest), 6, 4, 0, 0);
+    std::printf("mirror nearest: %lld / %lld\n", static_cast<long long>(mirror_nearest_left),
+                static_cast<long long>(mirror_nearest_right));
+    if (mirror_nearest_left != 255 || mirror_nearest_right != 255)
+    {
+        return fail("mirror at u=1.6 was not the red texel");
+    }
+    if (!sample_uv(mirror_repeat_dest, wrap_repeat))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mirror_repeat_left = igpu_texture_read(static_cast<std::uint64_t>(mirror_repeat_dest), 1, 4, 0, 0);
+    const auto mirror_repeat_right = igpu_texture_read(static_cast<std::uint64_t>(mirror_repeat_dest), 6, 4, 0, 0);
+    std::printf("mirror repeat : %lld / %lld\n", static_cast<long long>(mirror_repeat_left),
+                static_cast<long long>(mirror_repeat_right));
+    if (mirror_repeat_left != 16711680 || mirror_repeat_right != 16711680)
+    {
+        return fail("repeat at u=1.6 was not the blue texel");
+    }
+    if (!sample_uv(mirror_clamp_dest, wrap_clamp))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mirror_clamp_left = igpu_texture_read(static_cast<std::uint64_t>(mirror_clamp_dest), 1, 4, 0, 0);
+    const auto mirror_clamp_right = igpu_texture_read(static_cast<std::uint64_t>(mirror_clamp_dest), 6, 4, 0, 0);
+    std::printf("mirror clamp  : %lld / %lld\n", static_cast<long long>(mirror_clamp_left),
+                static_cast<long long>(mirror_clamp_right));
+    if (mirror_clamp_left != 16711680 || mirror_clamp_right != 16711680)
+    {
+        return fail("clamp at u=1.6 was not the edge texel");
+    }
+    if (!write_uv(-0.625f, 0.5f) || !sample_uv(mirror_negative_dest, wrap_mirror))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mirror_negative_left = igpu_texture_read(static_cast<std::uint64_t>(mirror_negative_dest), 1, 4, 0, 0);
+    const auto mirror_negative_right = igpu_texture_read(static_cast<std::uint64_t>(mirror_negative_dest), 6, 4, 0, 0);
+    std::printf("mirror negative: %lld / %lld\n", static_cast<long long>(mirror_negative_left),
+                static_cast<long long>(mirror_negative_right));
+    if (mirror_negative_left != 16711680 || mirror_negative_right != 16711680)
+    {
+        return fail("mirror at u=-0.625 was not the blue texel");
+    }
+    if (!write_uv(0.484375f, 0.5f) || !sample_uv(mirror_point_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mirror_point_left = igpu_texture_read(static_cast<std::uint64_t>(mirror_point_dest), 1, 4, 0, 0);
+    const auto mirror_point_right = igpu_texture_read(static_cast<std::uint64_t>(mirror_point_dest), 6, 4, 0, 0);
+    std::printf("mirror point  : %lld / %lld\n", static_cast<long long>(mirror_point_left),
+                static_cast<long long>(mirror_point_right));
+    if (mirror_point_left != 255 || mirror_point_right != 255)
+    {
+        return fail("sampler 0 at u=0.484375 was not pure red after nearest mirror");
+    }
+    if (!write_uv(1.5f, 0.5f) || !sample_uv(mirror_linear_dest, linear_mirror))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mirror_linear_left = igpu_texture_read(static_cast<std::uint64_t>(mirror_linear_dest), 1, 4, 0, 0);
+    const auto mirror_linear_right = igpu_texture_read(static_cast<std::uint64_t>(mirror_linear_dest), 6, 4, 0, 0);
+    std::printf("mirror linear : %lld / %lld\n", static_cast<long long>(mirror_linear_left),
+                static_cast<long long>(mirror_linear_right));
+    if (mirror_linear_left != 8388736 || mirror_linear_right != 8388736)
+    {
+        return fail("linear mirror at u=1.5 was not half red and half blue");
+    }
+    std::int32_t mirror_saved = 0;
+    std::int32_t mirror_viewport[4] = {};
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(wrap_black_dest), mirror_saved, mirror_viewport))
+    {
+        return fail("mirror reject target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(wrap_buffer), 0, static_cast<std::uint64_t>(sample_layout), 4, 0, 6, 1,
+                  0, 0, 0, wrap_mirror) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(mirror_saved, mirror_viewport);
+        return fail("igpu_draw accepted a mirror sampler");
+    }
+    if (igpu_draw_indexed(static_cast<std::uint64_t>(indexed_vertices_buffer), static_cast<std::uint64_t>(layout),
+                          static_cast<std::uint64_t>(indexed_index_buffer), 4, 0, 6, 0, 0, 0, wrap_mirror) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(mirror_saved, mirror_viewport);
+        return fail("igpu_draw_indexed accepted a mirror sampler");
+    }
+    const auto mirror_target_bytes = encode_u64(static_cast<std::uint64_t>(wrap_black_dest));
+    const auto mirror_zero_bytes = encode_u64(0);
+    if (igpu_draw_to_render_targets(static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout),
+                                    4, 0, 6, as_array(mirror_target_bytes), as_array(mirror_zero_bytes),
+                                    as_array(mirror_zero_bytes), 0, 0, 0, wrap_mirror) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(mirror_saved, mirror_viewport);
+        return fail("igpu_draw_to_render_targets accepted a mirror sampler");
+    }
+    igpu::gl_color_target_end(mirror_saved, mirror_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(wrap_black_dest), 1, 4, 0, 0) != 0 ||
+        igpu_texture_read(static_cast<std::uint64_t>(wrap_black_dest), 6, 4, 0, 0) != 0)
+    {
+        return fail("rejected mirror draw changed pixels");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sample_source), sample_saved_fbo,
+                                     sample_held_viewport))
+    {
+        return fail("mirror feedback target begin failed");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+                          static_cast<std::uint64_t>(sample_source), 0, 0, 0, wrap_mirror) ||
+        std::string(igpu_get_last_error()).find("the texture is the current color target") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("mirror sampler was allowed to sample the current color target");
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(sample_source), 1, 4, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_source), 6, 4, 0, 0) != 16711680)
+    {
+        return fail("rejected mirror feedback changed the source texture");
+    }
+    if (!write_uv(1.6f, 0.5f) || !sample_uv(mirror_restore_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mirror_restore_left = igpu_texture_read(static_cast<std::uint64_t>(mirror_restore_dest), 1, 4, 0, 0);
+    const auto mirror_restore_right = igpu_texture_read(static_cast<std::uint64_t>(mirror_restore_dest), 6, 4, 0, 0);
+    std::printf("mirror restore: %lld / %lld\n", static_cast<long long>(mirror_restore_left),
+                static_cast<long long>(mirror_restore_right));
+    if (mirror_restore_left != 16711680 || mirror_restore_right != 16711680)
+    {
+        return fail("sampler 0 at u=1.6 was not the edge texel after mirror draws");
+    }
+    if (!write_uv(0.484375f, 0.5f) || !sample_uv(mirror_plain_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mirror_plain_left = igpu_texture_read(static_cast<std::uint64_t>(mirror_plain_dest), 1, 4, 0, 0);
+    const auto mirror_plain_right = igpu_texture_read(static_cast<std::uint64_t>(mirror_plain_dest), 6, 4, 0, 0);
+    std::printf("mirror plain  : %lld / %lld\n", static_cast<long long>(mirror_plain_left),
+                static_cast<long long>(mirror_plain_right));
+    if (mirror_plain_left != 255 || mirror_plain_right != 255)
+    {
+        return fail("sampler 0 at u=0.484375 was not pure red after linear mirror");
+    }
+    if (igpu_texture_read(static_cast<std::uint64_t>(sample_source), 1, 4, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_source), 6, 4, 0, 0) != 16711680)
+    {
+        return fail("mirror draws changed the source texture");
     }
     const auto wrap_mixed = igpu_sampler_state_create(0, 0, 0, 1, 0, 1, 1, 0, 0, 0.f, 0.f, -1.f);
-    if (wrap_mixed != 0 || std::string(igpu_get_last_error()).find("clamp or repeat") == std::string::npos)
+    if (wrap_mixed != 0 || std::string(igpu_get_last_error()).find("clamp, repeat, or mirror") == std::string::npos)
     {
         return fail("mixed address axes were accepted");
+    }
+    const auto wrap_mirror_mixed = igpu_sampler_state_create(0, 0, 0, 2, 1, 2, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (wrap_mirror_mixed != 0 ||
+        std::string(igpu_get_last_error()).find("clamp, repeat, or mirror") == std::string::npos)
+    {
+        return fail("mirror mixed with repeat was accepted");
+    }
+    const auto wrap_border = igpu_sampler_state_create(0, 0, 0, 3, 3, 3, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (wrap_border != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)
+    {
+        return fail("border addressing was accepted");
     }
     const auto wrap_compare = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 1, 0.f, 0.f, -1.f);
     if (wrap_compare != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)
