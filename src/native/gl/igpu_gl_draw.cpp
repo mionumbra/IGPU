@@ -75,7 +75,54 @@ namespace igpu
         };
 
         std::unordered_map<std::uint64_t, SamplerObject> g_samplers;
+        struct BlendObject
+        {
+            bool enabled = false;
+            GLenum src_rgb = GL_ONE;
+            GLenum dst_rgb = GL_ZERO;
+            GLenum src_alpha = GL_ONE;
+            GLenum dst_alpha = GL_ZERO;
+            GLenum equation_rgb = 0x8006;
+            GLenum equation_alpha = 0x8006;
+            bool write_red = true;
+            bool write_green = true;
+            bool write_blue = true;
+            bool write_alpha = true;
+        };
+        std::unordered_map<std::uint64_t, BlendObject> g_blends;
         std::uint64_t g_next_sampler = 1;
+
+        bool gl_blend_factor(std::int32_t raw, bool alpha_slot, GLenum& out)
+        {
+            switch (raw)
+            {
+            case 1: out = GL_ZERO; return true;
+            case 2: out = GL_ONE; return true;
+            case 3: out = alpha_slot ? GL_SRC_ALPHA : GL_SRC_COLOR; return true;
+            case 4: out = alpha_slot ? GL_ONE_MINUS_SRC_ALPHA : GL_ONE_MINUS_SRC_COLOR; return true;
+            case 5: out = GL_SRC_ALPHA; return true;
+            case 6: out = GL_ONE_MINUS_SRC_ALPHA; return true;
+            case 7: out = GL_DST_ALPHA; return true;
+            case 8: out = GL_ONE_MINUS_DST_ALPHA; return true;
+            case 9: out = alpha_slot ? GL_DST_ALPHA : GL_DST_COLOR; return true;
+            case 10: out = alpha_slot ? GL_ONE_MINUS_DST_ALPHA : GL_ONE_MINUS_DST_COLOR; return true;
+            case 11: out = GL_SRC_ALPHA_SATURATE; return true;
+            default: return false;
+            }
+        }
+
+        bool gl_blend_equation(std::int32_t raw, GLenum& out)
+        {
+            switch (raw)
+            {
+            case 1: out = 0x8006; return true;
+            case 2: out = 0x8008; return true;
+            case 3: out = 0x800B; return true;
+            case 4: out = 0x8007; return true;
+            case 5: out = 0x800A; return true;
+            default: return false;
+            }
+        }
         GLuint g_vertex_array = 0;
 
         bool read_i64(const gm::wire::GMValue& value, std::int64_t& out)
@@ -143,8 +190,8 @@ namespace igpu
             }
         }
 
-        bool gl_pipeline_accepted(const char* entry, std::int32_t primitive, std::int64_t blend_state,
-                                  std::int64_t depth_state, std::int64_t raster_state, GLenum& mode)
+        bool gl_pipeline_accepted(const char* entry, std::int32_t primitive, std::int64_t depth_state,
+                                  std::int64_t raster_state, GLenum& mode)
         {
             if (primitive == 6)
             {
@@ -156,7 +203,7 @@ namespace igpu
                 set_last_error(std::string(entry) + ": the opengl backend does not draw this primitive");
                 return false;
             }
-            if (blend_state != 0 || depth_state != 0 || raster_state != 0)
+            if (depth_state != 0 || raster_state != 0)
             {
                 set_last_error(std::string(entry) + ": the opengl backend draws with no extra state");
                 return false;
@@ -164,11 +211,96 @@ namespace igpu
             return true;
         }
 
+        bool gl_resolve_blend(const char* entry, std::int64_t blend_state, const BlendObject*& out)
+        {
+            out = nullptr;
+            if (blend_state == 0)
+            {
+                return true;
+            }
+            if (blend_state < 0)
+            {
+                set_last_error(std::string(entry) + ": blend handle is not a state object");
+                return false;
+            }
+            const auto found = g_blends.find(static_cast<std::uint64_t>(blend_state));
+            if (found == g_blends.end())
+            {
+                set_last_error(std::string(entry) + ": unknown blend handle");
+                return false;
+            }
+            out = &found->second;
+            return true;
+        }
+
+        struct SavedBlend
+        {
+            GLboolean enabled = GL_FALSE;
+            GLint src_rgb = GL_ONE;
+            GLint dst_rgb = GL_ZERO;
+            GLint src_alpha = GL_ONE;
+            GLint dst_alpha = GL_ZERO;
+            GLint equation_rgb = 0x8006;
+            GLint equation_alpha = 0x8006;
+            GLboolean mask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+        };
+
+        void save_blend(SavedBlend& saved)
+        {
+            saved.enabled = glIsEnabled(GL_BLEND);
+            glGetIntegerv(0x80C9, &saved.src_rgb);
+            glGetIntegerv(0x80C8, &saved.dst_rgb);
+            glGetIntegerv(0x80CB, &saved.src_alpha);
+            glGetIntegerv(0x80CA, &saved.dst_alpha);
+            glGetIntegerv(0x8009, &saved.equation_rgb);
+            glGetIntegerv(0x883D, &saved.equation_alpha);
+            glGetBooleanv(0x0C23, saved.mask);
+        }
+
+        void apply_blend(const BlendObject& blend)
+        {
+            const auto& fns = igpu_gl_fns();
+            if (blend.enabled)
+            {
+                glEnable(GL_BLEND);
+            }
+            else
+            {
+                glDisable(GL_BLEND);
+            }
+            fns.BlendFuncSeparate(blend.src_rgb, blend.dst_rgb, blend.src_alpha, blend.dst_alpha);
+            fns.BlendEquationSeparate(blend.equation_rgb, blend.equation_alpha);
+            glColorMask(blend.write_red ? GL_TRUE : GL_FALSE, blend.write_green ? GL_TRUE : GL_FALSE,
+                        blend.write_blue ? GL_TRUE : GL_FALSE, blend.write_alpha ? GL_TRUE : GL_FALSE);
+        }
+
+        void restore_blend(const SavedBlend& saved)
+        {
+            const auto& fns = igpu_gl_fns();
+            if (saved.enabled == GL_TRUE)
+            {
+                glEnable(GL_BLEND);
+            }
+            else
+            {
+                glDisable(GL_BLEND);
+            }
+            fns.BlendFuncSeparate(static_cast<GLenum>(saved.src_rgb), static_cast<GLenum>(saved.dst_rgb),
+                                  static_cast<GLenum>(saved.src_alpha), static_cast<GLenum>(saved.dst_alpha));
+            fns.BlendEquationSeparate(static_cast<GLenum>(saved.equation_rgb),
+                                      static_cast<GLenum>(saved.equation_alpha));
+            glColorMask(saved.mask[0], saved.mask[1], saved.mask[2], saved.mask[3]);
+        }
+
         bool gl_draw_accepted(const char* entry, std::int32_t primitive, std::int64_t blend_state,
                               std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state,
-                              GLenum& mode)
+                              const BlendObject*& blend, GLenum& mode)
         {
-            if (!gl_pipeline_accepted(entry, primitive, blend_state, depth_state, raster_state, mode))
+            if (!gl_pipeline_accepted(entry, primitive, depth_state, raster_state, mode))
+            {
+                return false;
+            }
+            if (!gl_resolve_blend(entry, blend_state, blend))
             {
                 return false;
             }
@@ -223,6 +355,7 @@ namespace igpu
         g_textures.clear();
         g_layouts.clear();
         g_samplers.clear();
+        g_blends.clear();
         g_next_sampler = 1;
         g_vertex_array = 0;
         g_next_buffer = 1;
@@ -433,8 +566,9 @@ namespace igpu
                                          std::int64_t sampler_state)
     {
         GLenum mode = GL_TRIANGLES;
+        const BlendObject* blend = nullptr;
         if (!gl_draw_accepted("igpu_draw_to_render_targets", primitive, blend_state, depth_state, raster_state,
-                              sampler_state, mode))
+                              sampler_state, blend, mode))
         {
             return false;
         }
@@ -498,7 +632,17 @@ namespace igpu
         glViewport(0, 0, texture->second.width, texture->second.height);
         fns.BindBuffer(GL_ARRAY_BUFFER, buffer->second.id);
         bind_vertices(buffer->second, first_vertex);
+        SavedBlend saved_blend{};
+        if (blend != nullptr)
+        {
+            save_blend(saved_blend);
+            apply_blend(*blend);
+        }
         glDrawArrays(mode, 0, static_cast<GLsizei>(vertex_count));
+        if (blend != nullptr)
+        {
+            restore_blend(saved_blend);
+        }
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, 0);
         glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2], previous_viewport[3]);
@@ -512,7 +656,9 @@ namespace igpu
                  std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state)
     {
         GLenum mode = GL_TRIANGLES;
-        if (!gl_draw_accepted("igpu_draw", primitive, blend_state, depth_state, raster_state, sampler_state, mode))
+        const BlendObject* blend = nullptr;
+        if (!gl_draw_accepted("igpu_draw", primitive, blend_state, depth_state, raster_state, sampler_state, blend,
+                              mode))
         {
             return false;
         }
@@ -566,7 +712,17 @@ namespace igpu
         fns.BindVertexArray(g_vertex_array);
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
         bind_vertices(vertex->second, 0);
+        SavedBlend saved_blend{};
+        if (blend != nullptr)
+        {
+            save_blend(saved_blend);
+            apply_blend(*blend);
+        }
         glDrawArrays(mode, static_cast<GLint>(first_vertex), static_cast<GLsizei>(vertex_count));
+        if (blend != nullptr)
+        {
+            restore_blend(saved_blend);
+        }
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindVertexArray(0);
@@ -579,8 +735,9 @@ namespace igpu
                          std::int64_t sampler_state)
     {
         GLenum mode = GL_TRIANGLES;
+        const BlendObject* blend = nullptr;
         if (!gl_draw_accepted("igpu_draw_indexed", primitive, blend_state, depth_state, raster_state, sampler_state,
-                              mode))
+                              blend, mode))
         {
             return false;
         }
@@ -644,8 +801,18 @@ namespace igpu
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
         bind_vertices(vertex->second, 0);
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, index->second.id);
+        SavedBlend saved_blend{};
+        if (blend != nullptr)
+        {
+            save_blend(saved_blend);
+            apply_blend(*blend);
+        }
         glDrawElements(mode, static_cast<GLsizei>(index_count), GL_UNSIGNED_SHORT,
                        reinterpret_cast<const void*>(static_cast<std::uintptr_t>(first_index * kIndexSize)));
+        if (blend != nullptr)
+        {
+            restore_blend(saved_blend);
+        }
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(previous_element));
@@ -659,7 +826,12 @@ namespace igpu
                          std::int64_t sampler_state)
     {
         GLenum mode = GL_TRIANGLES;
-        if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, blend_state, depth_state, raster_state, mode))
+        if (blend_state != 0)
+        {
+            set_last_error("igpu_draw_sampled: the opengl backend draws with no extra state");
+            return false;
+        }
+        if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, depth_state, raster_state, mode))
         {
             return false;
         }
@@ -874,8 +1046,39 @@ namespace igpu
         return static_cast<std::int64_t>(handle);
     }
 
+    std::int64_t gl_blend_state_create(bool enabled, std::int32_t src, std::int32_t dest, std::int32_t equation,
+                                       std::int32_t src_alpha, std::int32_t dest_alpha, std::int32_t equation_alpha,
+                                       bool write_red, bool write_green, bool write_blue, bool write_alpha)
+    {
+        BlendObject object{};
+        object.enabled = enabled;
+        object.write_red = write_red;
+        object.write_green = write_green;
+        object.write_blue = write_blue;
+        object.write_alpha = write_alpha;
+        if (!gl_blend_factor(src, false, object.src_rgb) || !gl_blend_factor(dest, false, object.dst_rgb) ||
+            !gl_blend_factor(src_alpha, true, object.src_alpha) ||
+            !gl_blend_factor(dest_alpha, true, object.dst_alpha))
+        {
+            set_last_error("igpu_blend_state_create: blend factor must be a bm_* constant (bm_zero through bm_src_alpha_sat)");
+            return 0;
+        }
+        if (!gl_blend_equation(equation, object.equation_rgb) || !gl_blend_equation(equation_alpha, object.equation_alpha))
+        {
+            set_last_error("igpu_blend_state_create: blend equation must be a bm_eq_* constant");
+            return 0;
+        }
+        const std::uint64_t handle = g_next_sampler++;
+        g_blends.emplace(handle, object);
+        return static_cast<std::int64_t>(handle);
+    }
+
     bool gl_state_release(std::uint64_t handle)
     {
+        if (g_blends.erase(handle) != 0)
+        {
+            return true;
+        }
         if (g_samplers.erase(handle) == 0)
         {
             set_last_error("igpu_state_release: unknown sampler handle");

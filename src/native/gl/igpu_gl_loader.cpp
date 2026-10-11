@@ -57,6 +57,8 @@ namespace igpu
         LOAD(BindVertexArray, "glBindVertexArray")
         LOAD(GetUniformLocation, "glGetUniformLocation")
         LOAD(Uniform1i, "glUniform1i")
+        LOAD(BlendFuncSeparate, "glBlendFuncSeparate")
+        LOAD(BlendEquationSeparate, "glBlendEquationSeparate")
 #undef LOAD
         return true;
     }

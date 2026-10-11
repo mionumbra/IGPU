@@ -89,11 +89,12 @@ namespace igpu
             std::int32_t draw_restore_failures() override { not_yet("igpu_get_draw_restore_failures"); return 0; }
             bool is_vertex_buffer_bound(std::uint64_t) override { return not_yet("igpu_is_vertex_buffer_bound"); }
 
-            std::int64_t blend_state_create(bool, std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t,
-                                            std::int32_t, bool, bool, bool, bool) override
+            std::int64_t blend_state_create(bool enabled, std::int32_t src, std::int32_t dest, std::int32_t equation,
+                                            std::int32_t src_alpha, std::int32_t dest_alpha, std::int32_t equation_alpha,
+                                            bool write_red, bool write_green, bool write_blue, bool write_alpha) override
             {
-                not_yet("igpu_blend_state_create");
-                return 0;
+                return gl_blend_state_create(enabled, src, dest, equation, src_alpha, dest_alpha, equation_alpha,
+                                             write_red, write_green, write_blue, write_alpha);
             }
             std::int64_t depth_state_create(bool, bool, std::int32_t, bool, std::int32_t, std::int32_t, std::int32_t,
                                             std::int32_t, std::int32_t, std::int32_t, std::int32_t) override

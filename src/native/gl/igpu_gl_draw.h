@@ -33,6 +33,9 @@ namespace igpu
                                                               std::int32_t address_v, std::int32_t address_w, float red,
                                                               float green, float blue, float alpha, float level_offset,
                                                               float finest, float coarsest);
+    std::int64_t gl_blend_state_create(bool enabled, std::int32_t src, std::int32_t dest, std::int32_t equation,
+                                       std::int32_t src_alpha, std::int32_t dest_alpha, std::int32_t equation_alpha,
+                                       bool write_red, bool write_green, bool write_blue, bool write_alpha);
     bool gl_state_release(std::uint64_t handle);
 
     bool gl_draw(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,

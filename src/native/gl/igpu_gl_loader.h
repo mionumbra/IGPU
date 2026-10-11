@@ -40,6 +40,8 @@ using IgpuGlGenVertexArrays = void(APIENTRY*)(GLsizei, GLuint*);
 using IgpuGlBindVertexArray = void(APIENTRY*)(GLuint);
 using IgpuGlGetUniformLocation = GLint(APIENTRY*)(GLuint, const char*);
 using IgpuGlUniform1i = void(APIENTRY*)(GLint, GLint);
+using IgpuGlBlendFuncSeparate = void(APIENTRY*)(GLenum, GLenum, GLenum, GLenum);
+using IgpuGlBlendEquationSeparate = void(APIENTRY*)(GLenum, GLenum);
 
 struct IgpuGlFns
 {
@@ -73,6 +75,8 @@ struct IgpuGlFns
     IgpuGlBindVertexArray BindVertexArray = nullptr;
     IgpuGlGetUniformLocation GetUniformLocation = nullptr;
     IgpuGlUniform1i Uniform1i = nullptr;
+    IgpuGlBlendFuncSeparate BlendFuncSeparate = nullptr;
+    IgpuGlBlendEquationSeparate BlendEquationSeparate = nullptr;
 };
 
 IgpuGlFns& igpu_gl_fns();
