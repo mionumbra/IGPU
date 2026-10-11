@@ -920,7 +920,7 @@ int main()
     if (!reject_strip(0, 0, 0, 0, 0, "primitive 0", "does not draw this primitive") ||
         !reject_strip(7, 0, 0, 0, 0, "primitive 7", "does not draw this primitive") ||
         !reject_strip(6, 0, 0, 0, 0, "triangle fan", "trianglefan") ||
-        !reject_strip(5, 1, 0, 0, 0, "strip blend", "draws with no extra state") ||
+        !reject_strip(5, 1, 0, 0, 0, "strip blend", "unknown blend handle") ||
         !reject_strip(5, 0, 1, 0, 0, "strip depth", "draws with no extra state") ||
         !reject_strip(5, 0, 0, 1, 0, "strip raster", "draws with no extra state") ||
         !reject_strip(5, 0, 0, 0, 1, "strip sampler", "draws with no extra state"))
@@ -2626,6 +2626,351 @@ int main()
     if (!igpu_supports(static_cast<std::int32_t>(igpu::Capability::SamplerState)))
     {
         return fail("SamplerState is false on the OpenGL backend");
+    }
+
+    const auto blend_bad_factor = igpu_blend_state_create(
+        true, 99, 2, 1, 2, 2, 1, true, true, true, true);
+    if (blend_bad_factor != 0 ||
+        std::string(igpu_get_last_error()).find("bm_zero through bm_src_alpha_sat") == std::string::npos)
+    {
+        return fail("unknown blend factor was accepted");
+    }
+    const auto blend_bad_equation = igpu_blend_state_create(
+        true, 2, 2, 99, 2, 2, 1, true, true, true, true);
+    if (blend_bad_equation != 0 ||
+        std::string(igpu_get_last_error()).find("bm_eq_") == std::string::npos)
+    {
+        return fail("unknown blend equation was accepted");
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(colour_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(colour_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto blend_src_alpha = igpu_blend_state_create(
+        true, 5, 6, 1, 5, 6, 1, true, true, true, true);
+    const auto blend_max = igpu_blend_state_create(
+        true, 2, 2, 2, 2, 2, 2, true, true, true, true);
+    const auto blend_mask = igpu_blend_state_create(
+        false, 2, 2, 1, 2, 2, 1, false, true, true, true);
+    if (blend_src_alpha == 0 || blend_max == 0 || blend_mask == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+
+    const float blend_pos[] = {
+        -1.f, -1.f, 1.f, -1.f, -1.f, 1.f, -1.f, 1.f, 1.f, -1.f, 1.f, 1.f,
+    };
+    const auto fill_blend = [&](ColourVertex* out, unsigned char r, unsigned char g, unsigned char b,
+                                unsigned char a) {
+        for (int i = 0; i < 6; ++i)
+        {
+            out[i].x = blend_pos[i * 2];
+            out[i].y = blend_pos[i * 2 + 1];
+            out[i].r = r;
+            out[i].g = g;
+            out[i].b = b;
+            out[i].a = a;
+        }
+    };
+    ColourVertex blend_blue_vertices[6] = {};
+    ColourVertex blend_blue0_vertices[6] = {};
+    ColourVertex blend_red0_vertices[6] = {};
+    ColourVertex blend_red_vertices[6] = {};
+    fill_blend(blend_blue_vertices, 0, 0, 255, 255);
+    fill_blend(blend_blue0_vertices, 0, 0, 255, 0);
+    fill_blend(blend_red0_vertices, 255, 0, 0, 0);
+    fill_blend(blend_red_vertices, 255, 0, 0, 255);
+    const auto blend_blue_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(blend_blue_vertices)), 0, 1, 12);
+    const auto blend_blue0_buffer =
+        igpu_buffer_create(static_cast<std::int64_t>(sizeof(blend_blue0_vertices)), 0, 1, 12);
+    const auto blend_red0_buffer =
+        igpu_buffer_create(static_cast<std::int64_t>(sizeof(blend_red0_vertices)), 0, 1, 12);
+    const auto blend_red_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(blend_red_vertices)), 0, 1, 12);
+    const std::uint16_t blend_indices[] = {0, 1, 2, 3, 4, 5};
+    const auto blend_index_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(blend_indices)), 0, 2, 0);
+    if (blend_blue_buffer == 0 || blend_blue0_buffer == 0 || blend_red0_buffer == 0 || blend_red_buffer == 0 ||
+        blend_index_buffer == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(blend_blue_buffer), 0,
+                           gm::wire::GMBuffer(blend_blue_vertices, sizeof(blend_blue_vertices))) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(blend_blue0_buffer), 0,
+                           gm::wire::GMBuffer(blend_blue0_vertices, sizeof(blend_blue0_vertices))) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(blend_red0_buffer), 0,
+                           gm::wire::GMBuffer(blend_red0_vertices, sizeof(blend_red0_vertices))) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(blend_red_buffer), 0,
+                           gm::wire::GMBuffer(blend_red_vertices, sizeof(blend_red_vertices))) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(blend_index_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<std::uint16_t*>(blend_indices), sizeof(blend_indices))))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+
+    const auto report_blend = [](const char* label, std::int64_t texture, std::int64_t expect) {
+        const auto left = igpu_texture_read(static_cast<std::uint64_t>(texture), 1, 4, 0, 0);
+        const auto right = igpu_texture_read(static_cast<std::uint64_t>(texture), 6, 4, 0, 0);
+        std::printf("%s: %lld / %lld\n", label, static_cast<long long>(left), static_cast<long long>(right));
+        return left == expect && right == expect;
+    };
+    const auto blend_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto blend_indexed_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto blend_target_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto blend_mask_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (blend_texture == 0 || blend_indexed_texture == 0 || blend_target_texture == 0 || blend_mask_texture == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+
+    std::int32_t blend_saved = 0;
+    std::int32_t blend_viewport[4] = {};
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(blend_texture), blend_saved, blend_viewport))
+    {
+        return fail("blend target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(blend_blue_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0,
+                   6, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(blend_saved, blend_viewport);
+    if (!report_blend("blend base    ", blend_texture, 16711680))
+    {
+        return fail("opaque blue did not cover the blend target");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(blend_texture), blend_saved, blend_viewport))
+    {
+        return fail("blend hold target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(blend_red0_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0,
+                   6, 1, blend_src_alpha, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (glIsEnabled(0x0BE2) == GL_TRUE)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("src-alpha draw left blending enabled");
+    }
+    igpu::gl_color_target_end(blend_saved, blend_viewport);
+    if (!report_blend("blend hold    ", blend_texture, 16711680))
+    {
+        return fail("src-alpha with alpha 0 replaced the destination");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(blend_texture), blend_saved, blend_viewport))
+    {
+        return fail("blend replace target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(blend_red_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
+                   1, blend_src_alpha, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(blend_saved, blend_viewport);
+    if (!report_blend("blend replace ", blend_texture, 255))
+    {
+        return fail("src-alpha with alpha 255 did not replace the destination");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(blend_texture), blend_saved, blend_viewport))
+    {
+        return fail("blend plain target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(blend_blue0_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0,
+                   6, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (glIsEnabled(0x0BE2) == GL_TRUE)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("handle 0 enabled blending");
+    }
+    igpu::gl_color_target_end(blend_saved, blend_viewport);
+    if (!report_blend("blend plain   ", blend_texture, 16711680))
+    {
+        return fail("handle 0 with alpha 0 did not replace the colour");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(blend_texture), blend_saved, blend_viewport))
+    {
+        return fail("blend max target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(blend_red_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
+                   1, blend_max, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (glIsEnabled(0x0BE2) == GL_TRUE)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("max draw left blending enabled");
+    }
+    igpu::gl_color_target_end(blend_saved, blend_viewport);
+    if (!report_blend("blend max     ", blend_texture, 16711935))
+    {
+        return fail("max of red and blue was not fuchsia");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(blend_texture), blend_saved, blend_viewport))
+    {
+        return fail("blend max off target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(blend_red0_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0,
+                   6, 1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(blend_saved, blend_viewport);
+    if (!report_blend("blend max off ", blend_texture, 255))
+    {
+        return fail("handle 0 after max did not write red");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(blend_indexed_texture), blend_saved, blend_viewport))
+    {
+        return fail("blend indexed target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(blend_blue_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0,
+                   6, 1, 0, 0, 0, 0) ||
+        !igpu_draw_indexed(static_cast<std::uint64_t>(blend_red0_buffer), static_cast<std::uint64_t>(colour_layout),
+                           static_cast<std::uint64_t>(blend_index_buffer), 4, 0, 6, blend_src_alpha, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(blend_saved, blend_viewport);
+    if (!report_blend("blend indexed ", blend_indexed_texture, 16711680))
+    {
+        return fail("indexed src-alpha with alpha 0 replaced the destination");
+    }
+
+    const auto blend_target_bytes = encode_u64(static_cast<std::uint64_t>(blend_target_texture));
+    const auto blend_zero_bytes = encode_u64(0);
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(blend_blue_buffer),
+                                     static_cast<std::uint64_t>(colour_layout), 4, 0, 6, as_array(blend_target_bytes),
+                                     as_array(blend_zero_bytes), as_array(blend_zero_bytes), 0, 0, 0, 0) ||
+        !igpu_draw_to_render_targets(static_cast<std::uint64_t>(blend_red0_buffer),
+                                     static_cast<std::uint64_t>(colour_layout), 4, 0, 6, as_array(blend_target_bytes),
+                                     as_array(blend_zero_bytes), as_array(blend_zero_bytes), blend_src_alpha, 0, 0, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!report_blend("blend target  ", blend_target_texture, 16711680))
+    {
+        return fail("draw-to-targets src-alpha with alpha 0 replaced the destination");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(blend_mask_texture), blend_saved, blend_viewport))
+    {
+        return fail("blend mask target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(blend_red_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
+                   1, blend_mask, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    GLboolean blend_mask_restored[4] = {};
+    glGetBooleanv(0x0C23, blend_mask_restored);
+    if (glIsEnabled(0x0BE2) == GL_TRUE || !blend_mask_restored[0] || !blend_mask_restored[1] ||
+        !blend_mask_restored[2] || !blend_mask_restored[3])
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("masked draw left blending on or a colour channel masked");
+    }
+    igpu::gl_color_target_end(blend_saved, blend_viewport);
+    if (!report_blend("blend mask    ", blend_mask_texture, 0))
+    {
+        return fail("a disabled blend with red writes off painted red");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(blend_mask_texture), blend_saved, blend_viewport))
+    {
+        return fail("blend unmask target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(blend_red_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
+                   1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(blend_saved, blend_viewport);
+    if (!report_blend("blend unmask  ", blend_mask_texture, 255))
+    {
+        return fail("handle 0 did not restore red writes");
+    }
+
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(blend_mask_texture), blend_saved, blend_viewport))
+    {
+        return fail("blend reject target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(blend_blue_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
+                  1, 999999, 0, 0, 0) ||
+        std::string(igpu_get_last_error()).find("unknown blend handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("unknown blend handle was accepted");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(blend_blue_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
+                  1, -1, 0, 0, 0) ||
+        std::string(igpu_get_last_error()).find("not a state object") == std::string::npos)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("a negative blend handle was accepted");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(blend_blue_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
+                  1, 0, 1, 0, 0) ||
+        igpu_draw(static_cast<std::uint64_t>(blend_blue_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
+                  1, 0, 0, 1, 0) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("depth or raster state was accepted with a blend backend");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+                          static_cast<std::uint64_t>(sample_source), blend_src_alpha, 0, 0, 0) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("a sampled draw accepted a live blend state");
+    }
+    igpu::gl_color_target_end(blend_saved, blend_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(blend_mask_texture), 1, 4, 0, 0) != 255)
+    {
+        return fail("a rejected blend draw changed pixels");
+    }
+    if (!igpu_state_release(static_cast<std::uint64_t>(blend_src_alpha)) ||
+        igpu_state_release(static_cast<std::uint64_t>(blend_src_alpha)) ||
+        std::string(igpu_get_last_error()).find("unknown sampler handle") == std::string::npos)
+    {
+        return fail("blend release did not retire the handle");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(blend_mask_texture), blend_saved, blend_viewport))
+    {
+        return fail("released blend target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(blend_blue_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
+                  1, blend_src_alpha, 0, 0, 0) ||
+        std::string(igpu_get_last_error()).find("unknown blend handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("a released blend handle was accepted");
+    }
+    igpu::gl_color_target_end(blend_saved, blend_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(blend_mask_texture), 1, 4, 0, 0) != 255)
+    {
+        return fail("a released blend handle changed pixels");
+    }
+    if (!igpu_supports(static_cast<std::int32_t>(igpu::Capability::BlendState)))
+    {
+        return fail("BlendState is false on the OpenGL backend");
     }
 
     void* context = gl_probe_context();
