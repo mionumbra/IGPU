@@ -1752,11 +1752,6 @@ int main()
     {
         return fail(igpu_get_last_error().c_str());
     }
-    const auto linear_min = igpu_sampler_state_create(0, 1, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
-    if (linear_min != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
-    {
-        return fail("linear minification was accepted");
-    }
     const auto linear_mip = igpu_sampler_state_create(0, 0, 1, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
     if (linear_mip != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
     {
@@ -2225,6 +2220,126 @@ int main()
     {
         return fail("border draws changed the source texture");
     }
+
+    // 2x2 source: left column red, right column blue. The gradient shader
+    // samples (0.4, 0.5). A tiny derivative takes magnification; a derivative
+    // of 1 takes minification. v_uv.x selects which one, so pixel (1, 4) and
+    // pixel (6, 4) disagree when the two filters disagree.
+    const auto minify_source = igpu_texture_create(0, 2, 2, 1, 6, true, false, 1);
+    const auto minify_linear_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto minify_swap_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto minify_plain_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (minify_source == 0 || minify_linear_dest == 0 || minify_swap_dest == 0 || minify_plain_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(colour_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(colour_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(minify_source), sample_saved_fbo,
+                                     sample_held_viewport))
+    {
+        return fail("minify source target begin failed");
+    }
+    if (!igpu_draw(static_cast<std::uint64_t>(colour_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 12,
+                   1, 0, 0, 0, 0))
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(minify_source), 0, 0, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(minify_source), 1, 0, 0, 0) != 16711680)
+    {
+        return fail("minify source was not red on the left and blue on the right");
+    }
+    const char* minify_ps =
+        "#version 120\n"
+        "#extension GL_ARB_shader_texture_lod : require\n"
+        "uniform sampler2D igpu_tex;\n"
+        "varying vec2 v_uv;\n"
+        "void main() {\n"
+        "  vec4 magnified = texture2DGradARB(igpu_tex, vec2(0.4, 0.5), vec2(0.001, 0.0), vec2(0.0, 0.001));\n"
+        "  vec4 minified = texture2DGradARB(igpu_tex, vec2(0.4, 0.5), vec2(1.0, 0.0), vec2(0.0, 0.001));\n"
+        "  gl_FragColor = v_uv.x < 0.5 ? magnified : minified;\n"
+        "}\n";
+    const auto minify_frag = igpu_shader_compile(minify_ps, "main", 1, "glsl");
+    if (minify_frag == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(minify_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto minify_linear = igpu_sampler_state_create(0, 1, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (minify_linear == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto minify_swap = igpu_sampler_state_create(1, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (minify_swap == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto draw_minify = [&](std::int64_t dest, std::int64_t sampler) -> bool {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(dest), saved, viewport))
+        {
+            return false;
+        }
+        const bool drew = igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer),
+                                            static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+                                            static_cast<std::uint64_t>(minify_source), 0, 0, 0, sampler);
+        igpu::gl_color_target_end(saved, viewport);
+        return drew;
+    };
+    if (!draw_minify(minify_linear_dest, minify_linear))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto minify_linear_left = igpu_texture_read(static_cast<std::uint64_t>(minify_linear_dest), 1, 4, 0, 0);
+    const auto minify_linear_right = igpu_texture_read(static_cast<std::uint64_t>(minify_linear_dest), 6, 4, 0, 0);
+    std::printf("minify linear : %lld / %lld\n", static_cast<long long>(minify_linear_left),
+                static_cast<long long>(minify_linear_right));
+    if (minify_linear_left != 255 || minify_linear_right != 5046450)
+    {
+        return fail("point magnification and linear minification were not red and the 178/77 blend");
+    }
+    if (!draw_minify(minify_swap_dest, minify_swap))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto minify_swap_left = igpu_texture_read(static_cast<std::uint64_t>(minify_swap_dest), 1, 4, 0, 0);
+    const auto minify_swap_right = igpu_texture_read(static_cast<std::uint64_t>(minify_swap_dest), 6, 4, 0, 0);
+    std::printf("minify swap   : %lld / %lld\n", static_cast<long long>(minify_swap_left),
+                static_cast<long long>(minify_swap_right));
+    if (minify_swap_left != 5046450 || minify_swap_right != 255)
+    {
+        return fail("linear magnification and point minification were not the 178/77 blend and red");
+    }
+    if (!draw_minify(minify_plain_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto minify_plain_left = igpu_texture_read(static_cast<std::uint64_t>(minify_plain_dest), 1, 4, 0, 0);
+    const auto minify_plain_right = igpu_texture_read(static_cast<std::uint64_t>(minify_plain_dest), 6, 4, 0, 0);
+    std::printf("minify plain  : %lld / %lld\n", static_cast<long long>(minify_plain_left),
+                static_cast<long long>(minify_plain_right));
+    if (minify_plain_left != 255 || minify_plain_right != 255)
+    {
+        return fail("sampler 0 did not restore nearest magnification and minification");
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+
     const auto border_mixed = igpu_sampler_state_create(0, 0, 0, 3, 0, 0, 1, 65280, 0, 0.f, 0.f, -1.f);
     if (border_mixed != 0 || std::string(igpu_get_last_error()).find("border on every axis") == std::string::npos)
     {
