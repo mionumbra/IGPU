@@ -8,7 +8,7 @@
 
 **合并规则，先读这一段。** 功能分支必须推送到 `origin`。进入 `main` 只能通过 GitHub 拉取请求（pull request）：先推送分支，再开拉取请求，批准并合并。探针通过之后就做完这三步，不要留到下一会话。不要在本地 `merge`（包括 `--no-ff` 和快进）之后直接 `push origin main`。交接文档自己的修改也走拉取请求，不要直接推 `main`。已经用拉取请求合并过的旧分支不要再开一次。`9c56d05`（最近点采样）和 `84b40f5`（钳制与重复）是在这条规则写明之前直接推进 `main` 的，不要照做。
 
-停在 `gl-minify`。`gl-minify` 从拉取请求 #9 之后的 `origin/main` 拉出。边框寻址随拉取请求 #9 进入 `main`，功能提交 `38687b8`，合并提交 `e3b92e1`。线性缩小还在 `gl-minify` 上，还没进入 `main`。进入 `main` 只能通过拉取请求。不要重做边框寻址，也不要再为它开拉取请求。这份交接自己的提交以 `git rev-parse --short HEAD` 为准。
+停在 `gl-minify`。`gl-minify` 从拉取请求 #9 之后的 `origin/main` 拉出。边框寻址随拉取请求 #9 进入 `main`，功能提交 `38687b8`，合并提交 `e3b92e1`。线性缩小随拉取请求 #10 进入 `main`，功能提交 `8fe079a`。不要重做这一刀，也不要再为它开拉取请求。这份交接自己的提交以 `git rev-parse --short HEAD` 为准。
 
 计划在 `superpowers/plans/2026-10-10-gl-address.md`。更早的最近点采样计划在 `superpowers/plans/2026-10-10-gl-sample.md`。两份都已经证明，不要重做：
 
@@ -26,7 +26,7 @@
 
 级间过滤为线性时失败，错误含有 `nearest`。边框采样器上的线性缩小也失败，错误含有 `nearest`。非边框的线性缩小在探针里。源纹理是 2×2，左列红 `255`，右列蓝 `16711680`。探针着色器是 `#version 120`，启用 `GL_ARB_shader_texture_lod`，用 `texture2DGradARB` 在 `(0.4, 0.5)` 采样。左边导数 `0.001` 走放大，右边导数 `1.0` 走缩小。放大最近点、缩小线性时读回 `255 / 5046450`（红 178、蓝 77）。放大线性、缩小最近点时读回 `5046450 / 255`。随后句柄 0 两边都是 `255`。三轴不一致失败，错误含有 `clamp, repeat, or mirror`。镜像在探针里。`u = 1.6` 的最近点镜像是红 `255`，同一条 `u` 上的重复和钳制是蓝 `16711680`。`u = -0.625` 的镜像是蓝 `16711680`。线性放大加镜像、`u = 1.5` 是 `8388736`。随后句柄 0 在 `u = 1.6` 仍是蓝 `16711680`，在 `u = 0.484375` 仍是红 `255`。三轴不全是边框时失败，错误含有 `border on every axis`。边框寻址在探针里。`u = 1.6` 的绿色边框是 `65280`，`u = -0.0625` 也是 `65280`。同一条 `u = 1.6` 上，红色边框是 `255`，重复和钳制是 `16711680`。线性放大加绿色边框、`u = 1.0` 是 `8421376`。随后句柄 0 在 `u = 1.6` 仍是 `16711680`，在 `u = 0.484375` 仍是 `255`。比较和各向异性大于 1 仍失败，错误含有 `does not implement`。级数偏移失败，错误含有 `no mip`。未知句柄和已经释放的句柄失败，错误含有 `unknown sampler handle`，像素不变。`igpu_draw`、`igpu_draw_indexed` 和 `igpu_draw_to_render_targets` 拿到活着的采样器仍失败，错误含有 `draws with no extra state`。被采样的纹理若是当前颜色附件，镜像采样器和边框采样器也同样失败。`SamplerState` 在这份 OpenGL 后端上为 true。Windows 的 GameMaker DLL 仍没有 OpenGL 后端，那里 `SamplerState` 仍只跟着 Direct3D。
 
-镜像寻址随拉取请求 #8 进入 `main`。边框寻址随拉取请求 #9 进入 `main`，功能提交 `38687b8`。线性缩小在探针里，分支 `gl-minify`，还没进入 `main`。进入 `main` 只能通过拉取请求。各向异性、比较、混合、深度、光栅、级间线性，以及边框采样器上的线性缩小，都先不要做。ES 2 和 `glsl_es` 的成功编译也还不要做。再下一刀还没定。那些平台上的 GameMaker 运行这台机器证明不了。纹理单元保持调用方原来的值；探针的默认单元是 0。
+镜像寻址随拉取请求 #8 进入 `main`。边框寻址随拉取请求 #9 进入 `main`，功能提交 `38687b8`。线性缩小随拉取请求 #10 进入 `main`，功能提交 `8fe079a`。进入 `main` 只能通过拉取请求。各向异性、比较、混合、深度、光栅、级间线性，以及边框采样器上的线性缩小，都先不要做。ES 2 和 `glsl_es` 的成功编译也还不要做。再下一刀还没定。那些平台上的 GameMaker 运行这台机器证明不了。纹理单元保持调用方原来的值；探针的默认单元是 0。
 
 更早的 OpenGL 也在 `main` 上，不要重做，也不要再开拉取请求。拉取请求 https://github.com/mionumbra/IGPU/pull/5 的合并提交是 `332e1a8`，只写了「必须走拉取请求」这条规则。拉取请求 https://github.com/mionumbra/IGPU/pull/4 的合并提交是 `83afeb8`，图元 1、2、3、5。`gl-primitives` 尖端 `3e0a1f2` 已经包含在里面。拉取请求 https://github.com/mionumbra/IGPU/pull/3 的合并提交是 `0885e67`，顶点颜色。`gl-vertex-colour` 尖端 `7c0c6e4`。拉取请求 https://github.com/mionumbra/IGPU/pull/2 的合并提交是 `edb0ccd`，非索引 `igpu_draw`。`gl-draw` 尖端 `31c6982`。`gl-bind-current` 尖端 `fb4a9a5` 已经包含在 `main` 里。
 
