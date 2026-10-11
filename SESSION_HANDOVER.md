@@ -6,9 +6,9 @@
 
 ## 下一会话接着做
 
-**合并规则，先读这一段。** 功能分支必须推送到 `origin`。进入 `main` 只能通过 GitHub 拉取请求（pull request）：先推送分支，再开拉取请求，由拉取请求合并。不要在本地 `merge`（包括 `--no-ff` 和快进）之后直接 `push origin main`。交接文档自己的修改也走拉取请求，不要直接推 `main`。已经用拉取请求合并过的旧分支不要再开一次。`9c56d05`（最近点采样）和 `84b40f5`（钳制与重复）是在这条规则写明之前直接推进 `main` 的，不要照做。
+**合并规则，先读这一段。** 功能分支必须推送到 `origin`。进入 `main` 只能通过 GitHub 拉取请求（pull request）：先推送分支，再开拉取请求，批准并合并。探针通过之后就做完这三步，不要留到下一会话。不要在本地 `merge`（包括 `--no-ff` 和快进）之后直接 `push origin main`。交接文档自己的修改也走拉取请求，不要直接推 `main`。已经用拉取请求合并过的旧分支不要再开一次。`9c56d05`（最近点采样）和 `84b40f5`（钳制与重复）是在这条规则写明之前直接推进 `main` 的，不要照做。
 
-停在 `gl-mirror`。`gl-mirror` 从 `gl-linear` 拉出。写这份交接时，`origin/main` 是拉取请求 #6 的合并提交 `eb47059`。线性放大的提交是 `9e4325f`，镜像寻址的功能提交是 `b57cc88`。这两刀都还没有进入 `main`。进入 `main` 只能通过拉取请求。钳制与重复的代码合并提交是 `84b40f5`，没有走拉取请求，不要照做。`gl-address` 已推送，尖端 `95867cd`，已经包含在 `84b40f5` 里。不要重做那一刀，也不要再为它开拉取请求。这份交接自己的提交以 `git rev-parse --short HEAD` 为准。
+停在 `gl-mirror`。`gl-mirror` 从 `gl-linear` 拉出。写这份交接时，`origin/main` 是拉取请求 #7 的合并提交 `40a13ff`。线性放大的提交是 `9e4325f`，已经随拉取请求 #7 进入 `main`。镜像寻址的功能提交是 `b57cc88`，还在 `gl-mirror` 上。进入 `main` 只能通过拉取请求。钳制与重复的代码合并提交是 `84b40f5`，没有走拉取请求，不要照做。`gl-address` 已推送，尖端 `95867cd`，已经包含在 `84b40f5` 里。不要重做那一刀，也不要再为它开拉取请求。这份交接自己的提交以 `git rev-parse --short HEAD` 为准。
 
 计划在 `superpowers/plans/2026-10-10-gl-address.md`。更早的最近点采样计划在 `superpowers/plans/2026-10-10-gl-sample.md`。两份都已经证明，不要重做：
 
@@ -165,7 +165,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 
 这是整个扩展的规则，不是某一条功能的规则。
 
-- 功能分支必须推送到 `origin`，并且只通过 GitHub 拉取请求合并进 `main`。不要本地合并后直接推 `main`。`9c56d05` 和 `84b40f5` 是例外，不要再这么做。
+- 功能分支必须推送到 `origin`，并且只通过 GitHub 拉取请求合并进 `main`：推送、开拉取请求、批准并合并。探针通过之后就做完，不要留到下一会话。不要本地合并后直接推 `main`。`9c56d05` 和 `84b40f5` 是例外，不要再这么做。
 - 公开接口是跨后端的。`spec.gmidl`、公共头和 GML 里不出现 d3d、dxgi、hlsl、`_5_0`、ID3D。方言提示字符串 `hlsl` / `glsl` / `glsl_es` / `msl` / `spirv` 除外。复用 GameMaker 已有的名字：`bm_*`、`cmpfunc_*`、`cull_*`、`tf_*`、`surface_*`、`IgpuAddressMode`。
 - 调用链是 `spec.gmidl` → extgen 生成的 `code_gen` → `src/native/IGPU_native.cpp` 的薄包装 → `igpu::` 门面（`igpu_gpu.cpp`）→ `Backend` 虚函数。选具体后端的地方有两处，都在绑定设备时：`bind_device()` 装 `make_d3d11_backend`；`bind_current_context()` 只在定义了 `IGPU_HAS_OPENGL` 的探针里装 `GlBackend`。Direct3D 的实现仍在 `d3d11/igpu_d3d11_backend.cpp` 的 `namespace igpu::d3d11_impl`。
 - 门面在虚函数调用之前执行 `require_device`。虚函数不写默认参数。公共头可以有默认参数。
@@ -199,7 +199,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 包裹 | 重复 `u = 1.0625` 为 `255 / 255`，钳制和句柄 0 为 `16711680 / 16711680` |
 | GL 线性放大 | `u = 0.5` 钳制是 `8388736 / 8388736`。`u = 1.5` 重复是同一混合，钳制是 `16711680 / 16711680`。随后句柄 0 在 `u = 0.484375` 仍是 `255 / 255` |
 | GL 镜像寻址 | `u = 1.6` 最近点镜像是 `255 / 255`，重复和钳制是 `16711680 / 16711680`。`u = -0.625` 镜像是 `16711680 / 16711680`。`u = 1.5` 线性镜像是 `8388736 / 8388736`。随后句柄 0 在 `u = 1.6` 是 `16711680 / 16711680`，在 `u = 0.484375` 是 `255 / 255` |
-| Git | 写这份交接时 `origin/main` 是 `eb47059`（拉取请求 #6）。镜像寻址在 `gl-mirror`，功能提交是 `b57cc88`，还没有进入 `main`。线性放大的提交是 `9e4325f`，也还没有进入 `main`。钳制与重复的合并提交是 `84b40f5`。`gl-address` 在 `95867cd`。最近点采样的合并提交是 `9c56d05`。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
+| Git | 写这份交接时 `origin/main` 是 `40a13ff`（拉取请求 #7）。线性放大的提交是 `9e4325f`，已经进入 `main`。镜像寻址在 `gl-mirror`，功能提交是 `b57cc88`。钳制与重复的合并提交是 `84b40f5`。`gl-address` 在 `95867cd`。最近点采样的合并提交是 `9c56d05`。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
 
