@@ -27,6 +27,10 @@
 #define GL_CLAMP_TO_EDGE 0x812F
 #endif
 
+#ifndef GL_MIRRORED_REPEAT
+#define GL_MIRRORED_REPEAT 0x8370
+#endif
+
 namespace igpu
 {
     namespace
@@ -56,7 +60,7 @@ namespace igpu
         std::unordered_map<std::uint64_t, int> g_layouts;
         struct SamplerObject
         {
-            bool repeat = false;
+            std::int32_t address = 0;
             bool linear = false;
         };
 
@@ -164,6 +168,19 @@ namespace igpu
                 return false;
             }
             return true;
+        }
+
+        GLint gl_wrap(std::int32_t address)
+        {
+            if (address == 1)
+            {
+                return GL_REPEAT;
+            }
+            if (address == 2)
+            {
+                return GL_MIRRORED_REPEAT;
+            }
+            return GL_CLAMP_TO_EDGE;
         }
     }
 
@@ -691,7 +708,7 @@ namespace igpu
             set_last_error("igpu_draw_sampled: the bound program has no sampler uniform 'igpu_tex'");
             return false;
         }
-        bool repeat = false;
+        std::int32_t address = 0;
         bool linear = false;
         if (sampler_state != 0)
         {
@@ -701,7 +718,7 @@ namespace igpu
                 set_last_error("igpu_draw_sampled: unknown sampler handle");
                 return false;
             }
-            repeat = sampler_it->second.repeat;
+            address = sampler_it->second.address;
             linear = sampler_it->second.linear;
         }
         if (g_vertex_array == 0)
@@ -720,7 +737,7 @@ namespace igpu
         {
             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, &previous_wrap_s);
             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, &previous_wrap_t);
-            const GLint wrap = repeat ? GL_REPEAT : GL_CLAMP_TO_EDGE;
+            const GLint wrap = gl_wrap(address);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
             if (linear)
@@ -763,11 +780,11 @@ namespace igpu
             set_last_error("igpu_sampler_state_create: the opengl backend only samples the nearest texel");
             return 0;
         }
-        const bool clamp = address_u == 0 && address_v == 0 && address_w == 0;
-        const bool repeat = address_u == 1 && address_v == 1 && address_w == 1;
-        if (!clamp && !repeat)
+        const bool same = address_u == address_v && address_v == address_w;
+        const bool known = address_u == 0 || address_u == 1 || address_u == 2;
+        if (!same || !known)
         {
-            set_last_error("igpu_sampler_state_create: the opengl backend only accepts clamp or repeat on every axis");
+            set_last_error("igpu_sampler_state_create: the opengl backend only accepts clamp, repeat, or mirror on every axis");
             return 0;
         }
         if (level_offset != 0.f || finest != 0.f || !(coarsest >= 0.f))
@@ -777,7 +794,7 @@ namespace igpu
         }
         const bool linear = magnification == 1;
         const std::uint64_t handle = g_next_sampler++;
-        g_samplers.emplace(handle, SamplerObject{repeat, linear});
+        g_samplers.emplace(handle, SamplerObject{address_u, linear});
         return static_cast<std::int64_t>(handle);
     }
 
