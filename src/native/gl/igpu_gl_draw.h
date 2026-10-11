@@ -28,6 +28,11 @@ namespace igpu
                                                        std::int32_t mip, std::int32_t address_u, std::int32_t address_v,
                                                        std::int32_t address_w, float level_offset, float finest,
                                                        float coarsest);
+    std::int64_t gl_sampler_state_create_filters_border_range(std::int32_t magnification, std::int32_t minification,
+                                                              std::int32_t mip, std::int32_t address_u,
+                                                              std::int32_t address_v, std::int32_t address_w, float red,
+                                                              float green, float blue, float alpha, float level_offset,
+                                                              float finest, float coarsest);
     bool gl_state_release(std::uint64_t handle);
 
     bool gl_draw(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,

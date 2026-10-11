@@ -2045,10 +2045,195 @@ int main()
     {
         return fail("mirror mixed with repeat was accepted");
     }
-    const auto wrap_border = igpu_sampler_state_create(0, 0, 0, 3, 3, 3, 1, 0, 0, 0.f, 0.f, -1.f);
-    if (wrap_border != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)
+    const auto border_green = igpu_sampler_state_create(0, 0, 0, 3, 3, 3, 1, 65280, 0, 0.f, 0.f, -1.f);
+    const auto border_red = igpu_sampler_state_create(0, 0, 0, 3, 3, 3, 1, 255, 0, 0.f, 0.f, -1.f);
+    const auto border_linear = igpu_sampler_state_create(1, 0, 0, 3, 3, 3, 1, 65280, 0, 0.f, 0.f, -1.f);
+    if (border_green == 0 || border_red == 0 || border_linear == 0)
     {
-        return fail("border addressing was accepted");
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_outside_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_negative_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_red_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_clamp_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_repeat_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_linear_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_restore_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_plain_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (border_outside_dest == 0 || border_negative_dest == 0 || border_red_dest == 0 ||
+        border_clamp_dest == 0 || border_repeat_dest == 0 || border_linear_dest == 0 ||
+        border_restore_dest == 0 || border_plain_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(sample_vert, 0) || !igpu_shader_bind(sample_frag, 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!write_uv(1.6f, 0.5f) || !sample_uv(border_outside_dest, border_green))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_outside_left = igpu_texture_read(static_cast<std::uint64_t>(border_outside_dest), 1, 4, 0, 0);
+    const auto border_outside_right = igpu_texture_read(static_cast<std::uint64_t>(border_outside_dest), 6, 4, 0, 0);
+    std::printf("border outside: %lld / %lld\n", static_cast<long long>(border_outside_left),
+                static_cast<long long>(border_outside_right));
+    if (border_outside_left != 65280 || border_outside_right != 65280)
+    {
+        return fail("border at u=1.6 was not pure green");
+    }
+    if (!write_uv(-0.0625f, 0.5f) || !sample_uv(border_negative_dest, border_green))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_negative_left = igpu_texture_read(static_cast<std::uint64_t>(border_negative_dest), 1, 4, 0, 0);
+    const auto border_negative_right = igpu_texture_read(static_cast<std::uint64_t>(border_negative_dest), 6, 4, 0, 0);
+    std::printf("border negative: %lld / %lld\n", static_cast<long long>(border_negative_left),
+                static_cast<long long>(border_negative_right));
+    if (border_negative_left != 65280 || border_negative_right != 65280)
+    {
+        return fail("border at u=-0.0625 was not pure green");
+    }
+    if (!write_uv(1.6f, 0.5f) || !sample_uv(border_red_dest, border_red))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_red_left = igpu_texture_read(static_cast<std::uint64_t>(border_red_dest), 1, 4, 0, 0);
+    const auto border_red_right = igpu_texture_read(static_cast<std::uint64_t>(border_red_dest), 6, 4, 0, 0);
+    std::printf("border red    : %lld / %lld\n", static_cast<long long>(border_red_left),
+                static_cast<long long>(border_red_right));
+    if (border_red_left != 255 || border_red_right != 255)
+    {
+        return fail("red border at u=1.6 was not pure red");
+    }
+    if (!sample_uv(border_clamp_dest, wrap_clamp))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_clamp_left = igpu_texture_read(static_cast<std::uint64_t>(border_clamp_dest), 1, 4, 0, 0);
+    const auto border_clamp_right = igpu_texture_read(static_cast<std::uint64_t>(border_clamp_dest), 6, 4, 0, 0);
+    std::printf("border clamp  : %lld / %lld\n", static_cast<long long>(border_clamp_left),
+                static_cast<long long>(border_clamp_right));
+    if (border_clamp_left != 16711680 || border_clamp_right != 16711680)
+    {
+        return fail("clamp at u=1.6 was not the edge texel after border draws");
+    }
+    if (!sample_uv(border_repeat_dest, wrap_repeat))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_repeat_left = igpu_texture_read(static_cast<std::uint64_t>(border_repeat_dest), 1, 4, 0, 0);
+    const auto border_repeat_right = igpu_texture_read(static_cast<std::uint64_t>(border_repeat_dest), 6, 4, 0, 0);
+    std::printf("border repeat : %lld / %lld\n", static_cast<long long>(border_repeat_left),
+                static_cast<long long>(border_repeat_right));
+    if (border_repeat_left != 16711680 || border_repeat_right != 16711680)
+    {
+        return fail("repeat at u=1.6 was not the blue texel after border draws");
+    }
+    if (!write_uv(1.0f, 0.5f) || !sample_uv(border_linear_dest, border_linear))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_linear_left = igpu_texture_read(static_cast<std::uint64_t>(border_linear_dest), 1, 4, 0, 0);
+    const auto border_linear_right = igpu_texture_read(static_cast<std::uint64_t>(border_linear_dest), 6, 4, 0, 0);
+    std::printf("border linear : %lld / %lld\n", static_cast<long long>(border_linear_left),
+                static_cast<long long>(border_linear_right));
+    if (border_linear_left != 8421376 || border_linear_right != 8421376)
+    {
+        return fail("linear border at u=1.0 was not half green and half blue");
+    }
+    std::int32_t border_saved = 0;
+    std::int32_t border_viewport[4] = {};
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(wrap_black_dest), border_saved, border_viewport))
+    {
+        return fail("border reject target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(wrap_buffer), 0, static_cast<std::uint64_t>(sample_layout), 4, 0, 6, 1, 0,
+                  0, 0, border_green) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(border_saved, border_viewport);
+        return fail("igpu_draw accepted a border sampler");
+    }
+    if (igpu_draw_indexed(static_cast<std::uint64_t>(indexed_vertices_buffer), static_cast<std::uint64_t>(layout),
+                          static_cast<std::uint64_t>(indexed_index_buffer), 4, 0, 6, 0, 0, 0, border_green) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(border_saved, border_viewport);
+        return fail("igpu_draw_indexed accepted a border sampler");
+    }
+    const auto border_target_bytes = encode_u64(static_cast<std::uint64_t>(wrap_black_dest));
+    const auto border_zero_bytes = encode_u64(0);
+    if (igpu_draw_to_render_targets(static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout),
+                                    4, 0, 6, as_array(border_target_bytes), as_array(border_zero_bytes),
+                                    as_array(border_zero_bytes), 0, 0, 0, border_green) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(border_saved, border_viewport);
+        return fail("igpu_draw_to_render_targets accepted a border sampler");
+    }
+    igpu::gl_color_target_end(border_saved, border_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(wrap_black_dest), 1, 4, 0, 0) != 0 ||
+        igpu_texture_read(static_cast<std::uint64_t>(wrap_black_dest), 6, 4, 0, 0) != 0)
+    {
+        return fail("rejected border draw changed pixels");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sample_source), sample_saved_fbo,
+                                     sample_held_viewport))
+    {
+        return fail("border feedback target begin failed");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+                          static_cast<std::uint64_t>(sample_source), 0, 0, 0, border_green) ||
+        std::string(igpu_get_last_error()).find("the texture is the current color target") == std::string::npos)
+    {
+        igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+        return fail("border sampler was allowed to sample the current color target");
+    }
+    igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(sample_source), 1, 4, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_source), 6, 4, 0, 0) != 16711680)
+    {
+        return fail("rejected border feedback changed the source texture");
+    }
+    if (!write_uv(1.6f, 0.5f) || !sample_uv(border_restore_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_restore_left = igpu_texture_read(static_cast<std::uint64_t>(border_restore_dest), 1, 4, 0, 0);
+    const auto border_restore_right = igpu_texture_read(static_cast<std::uint64_t>(border_restore_dest), 6, 4, 0, 0);
+    std::printf("border restore: %lld / %lld\n", static_cast<long long>(border_restore_left),
+                static_cast<long long>(border_restore_right));
+    if (border_restore_left != 16711680 || border_restore_right != 16711680)
+    {
+        return fail("sampler 0 at u=1.6 was not the edge texel after border draws");
+    }
+    if (!write_uv(0.484375f, 0.5f) || !sample_uv(border_plain_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_plain_left = igpu_texture_read(static_cast<std::uint64_t>(border_plain_dest), 1, 4, 0, 0);
+    const auto border_plain_right = igpu_texture_read(static_cast<std::uint64_t>(border_plain_dest), 6, 4, 0, 0);
+    std::printf("border plain  : %lld / %lld\n", static_cast<long long>(border_plain_left),
+                static_cast<long long>(border_plain_right));
+    if (border_plain_left != 255 || border_plain_right != 255)
+    {
+        return fail("sampler 0 at u=0.484375 was not pure red after linear border");
+    }
+    if (igpu_texture_read(static_cast<std::uint64_t>(sample_source), 1, 4, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sample_source), 6, 4, 0, 0) != 16711680)
+    {
+        return fail("border draws changed the source texture");
+    }
+    const auto border_mixed = igpu_sampler_state_create(0, 0, 0, 3, 0, 0, 1, 65280, 0, 0.f, 0.f, -1.f);
+    if (border_mixed != 0 || std::string(igpu_get_last_error()).find("border on every axis") == std::string::npos)
+    {
+        return fail("border mixed with clamp was accepted");
+    }
+    const auto border_minify = igpu_sampler_state_create(0, 1, 0, 3, 3, 3, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (border_minify != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
+    {
+        return fail("linear minification on a border sampler was accepted");
     }
     const auto wrap_compare = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 1, 0.f, 0.f, -1.f);
     if (wrap_compare != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)

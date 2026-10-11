@@ -31,6 +31,10 @@
 #define GL_MIRRORED_REPEAT 0x8370
 #endif
 
+#ifndef GL_CLAMP_TO_BORDER
+#define GL_CLAMP_TO_BORDER 0x812D
+#endif
+
 namespace igpu
 {
     namespace
@@ -62,6 +66,10 @@ namespace igpu
         {
             std::int32_t address = 0;
             bool linear = false;
+            float border_red = 0.f;
+            float border_green = 0.f;
+            float border_blue = 0.f;
+            float border_alpha = 1.f;
         };
 
         std::unordered_map<std::uint64_t, SamplerObject> g_samplers;
@@ -179,6 +187,10 @@ namespace igpu
             if (address == 2)
             {
                 return GL_MIRRORED_REPEAT;
+            }
+            if (address == 3)
+            {
+                return GL_CLAMP_TO_BORDER;
             }
             return GL_CLAMP_TO_EDGE;
         }
@@ -710,6 +722,7 @@ namespace igpu
         }
         std::int32_t address = 0;
         bool linear = false;
+        GLfloat border_color[4] = {0.f, 0.f, 0.f, 1.f};
         if (sampler_state != 0)
         {
             const auto sampler_it = g_samplers.find(static_cast<std::uint64_t>(sampler_state));
@@ -720,6 +733,10 @@ namespace igpu
             }
             address = sampler_it->second.address;
             linear = sampler_it->second.linear;
+            border_color[0] = sampler_it->second.border_red;
+            border_color[1] = sampler_it->second.border_green;
+            border_color[2] = sampler_it->second.border_blue;
+            border_color[3] = sampler_it->second.border_alpha;
         }
         if (g_vertex_array == 0)
         {
@@ -733,6 +750,8 @@ namespace igpu
         GLint previous_wrap_s = GL_CLAMP_TO_EDGE;
         GLint previous_wrap_t = GL_CLAMP_TO_EDGE;
         GLint previous_mag = GL_NEAREST;
+        GLfloat previous_border[4] = {0.f, 0.f, 0.f, 0.f};
+        const bool border = address == 3;
         if (sampler_state != 0)
         {
             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, &previous_wrap_s);
@@ -740,6 +759,11 @@ namespace igpu
             const GLint wrap = gl_wrap(address);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap);
+            if (border)
+            {
+                glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, previous_border);
+                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border_color);
+            }
             if (linear)
             {
                 glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &previous_mag);
@@ -758,6 +782,10 @@ namespace igpu
         {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, previous_wrap_s);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, previous_wrap_t);
+            if (border)
+            {
+                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, previous_border);
+            }
             if (linear)
             {
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, previous_mag);
@@ -795,6 +823,35 @@ namespace igpu
         const bool linear = magnification == 1;
         const std::uint64_t handle = g_next_sampler++;
         g_samplers.emplace(handle, SamplerObject{address_u, linear});
+        return static_cast<std::int64_t>(handle);
+    }
+
+    std::int64_t gl_sampler_state_create_filters_border_range(std::int32_t magnification, std::int32_t minification,
+                                                              std::int32_t mip, std::int32_t address_u,
+                                                              std::int32_t address_v, std::int32_t address_w, float red,
+                                                              float green, float blue, float alpha, float level_offset,
+                                                              float finest, float coarsest)
+    {
+        // One mip. Magnification may be nearest or linear. Minification and mip stay nearest.
+        // Every axis must be border. The border color is applied only for this draw.
+        if (minification != 0 || mip != 0 || (magnification != 0 && magnification != 1))
+        {
+            set_last_error("igpu_sampler_state_create: the opengl backend only samples the nearest texel");
+            return 0;
+        }
+        if (address_u != 3 || address_v != 3 || address_w != 3)
+        {
+            set_last_error("igpu_sampler_state_create: the opengl backend only accepts border on every axis");
+            return 0;
+        }
+        if (level_offset != 0.f || finest != 0.f || !(coarsest >= 0.f))
+        {
+            set_last_error("igpu_sampler_state_create: the opengl backend has no mip chain");
+            return 0;
+        }
+        const bool linear = magnification == 1;
+        const std::uint64_t handle = g_next_sampler++;
+        g_samplers.emplace(handle, SamplerObject{3, linear, red, green, blue, alpha});
         return static_cast<std::int64_t>(handle);
     }
 
