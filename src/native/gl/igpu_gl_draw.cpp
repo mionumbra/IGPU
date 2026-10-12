@@ -94,7 +94,9 @@ namespace igpu
         {
             // 0 disables culling. 1 drops clockwise faces. 2 drops counter-clockwise faces.
             // Clockwise is front, matching the Direct3D rasterizer.
+            // Scissor uses the rectangle already set by the caller. This draw does not change the box.
             std::int32_t cull = 0;
+            bool scissor = false;
         };
         std::unordered_map<std::uint64_t, RasterObject> g_rasters;
         std::uint64_t g_next_sampler = 1;
@@ -325,6 +327,7 @@ namespace igpu
             GLboolean enabled = GL_FALSE;
             GLint mode = GL_BACK;
             GLint front = GL_CCW;
+            GLboolean scissor = GL_FALSE;
         };
 
         void save_cull(SavedCull& saved)
@@ -332,6 +335,7 @@ namespace igpu
             saved.enabled = glIsEnabled(GL_CULL_FACE);
             glGetIntegerv(GL_CULL_FACE_MODE, &saved.mode);
             glGetIntegerv(GL_FRONT_FACE, &saved.front);
+            saved.scissor = glIsEnabled(GL_SCISSOR_TEST);
         }
 
         void apply_cull(const RasterObject& raster)
@@ -340,10 +344,20 @@ namespace igpu
             if (raster.cull == 0)
             {
                 glDisable(GL_CULL_FACE);
-                return;
             }
-            glEnable(GL_CULL_FACE);
-            glCullFace(raster.cull == 1 ? GL_FRONT : GL_BACK);
+            else
+            {
+                glEnable(GL_CULL_FACE);
+                glCullFace(raster.cull == 1 ? GL_FRONT : GL_BACK);
+            }
+            if (raster.scissor)
+            {
+                glEnable(GL_SCISSOR_TEST);
+            }
+            else
+            {
+                glDisable(GL_SCISSOR_TEST);
+            }
         }
 
         void restore_cull(const SavedCull& saved)
@@ -357,6 +371,14 @@ namespace igpu
             else
             {
                 glDisable(GL_CULL_FACE);
+            }
+            if (saved.scissor == GL_TRUE)
+            {
+                glEnable(GL_SCISSOR_TEST);
+            }
+            else
+            {
+                glDisable(GL_SCISSOR_TEST);
             }
         }
 
@@ -1206,18 +1228,13 @@ namespace igpu
             set_last_error("igpu_raster_state_create: the opengl backend draws solid triangles only");
             return 0;
         }
-        if (scissor)
-        {
-            set_last_error("igpu_raster_state_create: the opengl backend does not scissor");
-            return 0;
-        }
         if (!depth_clip)
         {
             set_last_error("igpu_raster_state_create: the opengl backend keeps depth clip enabled");
             return 0;
         }
         const std::uint64_t handle = g_next_sampler++;
-        g_rasters.emplace(handle, RasterObject{cull});
+        g_rasters.emplace(handle, RasterObject{cull, scissor});
         return static_cast<std::int64_t>(handle);
     }
 
