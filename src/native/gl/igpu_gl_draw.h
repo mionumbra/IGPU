@@ -37,6 +37,11 @@ namespace igpu
                                        std::int32_t src_alpha, std::int32_t dest_alpha, std::int32_t equation_alpha,
                                        bool write_red, bool write_green, bool write_blue, bool write_alpha);
     std::int64_t gl_raster_state_create(std::int32_t cull, std::int32_t fill, bool scissor, bool depth_clip);
+    std::int64_t gl_depth_state_create(bool depth_test, bool depth_write, std::int32_t depth_func, bool stencil_enable,
+                                       std::int32_t stencil_func, std::int32_t stencil_fail,
+                                       std::int32_t stencil_depth_fail, std::int32_t stencil_pass,
+                                       std::int32_t stencil_ref, std::int32_t stencil_read_mask,
+                                       std::int32_t stencil_write_mask);
     bool gl_state_release(std::uint64_t handle);
 
     bool gl_draw(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
@@ -56,6 +61,8 @@ namespace igpu
     bool gl_color_target_begin(std::uint64_t texture, std::int32_t& previous_framebuffer,
                                std::int32_t previous_viewport[4]);
     void gl_color_target_end(std::int32_t previous_framebuffer, const std::int32_t previous_viewport[4]);
+    // Probe fixture. Attaches a depth buffer to an existing color target and clears that depth to 1.
+    bool gl_attach_depth(std::uint64_t texture);
 
     bool gl_draw_to_render_targets_layer(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                                          std::int64_t first_vertex, std::int64_t vertex_count,

@@ -96,11 +96,15 @@ namespace igpu
                 return gl_blend_state_create(enabled, src, dest, equation, src_alpha, dest_alpha, equation_alpha,
                                              write_red, write_green, write_blue, write_alpha);
             }
-            std::int64_t depth_state_create(bool, bool, std::int32_t, bool, std::int32_t, std::int32_t, std::int32_t,
-                                            std::int32_t, std::int32_t, std::int32_t, std::int32_t) override
+            std::int64_t depth_state_create(bool depth_test, bool depth_write, std::int32_t depth_func,
+                                            bool stencil_enable, std::int32_t stencil_func, std::int32_t stencil_fail,
+                                            std::int32_t stencil_depth_fail, std::int32_t stencil_pass,
+                                            std::int32_t stencil_ref, std::int32_t stencil_read_mask,
+                                            std::int32_t stencil_write_mask) override
             {
-                not_yet("igpu_depth_state_create");
-                return 0;
+                return gl_depth_state_create(depth_test, depth_write, depth_func, stencil_enable, stencil_func,
+                                             stencil_fail, stencil_depth_fail, stencil_pass, stencil_ref,
+                                             stencil_read_mask, stencil_write_mask);
             }
             std::int64_t raster_state_create(std::int32_t cull, std::int32_t fill, bool scissor, bool depth_clip) override
             {

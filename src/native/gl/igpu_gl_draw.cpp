@@ -35,6 +35,12 @@
 #define GL_CLAMP_TO_BORDER 0x812D
 #endif
 
+#ifndef GL_RENDERBUFFER
+#define GL_RENDERBUFFER 0x8D41
+#define GL_DEPTH_ATTACHMENT 0x8D00
+#define GL_DEPTH_COMPONENT24 0x81A6
+#endif
+
 namespace igpu
 {
     namespace
@@ -52,6 +58,7 @@ namespace igpu
         {
             GLuint texture = 0;
             GLuint framebuffer = 0;
+            GLuint depth = 0;
             std::int32_t width = 0;
             std::int32_t height = 0;
         };
@@ -99,6 +106,13 @@ namespace igpu
             bool scissor = false;
         };
         std::unordered_map<std::uint64_t, RasterObject> g_rasters;
+        struct DepthObject
+        {
+            bool test = false;
+            bool write = false;
+            GLenum func = GL_LESS;
+        };
+        std::unordered_map<std::uint64_t, DepthObject> g_depths;
         std::uint64_t g_next_sampler = 1;
 
         bool gl_blend_factor(std::int32_t raw, bool alpha_slot, GLenum& out)
@@ -199,7 +213,7 @@ namespace igpu
             }
         }
 
-        bool gl_pipeline_accepted(const char* entry, std::int32_t primitive, std::int64_t depth_state, GLenum& mode)
+        bool gl_pipeline_accepted(const char* entry, std::int32_t primitive, GLenum& mode)
         {
             if (primitive == 6)
             {
@@ -209,11 +223,6 @@ namespace igpu
             if (!gl_primitive_mode(primitive, mode))
             {
                 set_last_error(std::string(entry) + ": the opengl backend does not draw this primitive");
-                return false;
-            }
-            if (depth_state != 0)
-            {
-                set_last_error(std::string(entry) + ": the opengl backend draws with no extra state");
                 return false;
             }
             return true;
@@ -382,15 +391,84 @@ namespace igpu
             }
         }
 
+        bool gl_resolve_depth(const char* entry, std::int64_t depth_state, const DepthObject*& out)
+        {
+            out = nullptr;
+            if (depth_state == 0)
+            {
+                return true;
+            }
+            if (depth_state < 0)
+            {
+                set_last_error(std::string(entry) + ": depth handle is not a state object");
+                return false;
+            }
+            const auto found = g_depths.find(static_cast<std::uint64_t>(depth_state));
+            if (found == g_depths.end())
+            {
+                set_last_error(std::string(entry) + ": unknown depth handle");
+                return false;
+            }
+            out = &found->second;
+            return true;
+        }
+
+        struct SavedDepth
+        {
+            GLboolean enabled = GL_FALSE;
+            GLint func = GL_LESS;
+            GLboolean mask = GL_TRUE;
+        };
+
+        void save_depth(SavedDepth& saved)
+        {
+            saved.enabled = glIsEnabled(GL_DEPTH_TEST);
+            glGetIntegerv(GL_DEPTH_FUNC, &saved.func);
+            glGetBooleanv(GL_DEPTH_WRITEMASK, &saved.mask);
+        }
+
+        void apply_depth(const DepthObject& depth)
+        {
+            if (depth.test)
+            {
+                glEnable(GL_DEPTH_TEST);
+            }
+            else
+            {
+                glDisable(GL_DEPTH_TEST);
+            }
+            glDepthFunc(depth.func);
+            glDepthMask(depth.write ? GL_TRUE : GL_FALSE);
+        }
+
+        void restore_depth(const SavedDepth& saved)
+        {
+            glDepthFunc(static_cast<GLenum>(saved.func));
+            glDepthMask(saved.mask);
+            if (saved.enabled == GL_TRUE)
+            {
+                glEnable(GL_DEPTH_TEST);
+            }
+            else
+            {
+                glDisable(GL_DEPTH_TEST);
+            }
+        }
+
         bool gl_draw_accepted(const char* entry, std::int32_t primitive, std::int64_t blend_state,
                               std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state,
-                              const BlendObject*& blend, const RasterObject*& raster, GLenum& mode)
+                              const BlendObject*& blend, const DepthObject*& depth, const RasterObject*& raster,
+                              GLenum& mode)
         {
-            if (!gl_pipeline_accepted(entry, primitive, depth_state, mode))
+            if (!gl_pipeline_accepted(entry, primitive, mode))
             {
                 return false;
             }
             if (!gl_resolve_blend(entry, blend_state, blend))
+            {
+                return false;
+            }
+            if (!gl_resolve_depth(entry, depth_state, depth))
             {
                 return false;
             }
@@ -441,6 +519,16 @@ namespace igpu
                 fns.DeleteFramebuffers(1, &entry.second.framebuffer);
             }
         }
+        if (fns.DeleteRenderbuffers != nullptr)
+        {
+            for (const auto& entry : g_textures)
+            {
+                if (entry.second.depth != 0)
+                {
+                    fns.DeleteRenderbuffers(1, &entry.second.depth);
+                }
+            }
+        }
         for (const auto& entry : g_textures)
         {
             glDeleteTextures(1, &entry.second.texture);
@@ -451,6 +539,7 @@ namespace igpu
         g_samplers.clear();
         g_blends.clear();
         g_rasters.clear();
+        g_depths.clear();
         g_next_sampler = 1;
         g_vertex_array = 0;
         g_next_buffer = 1;
@@ -592,7 +681,7 @@ namespace igpu
             return 0;
         }
         const std::uint64_t handle = g_next_texture++;
-        g_textures.emplace(handle, TextureObject{texture, framebuffer, width, height});
+        g_textures.emplace(handle, TextureObject{texture, framebuffer, 0, width, height});
         return static_cast<std::int64_t>(handle);
     }
 
@@ -605,6 +694,10 @@ namespace igpu
             return false;
         }
         igpu_gl_fns().DeleteFramebuffers(1, &it->second.framebuffer);
+        if (it->second.depth != 0)
+        {
+            igpu_gl_fns().DeleteRenderbuffers(1, &it->second.depth);
+        }
         glDeleteTextures(1, &it->second.texture);
         g_textures.erase(it);
         return true;
@@ -653,6 +746,51 @@ namespace igpu
         glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2], previous_viewport[3]);
     }
 
+    bool gl_attach_depth(std::uint64_t texture)
+    {
+        const auto it = g_textures.find(texture);
+        if (it == g_textures.end())
+        {
+            set_last_error("gl_attach_depth: unknown texture");
+            return false;
+        }
+        auto& object = it->second;
+        const auto& fns = igpu_gl_fns();
+        GLint previous = 0;
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous);
+        if (object.depth == 0)
+        {
+            fns.GenRenderbuffers(1, &object.depth);
+            fns.BindRenderbuffer(GL_RENDERBUFFER, object.depth);
+            fns.RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, object.width, object.height);
+            fns.BindRenderbuffer(GL_RENDERBUFFER, 0);
+            fns.BindFramebuffer(GL_FRAMEBUFFER, object.framebuffer);
+            fns.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, object.depth);
+            const GLenum status = fns.CheckFramebufferStatus(GL_FRAMEBUFFER);
+            if (status != GL_FRAMEBUFFER_COMPLETE)
+            {
+                fns.BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous));
+                fns.DeleteRenderbuffers(1, &object.depth);
+                object.depth = 0;
+                set_last_error("gl_attach_depth: the framebuffer is incomplete");
+                return false;
+            }
+        }
+        else
+        {
+            fns.BindFramebuffer(GL_FRAMEBUFFER, object.framebuffer);
+        }
+        // glClear of the depth buffer honors the write mask. Force it for this clear only.
+        GLboolean previous_mask = GL_TRUE;
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &previous_mask);
+        glDepthMask(GL_TRUE);
+        glClearDepth(1.0);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glDepthMask(previous_mask);
+        fns.BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous));
+        return true;
+    }
+
     bool gl_draw_to_render_targets_layer(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                                          std::int64_t first_vertex, std::int64_t vertex_count,
                                          const gm::wire::GMArrayView& targets, const gm::wire::GMArrayView& layers,
@@ -662,9 +800,10 @@ namespace igpu
     {
         GLenum mode = GL_TRIANGLES;
         const BlendObject* blend = nullptr;
+        const DepthObject* depth = nullptr;
         const RasterObject* raster = nullptr;
         if (!gl_draw_accepted("igpu_draw_to_render_targets", primitive, blend_state, depth_state, raster_state,
-                              sampler_state, blend, raster, mode))
+                              sampler_state, blend, depth, raster, mode))
         {
             return false;
         }
@@ -729,11 +868,17 @@ namespace igpu
         fns.BindBuffer(GL_ARRAY_BUFFER, buffer->second.id);
         bind_vertices(buffer->second, first_vertex);
         SavedBlend saved_blend{};
+        SavedDepth saved_depth{};
         SavedCull saved_cull{};
         if (blend != nullptr)
         {
             save_blend(saved_blend);
             apply_blend(*blend);
+        }
+        if (depth != nullptr)
+        {
+            save_depth(saved_depth);
+            apply_depth(*depth);
         }
         if (raster != nullptr)
         {
@@ -744,6 +889,10 @@ namespace igpu
         if (raster != nullptr)
         {
             restore_cull(saved_cull);
+        }
+        if (depth != nullptr)
+        {
+            restore_depth(saved_depth);
         }
         if (blend != nullptr)
         {
@@ -763,9 +912,10 @@ namespace igpu
     {
         GLenum mode = GL_TRIANGLES;
         const BlendObject* blend = nullptr;
+        const DepthObject* depth = nullptr;
         const RasterObject* raster = nullptr;
         if (!gl_draw_accepted("igpu_draw", primitive, blend_state, depth_state, raster_state, sampler_state, blend,
-                              raster, mode))
+                              depth, raster, mode))
         {
             return false;
         }
@@ -820,11 +970,17 @@ namespace igpu
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
         bind_vertices(vertex->second, 0);
         SavedBlend saved_blend{};
+        SavedDepth saved_depth{};
         SavedCull saved_cull{};
         if (blend != nullptr)
         {
             save_blend(saved_blend);
             apply_blend(*blend);
+        }
+        if (depth != nullptr)
+        {
+            save_depth(saved_depth);
+            apply_depth(*depth);
         }
         if (raster != nullptr)
         {
@@ -835,6 +991,10 @@ namespace igpu
         if (raster != nullptr)
         {
             restore_cull(saved_cull);
+        }
+        if (depth != nullptr)
+        {
+            restore_depth(saved_depth);
         }
         if (blend != nullptr)
         {
@@ -853,9 +1013,10 @@ namespace igpu
     {
         GLenum mode = GL_TRIANGLES;
         const BlendObject* blend = nullptr;
+        const DepthObject* depth = nullptr;
         const RasterObject* raster = nullptr;
         if (!gl_draw_accepted("igpu_draw_indexed", primitive, blend_state, depth_state, raster_state, sampler_state,
-                              blend, raster, mode))
+                              blend, depth, raster, mode))
         {
             return false;
         }
@@ -920,11 +1081,17 @@ namespace igpu
         bind_vertices(vertex->second, 0);
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, index->second.id);
         SavedBlend saved_blend{};
+        SavedDepth saved_depth{};
         SavedCull saved_cull{};
         if (blend != nullptr)
         {
             save_blend(saved_blend);
             apply_blend(*blend);
+        }
+        if (depth != nullptr)
+        {
+            save_depth(saved_depth);
+            apply_depth(*depth);
         }
         if (raster != nullptr)
         {
@@ -936,6 +1103,10 @@ namespace igpu
         if (raster != nullptr)
         {
             restore_cull(saved_cull);
+        }
+        if (depth != nullptr)
+        {
+            restore_depth(saved_depth);
         }
         if (blend != nullptr)
         {
@@ -955,11 +1126,11 @@ namespace igpu
     {
         GLenum mode = GL_TRIANGLES;
         const BlendObject* blend = nullptr;
-        if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, depth_state, mode))
+        if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, mode))
         {
             return false;
         }
-        if (raster_state != 0)
+        if (depth_state != 0 || raster_state != 0)
         {
             set_last_error("igpu_draw_sampled: the opengl backend draws with no extra state");
             return false;
@@ -1216,6 +1387,56 @@ namespace igpu
         return static_cast<std::int64_t>(handle);
     }
 
+    std::int64_t gl_depth_state_create(bool depth_test, bool depth_write, std::int32_t depth_func, bool stencil_enable,
+                                       std::int32_t stencil_func, std::int32_t stencil_fail,
+                                       std::int32_t stencil_depth_fail, std::int32_t stencil_pass,
+                                       std::int32_t stencil_ref, std::int32_t stencil_read_mask,
+                                       std::int32_t stencil_write_mask)
+    {
+        auto compare = [](std::int32_t raw, GLenum& out) {
+            switch (raw)
+            {
+            case 1: out = GL_NEVER; return true;
+            case 2: out = GL_LESS; return true;
+            case 3: out = GL_EQUAL; return true;
+            case 4: out = GL_LEQUAL; return true;
+            case 5: out = GL_GREATER; return true;
+            case 6: out = GL_NOTEQUAL; return true;
+            case 7: out = GL_GEQUAL; return true;
+            case 8: out = GL_ALWAYS; return true;
+            default: return false;
+            }
+        };
+        auto stencil_op = [](std::int32_t raw) { return raw >= 1 && raw <= 8; };
+        GLenum func = GL_LESS;
+        GLenum stencil_compare = GL_ALWAYS;
+        if (!compare(depth_func, func))
+        {
+            set_last_error("igpu_depth_state_create: depth function must be a cmpfunc_* constant");
+            return 0;
+        }
+        if (!compare(stencil_func, stencil_compare) || !stencil_op(stencil_fail) || !stencil_op(stencil_depth_fail) ||
+            !stencil_op(stencil_pass))
+        {
+            set_last_error("igpu_depth_state_create: stencil function must be cmpfunc_* and stencil ops must be stencilop_*");
+            return 0;
+        }
+        if (stencil_ref < 0 || stencil_ref > 255 || stencil_read_mask < 0 || stencil_read_mask > 255 ||
+            stencil_write_mask < 0 || stencil_write_mask > 255)
+        {
+            set_last_error("igpu_depth_state_create: stencil ref and masks must be in 0..255");
+            return 0;
+        }
+        if (stencil_enable)
+        {
+            set_last_error("igpu_depth_state_create: the opengl backend does not enable stencil");
+            return 0;
+        }
+        const std::uint64_t handle = g_next_sampler++;
+        g_depths.emplace(handle, DepthObject{depth_test, depth_write, func});
+        return static_cast<std::int64_t>(handle);
+    }
+
     std::int64_t gl_raster_state_create(std::int32_t cull, std::int32_t fill, bool scissor, bool depth_clip)
     {
         if (cull != 0 && cull != 1 && cull != 2)
@@ -1245,6 +1466,10 @@ namespace igpu
             return true;
         }
         if (g_rasters.erase(handle) != 0)
+        {
+            return true;
+        }
+        if (g_depths.erase(handle) != 0)
         {
             return true;
         }

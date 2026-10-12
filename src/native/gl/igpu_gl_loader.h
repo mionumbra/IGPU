@@ -42,6 +42,11 @@ using IgpuGlGetUniformLocation = GLint(APIENTRY*)(GLuint, const char*);
 using IgpuGlUniform1i = void(APIENTRY*)(GLint, GLint);
 using IgpuGlBlendFuncSeparate = void(APIENTRY*)(GLenum, GLenum, GLenum, GLenum);
 using IgpuGlBlendEquationSeparate = void(APIENTRY*)(GLenum, GLenum);
+using IgpuGlGenRenderbuffers = void(APIENTRY*)(GLsizei, GLuint*);
+using IgpuGlDeleteRenderbuffers = void(APIENTRY*)(GLsizei, const GLuint*);
+using IgpuGlBindRenderbuffer = void(APIENTRY*)(GLenum, GLuint);
+using IgpuGlRenderbufferStorage = void(APIENTRY*)(GLenum, GLenum, GLsizei, GLsizei);
+using IgpuGlFramebufferRenderbuffer = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint);
 
 struct IgpuGlFns
 {
@@ -77,6 +82,11 @@ struct IgpuGlFns
     IgpuGlUniform1i Uniform1i = nullptr;
     IgpuGlBlendFuncSeparate BlendFuncSeparate = nullptr;
     IgpuGlBlendEquationSeparate BlendEquationSeparate = nullptr;
+    IgpuGlGenRenderbuffers GenRenderbuffers = nullptr;
+    IgpuGlDeleteRenderbuffers DeleteRenderbuffers = nullptr;
+    IgpuGlBindRenderbuffer BindRenderbuffer = nullptr;
+    IgpuGlRenderbufferStorage RenderbufferStorage = nullptr;
+    IgpuGlFramebufferRenderbuffer FramebufferRenderbuffer = nullptr;
 };
 
 IgpuGlFns& igpu_gl_fns();

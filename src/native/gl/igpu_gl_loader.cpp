@@ -59,6 +59,11 @@ namespace igpu
         LOAD(Uniform1i, "glUniform1i")
         LOAD(BlendFuncSeparate, "glBlendFuncSeparate")
         LOAD(BlendEquationSeparate, "glBlendEquationSeparate")
+        LOAD(GenRenderbuffers, "glGenRenderbuffers")
+        LOAD(DeleteRenderbuffers, "glDeleteRenderbuffers")
+        LOAD(BindRenderbuffer, "glBindRenderbuffer")
+        LOAD(RenderbufferStorage, "glRenderbufferStorage")
+        LOAD(FramebufferRenderbuffer, "glFramebufferRenderbuffer")
 #undef LOAD
         return true;
     }
