@@ -922,7 +922,7 @@ int main()
         !reject_strip(6, 0, 0, 0, 0, "triangle fan", "trianglefan") ||
         !reject_strip(5, 1, 0, 0, 0, "strip blend", "unknown blend handle") ||
         !reject_strip(5, 0, 1, 0, 0, "strip depth", "draws with no extra state") ||
-        !reject_strip(5, 0, 0, 1, 0, "strip raster", "draws with no extra state") ||
+        !reject_strip(5, 0, 0, 1, 0, "strip raster", "unknown raster handle") ||
         !reject_strip(5, 0, 0, 0, 1, "strip sampler", "draws with no extra state"))
     {
         return fail("strip rejection check failed");
@@ -2927,12 +2927,17 @@ int main()
     }
     if (igpu_draw(static_cast<std::uint64_t>(blend_blue_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
                   1, 0, 1, 0, 0) ||
-        igpu_draw(static_cast<std::uint64_t>(blend_blue_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
-                  1, 0, 0, 1, 0) ||
         std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
     {
         igpu::gl_color_target_end(blend_saved, blend_viewport);
-        return fail("depth or raster state was accepted with a blend backend");
+        return fail("a depth handle was accepted with a blend backend");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(blend_blue_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
+                  1, 0, 0, 1, 0) ||
+        std::string(igpu_get_last_error()).find("unknown raster handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("an unknown raster handle was accepted with a blend backend");
     }
     const auto blend_sample_red0 = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto blend_sample_red = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
@@ -3107,6 +3112,204 @@ int main()
     if (!igpu_supports(static_cast<std::int32_t>(igpu::Capability::BlendState)))
     {
         return fail("BlendState is false on the OpenGL backend");
+    }
+
+    const auto cull_clockwise = igpu_raster_state_create(1, 0, false, true);
+    const auto cull_counter = igpu_raster_state_create(2, 0, false, true);
+    const auto cull_none = igpu_raster_state_create(0, 0, false, true);
+    if (cull_clockwise == 0 || cull_counter == 0 || cull_none == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (igpu_raster_state_create(99, 0, false, true) != 0 ||
+        std::string(igpu_get_last_error()).find("cull_noculling") == std::string::npos)
+    {
+        return fail("an unknown cull mode was accepted");
+    }
+    if (igpu_raster_state_create(0, 1, false, true) != 0 ||
+        std::string(igpu_get_last_error()).find("solid") == std::string::npos)
+    {
+        return fail("wireframe fill was accepted");
+    }
+    if (igpu_raster_state_create(0, 0, true, true) != 0 ||
+        std::string(igpu_get_last_error()).find("scissor") == std::string::npos)
+    {
+        return fail("scissor raster state was accepted");
+    }
+    if (igpu_raster_state_create(0, 0, false, false) != 0 ||
+        std::string(igpu_get_last_error()).find("depth clip") == std::string::npos)
+    {
+        return fail("disabled depth clip was accepted");
+    }
+    const float cull_ccw_vertices[] = {-1.f, -1.f, 0.f, -1.f, -1.f, 1.f};
+    const float cull_cw_vertices[] = {0.f, -1.f, -1.f, -1.f, -1.f, 1.f};
+    const std::uint16_t cull_indices[] = {0, 1, 2};
+    const auto cull_ccw_buffer = igpu_buffer_create(24, 0, 1, 8);
+    const auto cull_cw_buffer = igpu_buffer_create(24, 0, 1, 8);
+    const auto cull_index_buffer = igpu_buffer_create(6, 0, 2, 0);
+    const auto cull_keep_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto cull_drop_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto cull_none_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto cull_front_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto cull_back_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto cull_indexed_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto cull_target_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (cull_ccw_buffer == 0 || cull_cw_buffer == 0 || cull_index_buffer == 0 || cull_keep_texture == 0 ||
+        cull_drop_texture == 0 || cull_none_texture == 0 || cull_front_texture == 0 || cull_back_texture == 0 ||
+        cull_indexed_texture == 0 || cull_target_texture == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(cull_ccw_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<float*>(cull_ccw_vertices), 24)) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(cull_cw_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<float*>(cull_cw_vertices), 24)) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(cull_index_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<std::uint16_t*>(cull_indices), 6)))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto report_cull = [&](const char* label, std::int64_t texture, std::int64_t left, std::int64_t right) {
+        const auto got_left = igpu_texture_read(static_cast<std::uint64_t>(texture), 1, 4, 0, 0);
+        const auto got_right = igpu_texture_read(static_cast<std::uint64_t>(texture), 6, 4, 0, 0);
+        std::printf("%s: %lld / %lld\n", label, static_cast<long long>(got_left), static_cast<long long>(got_right));
+        return got_left == left && got_right == right;
+    };
+    const auto draw_cull = [&](std::int64_t texture, std::int64_t buffer, std::int64_t raster) {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(texture), saved, viewport))
+        {
+            return false;
+        }
+        const bool drew = igpu_draw(static_cast<std::uint64_t>(buffer), 0, static_cast<std::uint64_t>(layout), 4, 0, 3,
+                                     1, 0, 0, raster, 0);
+        const bool cull_off = glIsEnabled(0x0B44) == GL_FALSE;
+        igpu::gl_color_target_end(saved, viewport);
+        return drew && cull_off;
+    };
+    if (!draw_cull(cull_keep_texture, cull_ccw_buffer, cull_clockwise) ||
+        !report_cull("cull keep    ", cull_keep_texture, 255, 0))
+    {
+        return fail("cull_clockwise dropped a counter-clockwise triangle");
+    }
+    if (!draw_cull(cull_drop_texture, cull_ccw_buffer, cull_counter) ||
+        !report_cull("cull drop    ", cull_drop_texture, 0, 0))
+    {
+        return fail("cull_counterclockwise kept a counter-clockwise triangle");
+    }
+    if (!draw_cull(cull_drop_texture, cull_ccw_buffer, 0) ||
+        !report_cull("cull plain   ", cull_drop_texture, 255, 0))
+    {
+        return fail("handle 0 did not restore culling after a dropped triangle");
+    }
+    if (!draw_cull(cull_none_texture, cull_ccw_buffer, cull_none) ||
+        !report_cull("cull none    ", cull_none_texture, 255, 0))
+    {
+        return fail("cull_noculling dropped a counter-clockwise triangle");
+    }
+    if (!draw_cull(cull_front_texture, cull_cw_buffer, cull_clockwise) ||
+        !report_cull("cull front   ", cull_front_texture, 0, 0))
+    {
+        return fail("cull_clockwise kept a clockwise triangle");
+    }
+    if (!draw_cull(cull_back_texture, cull_cw_buffer, cull_counter) ||
+        !report_cull("cull back    ", cull_back_texture, 255, 0))
+    {
+        return fail("cull_counterclockwise dropped a clockwise triangle");
+    }
+    {
+        std::int32_t saved = 0;
+        std::int32_t held[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(cull_indexed_texture), saved, held))
+        {
+            return fail("cull indexed target begin failed");
+        }
+        const bool drew = igpu_draw_indexed(static_cast<std::uint64_t>(cull_ccw_buffer),
+                                             static_cast<std::uint64_t>(layout),
+                                             static_cast<std::uint64_t>(cull_index_buffer), 4, 0, 3, 0, 0,
+                                             cull_counter, 0);
+        const bool cull_off = glIsEnabled(0x0B44) == GL_FALSE;
+        igpu::gl_color_target_end(saved, held);
+        if (!drew || !cull_off || !report_cull("cull indexed ", cull_indexed_texture, 0, 0))
+        {
+            return fail("indexed cull_counterclockwise kept a counter-clockwise triangle");
+        }
+    }
+    const auto cull_target_bytes = encode_u64(static_cast<std::uint64_t>(cull_target_texture));
+    const auto cull_zero_bytes = encode_u64(0);
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(cull_ccw_buffer), static_cast<std::uint64_t>(layout),
+                                     4, 0, 3, as_array(cull_target_bytes), as_array(cull_zero_bytes),
+                                     as_array(cull_zero_bytes), 0, 0, cull_counter, 0) ||
+        glIsEnabled(0x0B44) == GL_TRUE || !report_cull("cull target  ", cull_target_texture, 0, 0))
+    {
+        return fail("render-target cull_counterclockwise kept a counter-clockwise triangle");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(cull_keep_texture), strip_saved_fbo, strip_held_viewport))
+    {
+        return fail("cull reject target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(cull_ccw_buffer), 0, static_cast<std::uint64_t>(layout), 4, 0, 3, 1,
+                  0, 0, 999999, 0) ||
+        std::string(igpu_get_last_error()).find("unknown raster handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("an unknown raster handle was accepted");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(cull_ccw_buffer), 0, static_cast<std::uint64_t>(layout), 4, 0, 3, 1, 0,
+                  0, -1, 0) ||
+        std::string(igpu_get_last_error()).find("not a state object") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("a negative raster handle was accepted");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(cull_ccw_buffer), 0, static_cast<std::uint64_t>(layout), 4, 0, 3, 1, 0, 1,
+                  0, 0) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("a depth handle was accepted with a raster backend");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(cull_ccw_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
+                          3, static_cast<std::uint64_t>(cull_keep_texture), 0, 0, cull_clockwise, 0) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("a sampled draw accepted a raster state");
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(cull_keep_texture), 1, 4, 0, 0) != 255)
+    {
+        return fail("a rejected raster draw changed pixels");
+    }
+    if (!igpu_state_release(static_cast<std::uint64_t>(cull_none)) ||
+        igpu_state_release(static_cast<std::uint64_t>(cull_none)) ||
+        std::string(igpu_get_last_error()).find("unknown sampler handle") == std::string::npos)
+    {
+        return fail("raster release did not retire the handle");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(cull_keep_texture), strip_saved_fbo, strip_held_viewport))
+    {
+        return fail("released raster target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(cull_ccw_buffer), 0, static_cast<std::uint64_t>(layout), 4, 0, 3, 1, 0, 0,
+                  cull_none, 0) ||
+        std::string(igpu_get_last_error()).find("unknown raster handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("a released raster handle was accepted");
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(cull_keep_texture), 1, 4, 0, 0) != 255)
+    {
+        return fail("a released raster handle changed pixels");
+    }
+    if (!igpu_supports(static_cast<std::int32_t>(igpu::Capability::RasterState)) ||
+        igpu_supports(static_cast<std::int32_t>(igpu::Capability::Wireframe)))
+    {
+        return fail("RasterState or Wireframe has the wrong value on the OpenGL backend");
     }
 
     void* context = gl_probe_context();
