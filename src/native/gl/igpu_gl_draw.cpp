@@ -1126,16 +1126,18 @@ namespace igpu
     {
         GLenum mode = GL_TRIANGLES;
         const BlendObject* blend = nullptr;
+        const DepthObject* depth = nullptr;
         if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, mode))
         {
             return false;
         }
-        if (depth_state != 0 || raster_state != 0)
+        if (raster_state != 0)
         {
             set_last_error("igpu_draw_sampled: the opengl backend draws with no extra state");
             return false;
         }
-        if (!gl_resolve_blend("igpu_draw_sampled", blend_state, blend))
+        if (!gl_resolve_blend("igpu_draw_sampled", blend_state, blend) ||
+            !gl_resolve_depth("igpu_draw_sampled", depth_state, depth))
         {
             return false;
         }
@@ -1262,12 +1264,22 @@ namespace igpu
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
         bind_vertices(vertex->second, 0);
         SavedBlend saved_blend{};
+        SavedDepth saved_depth{};
         if (blend != nullptr)
         {
             save_blend(saved_blend);
             apply_blend(*blend);
         }
+        if (depth != nullptr)
+        {
+            save_depth(saved_depth);
+            apply_depth(*depth);
+        }
         glDrawArrays(mode, static_cast<GLint>(first_vertex), static_cast<GLsizei>(vertex_count));
+        if (depth != nullptr)
+        {
+            restore_depth(saved_depth);
+        }
         if (blend != nullptr)
         {
             restore_blend(saved_blend);
