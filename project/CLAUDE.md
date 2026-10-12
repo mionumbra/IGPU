@@ -72,6 +72,8 @@ function move(spd, dir)
 
 To help users debug and play games you can make use of:
 
+`gm-cli` 在这台机器上一般必须走系统代理。Node 不读 Windows 的系统代理。调用前从 `HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings` 读取 `ProxyServer`，设好 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 和 `NODE_USE_ENV_PROXY=1`，再用 `node --use-env-proxy`。完整做法在仓库根的 `SESSION_HANDOVER.md`，「改了 DLL 才会再跑 GameMaker」那一节。代理没开就停。
+
 ```
 npx @gamemaker/gm-cli compile --errors-only
 npx @gamemaker/gm-cli run --errors-only

@@ -826,12 +826,12 @@ namespace igpu
                          std::int64_t sampler_state)
     {
         GLenum mode = GL_TRIANGLES;
-        if (blend_state != 0)
+        const BlendObject* blend = nullptr;
+        if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, depth_state, raster_state, mode))
         {
-            set_last_error("igpu_draw_sampled: the opengl backend draws with no extra state");
             return false;
         }
-        if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, depth_state, raster_state, mode))
+        if (!gl_resolve_blend("igpu_draw_sampled", blend_state, blend))
         {
             return false;
         }
@@ -957,7 +957,17 @@ namespace igpu
         fns.BindVertexArray(g_vertex_array);
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
         bind_vertices(vertex->second, 0);
+        SavedBlend saved_blend{};
+        if (blend != nullptr)
+        {
+            save_blend(saved_blend);
+            apply_blend(*blend);
+        }
         glDrawArrays(mode, static_cast<GLint>(first_vertex), static_cast<GLsizei>(vertex_count));
+        if (blend != nullptr)
+        {
+            restore_blend(saved_blend);
+        }
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindVertexArray(0);

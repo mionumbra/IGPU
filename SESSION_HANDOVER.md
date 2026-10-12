@@ -8,7 +8,7 @@
 
 **合并规则，先读这一段。** 功能分支必须推送到 `origin`。进入 `main` 只能通过 GitHub 拉取请求（pull request）：先推送分支，再开拉取请求，批准并合并。探针通过之后就做完这三步，不要留到下一会话。不要在本地 `merge`（包括 `--no-ff` 和快进）之后直接 `push origin main`。交接文档自己的修改也走拉取请求，不要直接推 `main`。已经用拉取请求合并过的旧分支不要再开一次。`9c56d05`（最近点采样）和 `84b40f5`（钳制与重复）是在这条规则写明之前直接推进 `main` 的，不要照做。
 
-停在 `gl-blend`。`gl-blend` 从拉取请求 #11 之后的 `origin/main`（`19148c1`）拉出。混轴包裹随拉取请求 #11 进入 `main`，功能提交 `13f926a`，合并提交 `19148c1`。不要重做混轴包裹，也不要再为它开拉取请求。混合随拉取请求 #12 进入 `main`，功能提交 `8beb2a2`。深度、光栅、各向异性、比较、级间线性，以及边框采样器上的线性缩小，都先不要做。再下一刀还没定。这份交接自己的提交以 `git rev-parse --short HEAD` 为准。
+停在 `gl-blend`。`gl-blend` 从拉取请求 #11 之后的 `origin/main`（`19148c1`）拉出。混轴包裹随拉取请求 #11 进入 `main`，功能提交 `13f926a`，合并提交 `19148c1`。不要重做混轴包裹，也不要再为它开拉取请求。混合随拉取请求 #12 进入 `main`，功能提交 `8beb2a2`。采样绘制上的混合在 `gl-sample-blend`，还没有进入 `main`。`igpu_draw_sampled` 接受混合句柄，只在这一次绘制里生效，返回前恢复。深度、光栅、各向异性、比较、级间线性，以及边框采样器上的线性缩小，都先不要做。再下一刀还没定。这份交接自己的提交以 `git rev-parse --short HEAD` 为准。
 
 计划在 `superpowers/plans/2026-10-10-gl-address.md`。更早的最近点采样计划在 `superpowers/plans/2026-10-10-gl-sample.md`。两份都已经证明，不要重做：
 
@@ -28,9 +28,9 @@
 
 镜像寻址随拉取请求 #8 进入 `main`。边框寻址随拉取请求 #9 进入 `main`，功能提交 `38687b8`。线性缩小随拉取请求 #10 进入 `main`，功能提交 `8fe079a`，合并提交 `fb136fd`。混轴包裹随拉取请求 #11 进入 `main`，功能提交 `13f926a`，合并提交 `19148c1`。进入 `main` 只能通过拉取请求。
 
-混合随拉取请求 #12 进入 `main`，功能提交 `8beb2a2`。`igpu_blend_state_create` 接受 `bm_zero` 到 `bm_src_alpha_sat`（1–11），方程接受 `bm_eq_*`（1–5）。颜色因子放到 alpha 槽时，和 Direct3D 一样改成对应的 alpha 因子。句柄记在 CPU 上，和采样器共用编号，不创建 GL 对象。`igpu_draw`、`igpu_draw_indexed` 和 `igpu_draw_to_render_targets` 在这一次绘制里按记录打开或关掉混合，设置分开的因子和方程，并套上四个通道的写掩码，返回前写回。句柄 0 不改混合开关、因子、方程和写掩码。未知句柄和已经释放的句柄失败，错误含有 `unknown blend handle`，像素不变。负数句柄失败，错误含有 `not a state object`。深度和光栅仍必须是 0，错误含有 `draws with no extra state`。`igpu_draw_sampled` 拿到非 0 混合仍失败，错误含有 `draws with no extra state`。三角带上的假句柄 1 现在失败，错误含有 `unknown blend handle`。`BlendState` 在这份 OpenGL 后端上为 true。Windows 的 GameMaker DLL 仍没有 OpenGL 后端，那里 `BlendState` 仍只跟着 Direct3D。
+混合随拉取请求 #12 进入 `main`，功能提交 `8beb2a2`。`igpu_blend_state_create` 接受 `bm_zero` 到 `bm_src_alpha_sat`（1–11），方程接受 `bm_eq_*`（1–5）。颜色因子放到 alpha 槽时，和 Direct3D 一样改成对应的 alpha 因子。句柄记在 CPU 上，和采样器共用编号，不创建 GL 对象。`igpu_draw`、`igpu_draw_indexed` 和 `igpu_draw_to_render_targets` 在这一次绘制里按记录打开或关掉混合，设置分开的因子和方程，并套上四个通道的写掩码，返回前写回。句柄 0 不改混合开关、因子、方程和写掩码。未知句柄和已经释放的句柄失败，错误含有 `unknown blend handle`，像素不变。负数句柄失败，错误含有 `not a state object`。深度和光栅仍必须是 0，错误含有 `draws with no extra state`。`igpu_draw_sampled` 和上面三支绘制一样套用混合，返回前写回。采样器可以同时非 0，包裹和过滤也写回。三角带上的假句柄 1 现在失败，错误含有 `unknown blend handle`。采样绘制上的假句柄 1 也失败，错误含有 `unknown blend handle`。`BlendState` 在这份 OpenGL 后端上为 true。Windows 的 GameMaker DLL 仍没有 OpenGL 后端，那里 `BlendState` 仍只跟着 Direct3D。
 
-不透明蓝是 `16711680`。src-alpha（因子 5、6，相加），红且 alpha 0 仍是 `16711680`。同一混合，红且 alpha 255 是 `255`。随后句柄 0、蓝且 alpha 0 是 `16711680`，混合开关回到关闭。源红、目标蓝、因子都是 one、方程 max 是 `16711935`。随后句柄 0、红且 alpha 0 是 `255`。索引绘制和画进纹理的 alpha 0 src-alpha 都保持 `16711680`。混合关闭且红通道不写，黑底上画红是 `0`。随后句柄 0 画红是 `255`。
+不透明蓝是 `16711680`。src-alpha（因子 5、6，相加），红且 alpha 0 仍是 `16711680`。同一混合，红且 alpha 255 是 `255`。随后句柄 0、蓝且 alpha 0 是 `16711680`，混合开关回到关闭。源红、目标蓝、因子都是 one、方程 max 是 `16711935`。随后句柄 0、红且 alpha 0 是 `255`。索引绘制和画进纹理的 alpha 0 src-alpha 都保持 `16711680`。混合关闭且红通道不写，黑底上画红是 `0`。随后句柄 0 画红是 `255`。采样绘制的源纹理 alpha 由采样着色器原样写出。目标先是不透明蓝 `16711680`。src-alpha 下，alpha 0 的红源仍是 `16711680`，alpha 255 的红源写成 `255`。随后句柄 0 再采样 alpha 0 的红源，写成 `255`，混合开关回到关闭。同一支采样绘制可以同时带重复采样器：`u = 1.0625` 是红 `255`。随后句柄 0 在同一条 `u` 上是蓝 `16711680`，重复没有留下来。未知句柄、负数句柄和已经释放的句柄失败，像素不变。
 
 深度、光栅、各向异性、比较、级间线性，以及边框采样器上的线性缩小，都先不要做。ES 2 和 `glsl_es` 的成功编译也还不要做。再下一刀还没定。那些平台上的 GameMaker 运行这台机器证明不了。纹理单元保持调用方原来的值；探针的默认单元是 0。
 
@@ -61,7 +61,7 @@ cmake --build --preset win-x64-release-vs18 --target igpu_gl_probe
 out\build\win-x64-release\src\Release\igpu_gl_probe.exe
 ```
 
-探针退出码 0，并打印这七十六行和 `PASS`：
+探针退出码 0，并打印这八十一行和 `PASS`：
 
 ```
 pixels       : 255 / 16711680 / 16711680
@@ -140,15 +140,33 @@ blend indexed : 16711680 / 16711680
 blend target  : 16711680 / 16711680
 blend mask    : 0 / 0
 blend unmask  : 255 / 255
+sample blend0 : 16711680 / 16711680
+sample blend1 : 255 / 255
+sample plain  : 255 / 255
+sample repeat : 255 / 255
+sample clamped: 16711680 / 16711680
 ```
 
 可执行文件在 `src\Release` 下，不在预设目录的 `Release` 根上。
 
-改了 DLL 才会再跑 GameMaker。在 `project\` 下：
+改了 DLL 才会再跑 GameMaker。`gm-cli`（`compile`、`run`、`manual`，以及 `npx @gamemaker/gm-cli`）在这台机器上一般必须走系统代理才能用。这是平时的用法。Node 不读 Windows 的系统代理。每次调用前从注册表取出当前代理，写进这次进程，再用 `node --use-env-proxy`。代理没开或没有地址时停下来说明，不要裸跑。端口以注册表为准。2026-10-12 读到 `ProxyEnable = 1`，`ProxyServer = 127.0.0.1:7897`。
+
+```pwsh
+$s = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+if ($s.ProxyEnable -ne 1 -or -not $s.ProxyServer) { throw 'system proxy is off; gm-cli on this machine needs it' }
+$proxy = [string]$s.ProxyServer
+if ($proxy -notmatch '://') { $proxy = "http://$proxy" }
+$env:HTTP_PROXY = $proxy
+$env:HTTPS_PROXY = $proxy
+$env:NODE_USE_ENV_PROXY = '1'
+$env:NO_PROXY = (($s.ProxyOverride -split ';') | Where-Object { $_ -and $_ -ne '<local>' }) -join ','
+```
+
+在 `project\` 下：
 
 ```
 cmake --build --preset win-x64-release-vs18 --target IGPU
-node "D:\node.js\node_cache\_npx\166e0ec5f4c2d768\node_modules\@gamemaker\gm-cli\dist\cli.js" run --no-errors-only
+node --use-env-proxy "D:\node.js\node_cache\_npx\166e0ec5f4c2d768\node_modules\@gamemaker\gm-cli\dist\cli.js" run --no-errors-only
 ```
 
 预期 `checks failed : 0`，`igpu_version` 为 `0.5.0`，`feature level` 为 `2`（`Level_11_1`）。已知无害输出：`Failed to load Options from local_settings.json`。
@@ -214,6 +232,7 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 - GML 数组字面量里不要写裸负数。数组里的句柄和枚举经常以 `uint64` 到达，读取时接受 `uint64`、`int32` 和 `double`。
 - OpenGL 第一刀只在探针里。Windows 的 GameMaker DLL 没有这份后端。产品代码用调用线程上已经 current 的上下文，不创建、不销毁它。`wglCreateContext` / `wglDeleteContext` / `wglMakeCurrent` 只在 `tests/gl_probe`。不要引入 ANGLE。不要手改生成文件来传递指针。DLL 的源文件 GLOB 保持 `native/*.cpp` 和 `native/d3d11/*.cpp`，不要收进 `native/gl/`。
 - 借用 GameMaker 的设备：AddRef 一次，只 Release 这一次。`reset()` 先 `set_active_backend(nullptr)`。
+- `gm-cli` 在这台机器上一般必须走系统代理。每次从 `HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings` 读取 `ProxyEnable` 和 `ProxyServer`，设好 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 和 `NODE_USE_ENV_PROXY=1`，用 `node --use-env-proxy` 启动。代理没开就停。不要把端口写死。做法在本文「改了 DLL 才会再跑 GameMaker」那一节。
 
 ## 当前数字
 
@@ -238,15 +257,15 @@ ES 2 上，计算着色器、存储缓冲、细分、几何着色器、统一缓
 | GL 边框寻址 | `u = 1.6` 绿色边框是 `65280 / 65280`，`u = -0.0625` 也是 `65280 / 65280`。红色边框在 `u = 1.6` 是 `255 / 255`，重复和钳制是 `16711680 / 16711680`。`u = 1.0` 线性绿色边框是 `8421376 / 8421376`。随后句柄 0 在 `u = 1.6` 是 `16711680 / 16711680`，在 `u = 0.484375` 是 `255 / 255` |
 | GL 线性缩小 | 2×2 源，采样点 `(0.4, 0.5)`。放大最近点、缩小线性是 `255 / 5046450`。放大线性、缩小最近点是 `5046450 / 255`。随后句柄 0 是 `255 / 255`。级间线性仍拒绝。边框采样器上的线性缩小仍拒绝。 |
 | GL 混轴包裹 | U、V、W 可以不同，各自是钳制、重复或镜像。横纹 `u = 1.0625` 的 U 重复是 `255 / 255`。竖纹 `v = 1.0625` 的 V 重复是 `255 / 255`。`u = 1.6` 的 U 镜像是 `255 / 255`。`u = 1.5` 的线性 U 镜像是 `8388736 / 8388736`。随后句柄 0 在 `v = 1.0625` 是 `16711680 / 16711680`，在 `u = 1.6` 是 `16711680 / 16711680`，在 `u = 0.484375` 是 `255 / 255`。 |
-| GL 混合 | src-alpha、alpha 0 保持 `16711680`。alpha 255 写成 `255`。随后句柄 0、alpha 0 的蓝是 `16711680`。max 是 `16711935`，随后句柄 0 写成 `255`。索引和画进纹理的 alpha 0 保持 `16711680`。红通道不写时是 `0`，随后句柄 0 是 `255`。 |
+| GL 混合 | src-alpha、alpha 0 保持 `16711680`。alpha 255 写成 `255`。随后句柄 0、alpha 0 的蓝是 `16711680`。max 是 `16711935`，随后句柄 0 写成 `255`。索引和画进纹理的 alpha 0 保持 `16711680`。红通道不写时是 `0`，随后句柄 0 是 `255`。采样绘制上，alpha 0 的红源保持 `16711680`，alpha 255 写成 `255`，随后句柄 0 写成 `255`。重复采样器加 src-alpha、`u = 1.0625` 是 `255`，随后句柄 0 是 `16711680`。 |
 | Git | 写这份交接时 `origin/main` 是 `19148c1`（拉取请求 #11）。混轴包裹的功能提交是 `13f926a`，已经进入 `main`。混合随拉取请求 #12 进入 `main`，功能提交 `8beb2a2`。`gl-blend` 从 `19148c1` 拉出。线性缩小的功能提交是 `8fe079a`。拉取请求 #10 的合并提交是 `fb136fd`。边框寻址随拉取请求 #9 进入 `main`，功能提交 `38687b8`。镜像寻址随拉取请求 #8 进入 `main`，功能提交是 `b57cc88`。线性放大的提交是 `9e4325f`。钳制与重复的合并提交是 `84b40f5`。`gl-address` 在 `95867cd`。最近点采样的合并提交是 `9c56d05`。`gl-sample` 在 `b871e87`。拉取请求 #4 的合并提交是 `83afeb8`。`gl-primitives` 在 `3e0a1f2`。拉取请求 #3 是 `0885e67`。`gl-vertex-colour` 在 `7c0c6e4`。拉取请求 #2 是 `edb0ccd`。`gl-draw` 在 `31c6982`。`gl-bind-current` 在 `fb4a9a5`。 |
 
 构建：在仓库根目录 `cmake --build --preset win-x64-release-vs18 --target IGPU`。DLL 会拷到 `project\extensions\IGPU\IGPU.dll`。
 
-集成测试：在 `project\` 下执行
+集成测试：在 `project\` 下执行。先按上面「改了 DLL 才会再跑 GameMaker」那段套上系统代理，再用：
 
 ```
-node "D:\node.js\node_cache\_npx\166e0ec5f4c2d768\node_modules\@gamemaker\gm-cli\dist\cli.js" run --no-errors-only
+node --use-env-proxy "D:\node.js\node_cache\_npx\166e0ec5f4c2d768\node_modules\@gamemaker\gm-cli\dist\cli.js" run --no-errors-only
 ```
 
 已知无害输出：`Failed to load Options from local_settings.json`。
@@ -272,7 +291,7 @@ out\build\win-x64-release\src\Release\igpu_gl_probe.exe
 
 着色器是 `#version 120`。入口必须是 `main`。空方言和 `"glsl"` 可以编译。`"hlsl"` 被拒绝。顶点阶段和像素阶段都绑上之后才链成一个程序，属性 0 叫 `in_pos`。属性 1 在颜色程序里是 `in_colour`，在采样程序里是 `in_uv`。不声明 `in_colour` 的程序仍然能链上。阶段绑错会失败，原来的绑定还在。`shader_bind(0, stage)` 解绑该阶段。
 
-绘制接受图元 `1`、`2`、`3`、`4`、`5`（点列表、线列表、线带、三角形列表、三角带），并且只接受一个目标、layer 0、mip 0。深度和光栅句柄必须是 0。混合句柄 0 不改混合状态。活着的混合句柄在 `igpu_draw`、`igpu_draw_indexed` 和 `igpu_draw_to_render_targets` 这一次绘制里生效，返回前写回开关、分开的因子、方程和四个通道的写掩码。这三支绘制的采样器句柄也必须是 0。`igpu_draw_sampled` 可以带一个三轴同为钳制、重复、镜像或边框的采样器。放大和缩小各自是最近点或线性，级间过滤必须是最近点。边框采样器仍拒绝线性缩小。边框色只在三轴都是边框时写入这一次绘制，返回前写回。句柄 0 不改包裹、边框色，也不改放大过滤或缩小过滤。图元 `6` 是扇形，拒绝且不改像素。图元 `0` 和 `7` 拒绝，错误含有 `does not draw this primitive`。非零的深度、光栅，以及非采样绘制上的非零采样器，拒绝且错误含有 `draws with no extra state`。未知混合句柄拒绝，错误含有 `unknown blend handle`。`igpu_draw_sampled` 的非零混合仍拒绝，错误含有 `draws with no extra state`。点大小和线宽保持 1。`igpu_draw` 与 `igpu_draw_indexed` 不改帧缓冲、视口和程序。`igpu_draw_to_render_targets` 会恢复帧缓冲和视口。布局接受一个 `float2` 位置（usage `1`，type `2`，step `0`，stride 0 或 8），也接受 float2 后面接一个 4 字节颜色（usage `2`，type `5`），缓冲步长必须显式写成 12，也接受 float2 位置后面接 float2 纹理坐标（usage `4`，type `2`），缓冲步长必须显式写成 16。步长 0 仍是位置缓冲。`igpu_draw_sampled` 已从 `not_yet` 转成 `gl_draw_sampled`。绘制按这个步长绑属性 0 和属性 1，返回前都关掉。其它布局和步长仍拒绝。顶点缓冲是静态的，一次写满。索引缓冲也是静态的，16 位，`bind` 为 2，stride 为 0，长度是 2 的倍数。`igpu_draw` 和 `igpu_draw_indexed` 都画进当前帧缓冲，不清屏。探针用 `gl_color_target_begin` 把 IGPU 纹理绑成当前目标，画完再还原。读回把 RGBA 收成 `r | (g << 8) | (b << 16)`，丢掉 alpha。`gl_row = height - 1 - y`，所以 `y = 0` 是裁剪空间的上方。画进纹理的 `igpu_draw_to_render_targets` 返回前恢复 `GL_FRAMEBUFFER_BINDING` 和 `GL_VIEWPORT`，不解开调用方绑好的程序。`igpu_draw` 和 `igpu_draw_indexed` 不动帧缓冲、视口和程序；它们恢复顶点数组和数组缓冲。索引绘制另外恢复元素数组缓冲。
+绘制接受图元 `1`、`2`、`3`、`4`、`5`（点列表、线列表、线带、三角形列表、三角带），并且只接受一个目标、layer 0、mip 0。深度和光栅句柄必须是 0。混合句柄 0 不改混合状态。活着的混合句柄在 `igpu_draw`、`igpu_draw_indexed`、`igpu_draw_to_render_targets` 和 `igpu_draw_sampled` 这一次绘制里生效，返回前写回开关、分开的因子、方程和四个通道的写掩码。前三支绘制的采样器句柄也必须是 0。`igpu_draw_sampled` 可以带一个三轴同为钳制、重复、镜像或边框的采样器。放大和缩小各自是最近点或线性，级间过滤必须是最近点。边框采样器仍拒绝线性缩小。边框色只在三轴都是边框时写入这一次绘制，返回前写回。句柄 0 不改包裹、边框色，也不改放大过滤或缩小过滤。图元 `6` 是扇形，拒绝且不改像素。图元 `0` 和 `7` 拒绝，错误含有 `does not draw this primitive`。非零的深度、光栅，以及非采样绘制上的非零采样器，拒绝且错误含有 `draws with no extra state`。未知混合句柄拒绝，错误含有 `unknown blend handle`。`igpu_draw_sampled` 的活混合在这一次绘制里生效，返回前写回。未知混合句柄拒绝，错误含有 `unknown blend handle`。点大小和线宽保持 1。`igpu_draw` 与 `igpu_draw_indexed` 不改帧缓冲、视口和程序。`igpu_draw_to_render_targets` 会恢复帧缓冲和视口。布局接受一个 `float2` 位置（usage `1`，type `2`，step `0`，stride 0 或 8），也接受 float2 后面接一个 4 字节颜色（usage `2`，type `5`），缓冲步长必须显式写成 12，也接受 float2 位置后面接 float2 纹理坐标（usage `4`，type `2`），缓冲步长必须显式写成 16。步长 0 仍是位置缓冲。`igpu_draw_sampled` 已从 `not_yet` 转成 `gl_draw_sampled`。绘制按这个步长绑属性 0 和属性 1，返回前都关掉。其它布局和步长仍拒绝。顶点缓冲是静态的，一次写满。索引缓冲也是静态的，16 位，`bind` 为 2，stride 为 0，长度是 2 的倍数。`igpu_draw` 和 `igpu_draw_indexed` 都画进当前帧缓冲，不清屏。探针用 `gl_color_target_begin` 把 IGPU 纹理绑成当前目标，画完再还原。读回把 RGBA 收成 `r | (g << 8) | (b << 16)`，丢掉 alpha。`gl_row = height - 1 - y`，所以 `y = 0` 是裁剪空间的上方。画进纹理的 `igpu_draw_to_render_targets` 返回前恢复 `GL_FRAMEBUFFER_BINDING` 和 `GL_VIEWPORT`，不解开调用方绑好的程序。`igpu_draw` 和 `igpu_draw_indexed` 不动帧缓冲、视口和程序；它们恢复顶点数组和数组缓冲。索引绘制另外恢复元素数组缓冲。
 
 `supports()` 里的局部量 `native` 等于 `d3d11_backend()`。交接脚本把裸的 `return native` 当成这份构建上的恒 true。OpenGL 多出来的 true 写成 `native || opengl_backend()`。不要把 `native` 改回「任意后端」，否则 GL 会继承计算、三维纹理和查询。
 
