@@ -90,6 +90,13 @@ namespace igpu
             bool write_alpha = true;
         };
         std::unordered_map<std::uint64_t, BlendObject> g_blends;
+        struct RasterObject
+        {
+            // 0 disables culling. 1 drops clockwise faces. 2 drops counter-clockwise faces.
+            // Clockwise is front, matching the Direct3D rasterizer.
+            std::int32_t cull = 0;
+        };
+        std::unordered_map<std::uint64_t, RasterObject> g_rasters;
         std::uint64_t g_next_sampler = 1;
 
         bool gl_blend_factor(std::int32_t raw, bool alpha_slot, GLenum& out)
@@ -190,8 +197,7 @@ namespace igpu
             }
         }
 
-        bool gl_pipeline_accepted(const char* entry, std::int32_t primitive, std::int64_t depth_state,
-                                  std::int64_t raster_state, GLenum& mode)
+        bool gl_pipeline_accepted(const char* entry, std::int32_t primitive, std::int64_t depth_state, GLenum& mode)
         {
             if (primitive == 6)
             {
@@ -203,7 +209,7 @@ namespace igpu
                 set_last_error(std::string(entry) + ": the opengl backend does not draw this primitive");
                 return false;
             }
-            if (depth_state != 0 || raster_state != 0)
+            if (depth_state != 0)
             {
                 set_last_error(std::string(entry) + ": the opengl backend draws with no extra state");
                 return false;
@@ -292,15 +298,81 @@ namespace igpu
             glColorMask(saved.mask[0], saved.mask[1], saved.mask[2], saved.mask[3]);
         }
 
+        bool gl_resolve_raster(const char* entry, std::int64_t raster_state, const RasterObject*& out)
+        {
+            out = nullptr;
+            if (raster_state == 0)
+            {
+                return true;
+            }
+            if (raster_state < 0)
+            {
+                set_last_error(std::string(entry) + ": raster handle is not a state object");
+                return false;
+            }
+            const auto found = g_rasters.find(static_cast<std::uint64_t>(raster_state));
+            if (found == g_rasters.end())
+            {
+                set_last_error(std::string(entry) + ": unknown raster handle");
+                return false;
+            }
+            out = &found->second;
+            return true;
+        }
+
+        struct SavedCull
+        {
+            GLboolean enabled = GL_FALSE;
+            GLint mode = GL_BACK;
+            GLint front = GL_CCW;
+        };
+
+        void save_cull(SavedCull& saved)
+        {
+            saved.enabled = glIsEnabled(GL_CULL_FACE);
+            glGetIntegerv(GL_CULL_FACE_MODE, &saved.mode);
+            glGetIntegerv(GL_FRONT_FACE, &saved.front);
+        }
+
+        void apply_cull(const RasterObject& raster)
+        {
+            glFrontFace(GL_CW);
+            if (raster.cull == 0)
+            {
+                glDisable(GL_CULL_FACE);
+                return;
+            }
+            glEnable(GL_CULL_FACE);
+            glCullFace(raster.cull == 1 ? GL_FRONT : GL_BACK);
+        }
+
+        void restore_cull(const SavedCull& saved)
+        {
+            glFrontFace(static_cast<GLenum>(saved.front));
+            glCullFace(static_cast<GLenum>(saved.mode));
+            if (saved.enabled == GL_TRUE)
+            {
+                glEnable(GL_CULL_FACE);
+            }
+            else
+            {
+                glDisable(GL_CULL_FACE);
+            }
+        }
+
         bool gl_draw_accepted(const char* entry, std::int32_t primitive, std::int64_t blend_state,
                               std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state,
-                              const BlendObject*& blend, GLenum& mode)
+                              const BlendObject*& blend, const RasterObject*& raster, GLenum& mode)
         {
-            if (!gl_pipeline_accepted(entry, primitive, depth_state, raster_state, mode))
+            if (!gl_pipeline_accepted(entry, primitive, depth_state, mode))
             {
                 return false;
             }
             if (!gl_resolve_blend(entry, blend_state, blend))
+            {
+                return false;
+            }
+            if (!gl_resolve_raster(entry, raster_state, raster))
             {
                 return false;
             }
@@ -356,6 +428,7 @@ namespace igpu
         g_layouts.clear();
         g_samplers.clear();
         g_blends.clear();
+        g_rasters.clear();
         g_next_sampler = 1;
         g_vertex_array = 0;
         g_next_buffer = 1;
@@ -567,8 +640,9 @@ namespace igpu
     {
         GLenum mode = GL_TRIANGLES;
         const BlendObject* blend = nullptr;
+        const RasterObject* raster = nullptr;
         if (!gl_draw_accepted("igpu_draw_to_render_targets", primitive, blend_state, depth_state, raster_state,
-                              sampler_state, blend, mode))
+                              sampler_state, blend, raster, mode))
         {
             return false;
         }
@@ -633,12 +707,22 @@ namespace igpu
         fns.BindBuffer(GL_ARRAY_BUFFER, buffer->second.id);
         bind_vertices(buffer->second, first_vertex);
         SavedBlend saved_blend{};
+        SavedCull saved_cull{};
         if (blend != nullptr)
         {
             save_blend(saved_blend);
             apply_blend(*blend);
         }
+        if (raster != nullptr)
+        {
+            save_cull(saved_cull);
+            apply_cull(*raster);
+        }
         glDrawArrays(mode, 0, static_cast<GLsizei>(vertex_count));
+        if (raster != nullptr)
+        {
+            restore_cull(saved_cull);
+        }
         if (blend != nullptr)
         {
             restore_blend(saved_blend);
@@ -657,8 +741,9 @@ namespace igpu
     {
         GLenum mode = GL_TRIANGLES;
         const BlendObject* blend = nullptr;
+        const RasterObject* raster = nullptr;
         if (!gl_draw_accepted("igpu_draw", primitive, blend_state, depth_state, raster_state, sampler_state, blend,
-                              mode))
+                              raster, mode))
         {
             return false;
         }
@@ -713,12 +798,22 @@ namespace igpu
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
         bind_vertices(vertex->second, 0);
         SavedBlend saved_blend{};
+        SavedCull saved_cull{};
         if (blend != nullptr)
         {
             save_blend(saved_blend);
             apply_blend(*blend);
         }
+        if (raster != nullptr)
+        {
+            save_cull(saved_cull);
+            apply_cull(*raster);
+        }
         glDrawArrays(mode, static_cast<GLint>(first_vertex), static_cast<GLsizei>(vertex_count));
+        if (raster != nullptr)
+        {
+            restore_cull(saved_cull);
+        }
         if (blend != nullptr)
         {
             restore_blend(saved_blend);
@@ -736,8 +831,9 @@ namespace igpu
     {
         GLenum mode = GL_TRIANGLES;
         const BlendObject* blend = nullptr;
+        const RasterObject* raster = nullptr;
         if (!gl_draw_accepted("igpu_draw_indexed", primitive, blend_state, depth_state, raster_state, sampler_state,
-                              blend, mode))
+                              blend, raster, mode))
         {
             return false;
         }
@@ -802,13 +898,23 @@ namespace igpu
         bind_vertices(vertex->second, 0);
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, index->second.id);
         SavedBlend saved_blend{};
+        SavedCull saved_cull{};
         if (blend != nullptr)
         {
             save_blend(saved_blend);
             apply_blend(*blend);
         }
+        if (raster != nullptr)
+        {
+            save_cull(saved_cull);
+            apply_cull(*raster);
+        }
         glDrawElements(mode, static_cast<GLsizei>(index_count), GL_UNSIGNED_SHORT,
                        reinterpret_cast<const void*>(static_cast<std::uintptr_t>(first_index * kIndexSize)));
+        if (raster != nullptr)
+        {
+            restore_cull(saved_cull);
+        }
         if (blend != nullptr)
         {
             restore_blend(saved_blend);
@@ -827,8 +933,13 @@ namespace igpu
     {
         GLenum mode = GL_TRIANGLES;
         const BlendObject* blend = nullptr;
-        if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, depth_state, raster_state, mode))
+        if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, depth_state, mode))
         {
+            return false;
+        }
+        if (raster_state != 0)
+        {
+            set_last_error("igpu_draw_sampled: the opengl backend draws with no extra state");
             return false;
         }
         if (!gl_resolve_blend("igpu_draw_sampled", blend_state, blend))
@@ -1083,9 +1194,40 @@ namespace igpu
         return static_cast<std::int64_t>(handle);
     }
 
+    std::int64_t gl_raster_state_create(std::int32_t cull, std::int32_t fill, bool scissor, bool depth_clip)
+    {
+        if (cull != 0 && cull != 1 && cull != 2)
+        {
+            set_last_error("igpu_raster_state_create: cull must be cull_noculling, cull_clockwise or cull_counterclockwise");
+            return 0;
+        }
+        if (fill != 0)
+        {
+            set_last_error("igpu_raster_state_create: the opengl backend draws solid triangles only");
+            return 0;
+        }
+        if (scissor)
+        {
+            set_last_error("igpu_raster_state_create: the opengl backend does not scissor");
+            return 0;
+        }
+        if (!depth_clip)
+        {
+            set_last_error("igpu_raster_state_create: the opengl backend keeps depth clip enabled");
+            return 0;
+        }
+        const std::uint64_t handle = g_next_sampler++;
+        g_rasters.emplace(handle, RasterObject{cull});
+        return static_cast<std::int64_t>(handle);
+    }
+
     bool gl_state_release(std::uint64_t handle)
     {
         if (g_blends.erase(handle) != 0)
+        {
+            return true;
+        }
+        if (g_rasters.erase(handle) != 0)
         {
             return true;
         }
