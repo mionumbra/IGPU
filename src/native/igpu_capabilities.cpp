@@ -327,7 +327,7 @@ namespace igpu
         case Capability::DrawIndexed:      return native || opengl_backend();
         case Capability::DrawStateRestore: return native || opengl_backend();
         case Capability::BlendState:       return native || opengl_backend();
-        case Capability::DepthState:       return native;
+        case Capability::DepthState:       return native || opengl_backend();
         case Capability::RasterState:      return native || opengl_backend();
         case Capability::SamplerState:     return native || opengl_backend();
         case Capability::UniformReflection: return native;

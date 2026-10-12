@@ -921,7 +921,7 @@ int main()
         !reject_strip(7, 0, 0, 0, 0, "primitive 7", "does not draw this primitive") ||
         !reject_strip(6, 0, 0, 0, 0, "triangle fan", "trianglefan") ||
         !reject_strip(5, 1, 0, 0, 0, "strip blend", "unknown blend handle") ||
-        !reject_strip(5, 0, 1, 0, 0, "strip depth", "draws with no extra state") ||
+        !reject_strip(5, 0, 1, 0, 0, "strip depth", "unknown depth handle") ||
         !reject_strip(5, 0, 0, 1, 0, "strip raster", "unknown raster handle") ||
         !reject_strip(5, 0, 0, 0, 1, "strip sampler", "draws with no extra state"))
     {
@@ -2927,7 +2927,7 @@ int main()
     }
     if (igpu_draw(static_cast<std::uint64_t>(blend_blue_buffer), 0, static_cast<std::uint64_t>(colour_layout), 4, 0, 6,
                   1, 0, 1, 0, 0) ||
-        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+        std::string(igpu_get_last_error()).find("unknown depth handle") == std::string::npos)
     {
         igpu::gl_color_target_end(blend_saved, blend_viewport);
         return fail("a depth handle was accepted with a blend backend");
@@ -3262,7 +3262,7 @@ int main()
     }
     if (igpu_draw(static_cast<std::uint64_t>(cull_ccw_buffer), 0, static_cast<std::uint64_t>(layout), 4, 0, 3, 1, 0, 1,
                   0, 0) ||
-        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+        std::string(igpu_get_last_error()).find("unknown depth handle") == std::string::npos)
     {
         igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
         return fail("a depth handle was accepted with a raster backend");
@@ -3502,6 +3502,287 @@ int main()
     if (igpu_texture_read(static_cast<std::uint64_t>(scissor_back_texture), 1, 4, 0, 0) != 255)
     {
         return fail("a released scissor handle changed pixels");
+    }
+
+    // Near window depth is 0. Far window depth is 0.5. The caller clears depth to 1.
+    const auto depth_less = igpu_depth_state_create(true, true, 2, false, 8, 1, 1, 1, 0, 255, 255);
+    const auto depth_nowrite = igpu_depth_state_create(true, false, 2, false, 8, 1, 1, 1, 0, 255, 255);
+    const auto depth_off = igpu_depth_state_create(false, false, 8, false, 8, 1, 1, 1, 0, 255, 255);
+    if (depth_less == 0 || depth_nowrite == 0 || depth_off == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (igpu_depth_state_create(true, true, 99, false, 8, 1, 1, 1, 0, 255, 255) != 0 ||
+        std::string(igpu_get_last_error()).find("depth function must be a cmpfunc_* constant") == std::string::npos)
+    {
+        return fail("unknown depth function was accepted");
+    }
+    if (igpu_depth_state_create(true, true, 2, false, 99, 1, 1, 1, 0, 255, 255) != 0 ||
+        std::string(igpu_get_last_error()).find("stencil function must be cmpfunc_*") == std::string::npos)
+    {
+        return fail("unknown stencil function was accepted");
+    }
+    if (igpu_depth_state_create(true, true, 2, false, 8, 1, 1, 1, 256, 255, 255) != 0 ||
+        std::string(igpu_get_last_error()).find("0..255") == std::string::npos)
+    {
+        return fail("stencil ref outside 0..255 was accepted");
+    }
+    if (igpu_depth_state_create(true, true, 2, true, 8, 1, 1, 1, 0, 255, 255) != 0 ||
+        std::string(igpu_get_last_error()).find("stencil") == std::string::npos)
+    {
+        return fail("stencil was enabled");
+    }
+
+    const char* depth_near_vs =
+        "#version 120\n"
+        "attribute vec2 in_pos;\n"
+        "void main() { gl_Position = vec4(in_pos, -1.0, 1.0); }\n";
+    const char* depth_far_vs =
+        "#version 120\n"
+        "attribute vec2 in_pos;\n"
+        "void main() { gl_Position = vec4(in_pos, 0.0, 1.0); }\n";
+    const char* depth_green_ps =
+        "#version 120\n"
+        "void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }\n";
+    const auto depth_near = igpu_shader_compile(depth_near_vs, "main", 0, "glsl");
+    const auto depth_far = igpu_shader_compile(depth_far_vs, "main", 0, "glsl");
+    const auto depth_green = igpu_shader_compile(depth_green_ps, "main", 1, "glsl");
+    const float depth_vertices[] = {-1.f, -1.f, 3.f, -1.f, -1.f, 3.f};
+    const std::uint16_t depth_indices[] = {0, 1, 2};
+    const auto depth_buffer = igpu_buffer_create(24, 0, 1, 8);
+    const auto depth_index_buffer = igpu_buffer_create(6, 0, 2, 0);
+    const auto depth_less_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto depth_write_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto depth_off_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto depth_plain_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto depth_index_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto depth_target_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto depth_held_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (depth_near == 0 || depth_far == 0 || depth_green == 0 || depth_buffer == 0 || depth_index_buffer == 0 ||
+        depth_less_texture == 0 || depth_write_texture == 0 || depth_off_texture == 0 || depth_plain_texture == 0 ||
+        depth_index_texture == 0 || depth_target_texture == 0 || depth_held_texture == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(depth_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<float*>(depth_vertices), 24)) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(depth_index_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<std::uint16_t*>(depth_indices), 6)))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    glDisable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    const auto depth_defaults = []() {
+        GLint func = 0;
+        GLboolean mask = GL_FALSE;
+        glGetIntegerv(GL_DEPTH_FUNC, &func);
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &mask);
+        return glIsEnabled(GL_DEPTH_TEST) == GL_FALSE && func == GL_LESS && mask == GL_TRUE;
+    };
+    const auto report_depth = [&](const char* label, std::int64_t texture, std::int64_t expect) {
+        const auto left = igpu_texture_read(static_cast<std::uint64_t>(texture), 1, 4, 0, 0);
+        const auto right = igpu_texture_read(static_cast<std::uint64_t>(texture), 6, 4, 0, 0);
+        std::printf("%s: %lld / %lld\n", label, static_cast<long long>(left), static_cast<long long>(right));
+        return left == expect && right == expect;
+    };
+    const auto draw_depth = [&](std::int64_t texture, std::int64_t depth) {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(texture), saved, viewport))
+        {
+            return false;
+        }
+        const bool drew = igpu_draw(static_cast<std::uint64_t>(depth_buffer), 0, static_cast<std::uint64_t>(layout), 4,
+                                     0, 3, 1, 0, depth, 0, 0);
+        igpu::gl_color_target_end(saved, viewport);
+        return drew && depth_defaults();
+    };
+    const auto prepare_depth = [&](std::int64_t texture) {
+        return igpu::gl_attach_depth(static_cast<std::uint64_t>(texture));
+    };
+    if (!prepare_depth(depth_less_texture) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_near), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(frag), 1) || !draw_depth(depth_less_texture, depth_less) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_far), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_green), 1) ||
+        !draw_depth(depth_less_texture, depth_less) || !report_depth("depth less   ", depth_less_texture, 255))
+    {
+        return fail("a farther triangle passed the less depth test");
+    }
+    if (!prepare_depth(depth_write_texture) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_near), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(frag), 1) || !draw_depth(depth_write_texture, depth_nowrite) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_far), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_green), 1) ||
+        !draw_depth(depth_write_texture, depth_less) || !report_depth("depth write  ", depth_write_texture, 65280))
+    {
+        return fail("a depth write of false stored the near depth");
+    }
+    if (!prepare_depth(depth_off_texture) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_near), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(frag), 1) || !draw_depth(depth_off_texture, depth_less) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_far), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_green), 1) ||
+        !draw_depth(depth_off_texture, depth_off) || !report_depth("depth off    ", depth_off_texture, 65280))
+    {
+        return fail("a disabled depth test kept the near colour");
+    }
+    if (!prepare_depth(depth_plain_texture) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_near), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(frag), 1) || !draw_depth(depth_plain_texture, depth_less) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_far), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_green), 1) || !draw_depth(depth_plain_texture, 0) ||
+        !report_depth("depth plain  ", depth_plain_texture, 65280))
+    {
+        return fail("handle 0 left the depth test enabled");
+    }
+    if (!prepare_depth(depth_index_texture) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_near), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(frag), 1) || !draw_depth(depth_index_texture, depth_less))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(depth_far), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_green), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    {
+        std::int32_t saved = 0;
+        std::int32_t depth_view[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(depth_index_texture), saved, depth_view))
+        {
+            return fail("depth indexed target begin failed");
+        }
+        const bool drew = igpu_draw_indexed(static_cast<std::uint64_t>(depth_buffer), static_cast<std::uint64_t>(layout),
+                                             static_cast<std::uint64_t>(depth_index_buffer), 4, 0, 3, 0, depth_less, 0,
+                                             0);
+        igpu::gl_color_target_end(saved, depth_view);
+        if (!drew || !depth_defaults() || !report_depth("depth index  ", depth_index_texture, 255))
+        {
+            return fail("indexed draw let a farther triangle pass the less depth test");
+        }
+    }
+    if (!prepare_depth(depth_target_texture) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_near), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(frag), 1) || !draw_depth(depth_target_texture, depth_less) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_far), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_green), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto depth_target_bytes = encode_u64(static_cast<std::uint64_t>(depth_target_texture));
+    const auto depth_zero_bytes = encode_u64(0);
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(depth_buffer), static_cast<std::uint64_t>(layout), 4, 0,
+                                     3, as_array(depth_target_bytes), as_array(depth_zero_bytes),
+                                     as_array(depth_zero_bytes), 0, depth_less, 0, 0) ||
+        !depth_defaults() || !report_depth("depth target ", depth_target_texture, 255))
+    {
+        return fail("render-target draw let a farther triangle pass the less depth test");
+    }
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GREATER);
+    glDepthMask(GL_FALSE);
+    if (!prepare_depth(depth_held_texture) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(depth_near), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    {
+        std::int32_t saved = 0;
+        std::int32_t depth_view[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(depth_held_texture), saved, depth_view))
+        {
+            return fail("depth held target begin failed");
+        }
+        const bool drew = igpu_draw(static_cast<std::uint64_t>(depth_buffer), 0, static_cast<std::uint64_t>(layout), 4,
+                                     0, 3, 1, 0, depth_less, 0, 0);
+        GLint func = 0;
+        GLboolean mask = GL_TRUE;
+        glGetIntegerv(GL_DEPTH_FUNC, &func);
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &mask);
+        const bool held = glIsEnabled(GL_DEPTH_TEST) == GL_TRUE && func == GL_GREATER && mask == GL_FALSE;
+        igpu::gl_color_target_end(saved, depth_view);
+        if (!drew || !held || !report_depth("depth held   ", depth_held_texture, 255))
+        {
+            return fail("a depth draw did not write back the caller depth test, function, and mask");
+        }
+    }
+    glDisable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(depth_plain_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("depth reject target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(depth_buffer), 0, static_cast<std::uint64_t>(layout), 4, 0, 3, 1, 0,
+                  999999, 0, 0) ||
+        std::string(igpu_get_last_error()).find("unknown depth handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("unknown depth handle was accepted");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(depth_buffer), 0, static_cast<std::uint64_t>(layout), 4, 0, 3, 1, 0, -1, 0,
+                  0) ||
+        std::string(igpu_get_last_error()).find("not a state object") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("a negative depth handle was accepted");
+    }
+    if (igpu_draw_indexed(static_cast<std::uint64_t>(depth_buffer), static_cast<std::uint64_t>(layout),
+                          static_cast<std::uint64_t>(depth_index_buffer), 4, 0, 3, 0, 999999, 0, 0) ||
+        std::string(igpu_get_last_error()).find("unknown depth handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("indexed draw accepted an unknown depth handle");
+    }
+    if (igpu_draw_to_render_targets(static_cast<std::uint64_t>(depth_buffer), static_cast<std::uint64_t>(layout), 4, 0,
+                                    3, as_array(depth_target_bytes), as_array(depth_zero_bytes),
+                                    as_array(depth_zero_bytes), 0, 999999, 0, 0) ||
+        std::string(igpu_get_last_error()).find("unknown depth handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("render-target draw accepted an unknown depth handle");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(depth_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 3,
+                          static_cast<std::uint64_t>(depth_less_texture), 0, depth_less, 0, 0) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("a sampled draw accepted a depth state");
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(depth_plain_texture), 1, 4, 0, 0) != 65280)
+    {
+        return fail("a rejected depth draw changed pixels");
+    }
+    if (!igpu_state_release(static_cast<std::uint64_t>(depth_less)) ||
+        igpu_state_release(static_cast<std::uint64_t>(depth_less)) ||
+        std::string(igpu_get_last_error()).find("unknown sampler handle") == std::string::npos)
+    {
+        return fail("depth release did not retire the handle");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(depth_plain_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("released depth target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(depth_buffer), 0, static_cast<std::uint64_t>(layout), 4, 0, 3, 1, 0,
+                  depth_less, 0, 0) ||
+        std::string(igpu_get_last_error()).find("unknown depth handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("a released depth handle was accepted");
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(depth_plain_texture), 1, 4, 0, 0) != 65280)
+    {
+        return fail("a released depth handle changed pixels");
+    }
+    if (!igpu_supports(static_cast<std::int32_t>(igpu::Capability::DepthState)))
+    {
+        return fail("DepthState is false on the OpenGL backend");
     }
 
     void* context = gl_probe_context();
