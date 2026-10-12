@@ -2594,10 +2594,144 @@ int main()
     {
         return fail("anisotropic sampler was accepted");
     }
-    const auto wrap_lod = igpu_sampler_state_create(0, 0, 0, 1, 1, 1, 1, 0, 0, 1.f, 0.f, -1.f);
-    if (wrap_lod != 0 || std::string(igpu_get_last_error()).find("no mip") == std::string::npos)
+    const auto lod_finest = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 1.f, -1.f);
+    if (lod_finest != 0 || std::string(igpu_get_last_error()).find("no mip") == std::string::npos)
     {
-        return fail("level offset was accepted");
+        return fail("a finest level above 0 was accepted");
+    }
+    const auto lod_source = igpu_texture_create(0, 2, 2, 1, 6, true, false, 2);
+    const auto lod_hold_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto lod_coarse_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto lod_plain_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (lod_source == 0 || lod_hold_dest == 0 || lod_coarse_dest == 0 || lod_plain_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    ColourVertex lod_red[6] = {};
+    ColourVertex lod_green[6] = {};
+    const float lod_pos[] = {
+        -1.f, -1.f, 1.f, -1.f, -1.f, 1.f,
+        1.f, -1.f, 1.f, 1.f, -1.f, 1.f,
+    };
+    for (int i = 0; i < 6; ++i)
+    {
+        lod_red[i].x = lod_pos[i * 2];
+        lod_red[i].y = lod_pos[i * 2 + 1];
+        lod_red[i].r = 255;
+        lod_red[i].a = 255;
+        lod_green[i].x = lod_pos[i * 2];
+        lod_green[i].y = lod_pos[i * 2 + 1];
+        lod_green[i].g = 255;
+        lod_green[i].a = 255;
+    }
+    const auto lod_red_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(lod_red)), 0, 1, 12);
+    const auto lod_green_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(lod_green)), 0, 1, 12);
+    if (lod_red_buffer == 0 || lod_green_buffer == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(lod_red_buffer), 0, gm::wire::GMBuffer(lod_red, sizeof(lod_red))) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(lod_green_buffer), 0,
+                           gm::wire::GMBuffer(lod_green, sizeof(lod_green))))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(colour_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(colour_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto lod_target = encode_u64(static_cast<std::uint64_t>(lod_source));
+    const auto lod_zero = encode_u64(0);
+    const auto lod_mip1 = encode_u64(1);
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(lod_red_buffer),
+                                     static_cast<std::uint64_t>(colour_layout), 4, 0, 6, as_array(lod_target),
+                                     as_array(lod_zero), as_array(lod_zero), 0, 0, 0, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(lod_green_buffer),
+                                     static_cast<std::uint64_t>(colour_layout), 4, 0, 6, as_array(lod_target),
+                                     as_array(lod_zero), as_array(lod_mip1), 0, 0, 0, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (igpu_texture_read(static_cast<std::uint64_t>(lod_source), 0, 0, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(lod_source), 1, 0, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(lod_source), 0, 0, 0, 1) != 65280)
+    {
+        return fail("mip chain was not red on level 0 and green on level 1");
+    }
+    const char* lod_ps =
+        "#version 120\n"
+        "#extension GL_ARB_shader_texture_lod : require\n"
+        "uniform sampler2D igpu_tex;\n"
+        "varying vec2 v_uv;\n"
+        "void main() {\n"
+        "  gl_FragColor = texture2DGradARB(igpu_tex, vec2(0.25, 0.25), vec2(0.125, 0.0), vec2(0.0, 0.125));\n"
+        "}\n";
+    const auto lod_frag = igpu_shader_compile(lod_ps, "main", 1, "glsl");
+    if (lod_frag == 0 || !igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(lod_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto lod_hold = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    const auto lod_coarse = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 4.f, 0.f, -1.f);
+    if (lod_hold == 0 || lod_coarse == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto draw_lod = [&](std::int64_t dest, std::int64_t sampler) -> bool {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(dest), saved, viewport))
+        {
+            return false;
+        }
+        const bool drew = igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer),
+                                            static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+                                            static_cast<std::uint64_t>(lod_source), 0, 0, 0, sampler);
+        igpu::gl_color_target_end(saved, viewport);
+        return drew;
+    };
+    if (!draw_lod(lod_hold_dest, lod_hold))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto lod_hold_left = igpu_texture_read(static_cast<std::uint64_t>(lod_hold_dest), 1, 4, 0, 0);
+    const auto lod_hold_right = igpu_texture_read(static_cast<std::uint64_t>(lod_hold_dest), 6, 4, 0, 0);
+    std::printf("lod hold     : %lld / %lld\n", static_cast<long long>(lod_hold_left),
+                static_cast<long long>(lod_hold_right));
+    if (lod_hold_left != 255 || lod_hold_right != 255)
+    {
+        return fail("level offset 0 did not stay on the red base level");
+    }
+    if (!draw_lod(lod_coarse_dest, lod_coarse))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto lod_coarse_left = igpu_texture_read(static_cast<std::uint64_t>(lod_coarse_dest), 1, 4, 0, 0);
+    const auto lod_coarse_right = igpu_texture_read(static_cast<std::uint64_t>(lod_coarse_dest), 6, 4, 0, 0);
+    std::printf("lod coarse   : %lld / %lld\n", static_cast<long long>(lod_coarse_left),
+                static_cast<long long>(lod_coarse_right));
+    if (lod_coarse_left != 65280 || lod_coarse_right != 65280)
+    {
+        return fail("level offset 4 did not read the green coarser level");
+    }
+    if (!draw_lod(lod_plain_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto lod_plain_left = igpu_texture_read(static_cast<std::uint64_t>(lod_plain_dest), 1, 4, 0, 0);
+    const auto lod_plain_right = igpu_texture_read(static_cast<std::uint64_t>(lod_plain_dest), 6, 4, 0, 0);
+    std::printf("lod plain    : %lld / %lld\n", static_cast<long long>(lod_plain_left),
+                static_cast<long long>(lod_plain_right));
+    if (lod_plain_left != 255 || lod_plain_right != 255)
+    {
+        return fail("sampler 0 did not restore the base level after the level offset");
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
     }
     if (!write_uv(1.0625f, 0.5f))
     {
