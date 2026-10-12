@@ -3062,12 +3062,17 @@ int main()
     }
     if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
                           6, static_cast<std::uint64_t>(blend_sample_red), 0, 1, 0, 0) ||
-        igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
-                          6, static_cast<std::uint64_t>(blend_sample_red), 0, 0, 1, 0) ||
-        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+        std::string(igpu_get_last_error()).find("unknown depth handle") == std::string::npos)
     {
         igpu::gl_color_target_end(blend_saved, blend_viewport);
-        return fail("sampled draw accepted depth or raster state");
+        return fail("sampled draw accepted an unknown depth handle");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
+                          6, static_cast<std::uint64_t>(blend_sample_red), 0, 0, 1, 0) ||
+        std::string(igpu_get_last_error()).find("unknown raster handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("sampled draw accepted an unknown raster handle");
     }
     if (!igpu_shader_bind(static_cast<std::uint64_t>(colour_vert), 0) ||
         !igpu_shader_bind(static_cast<std::uint64_t>(colour_frag), 1))
@@ -3269,10 +3274,10 @@ int main()
     }
     if (igpu_draw_sampled(static_cast<std::uint64_t>(cull_ccw_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
                           3, static_cast<std::uint64_t>(cull_keep_texture), 0, 0, cull_clockwise, 0) ||
-        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+        std::string(igpu_get_last_error()).find("stride does not match") == std::string::npos)
     {
         igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
-        return fail("a sampled draw accepted a raster state");
+        return fail("a sampled raster draw ignored the position buffer stride");
     }
     igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
     if (igpu_texture_read(static_cast<std::uint64_t>(cull_keep_texture), 1, 4, 0, 0) != 255)
@@ -3470,10 +3475,10 @@ int main()
     }
     if (igpu_draw_sampled(static_cast<std::uint64_t>(scissor_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
                           3, static_cast<std::uint64_t>(scissor_clip_texture), 0, 0, scissor_on, 0) ||
-        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+        std::string(igpu_get_last_error()).find("stride does not match") == std::string::npos)
     {
         igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
-        return fail("a sampled draw accepted a scissor raster state");
+        return fail("a sampled scissor draw ignored the position buffer stride");
     }
     igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
     if (igpu_texture_read(static_cast<std::uint64_t>(scissor_clip_texture), 6, 4, 0, 0) != 255)
@@ -3930,11 +3935,11 @@ int main()
         return fail("sampled draw accepted a negative depth handle");
     }
     if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_depth_buffer), static_cast<std::uint64_t>(sample_layout), 4,
-                          0, 3, static_cast<std::uint64_t>(sample_depth_red), 0, 0, cull_clockwise, 0) ||
-        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+                          0, 3, static_cast<std::uint64_t>(sample_depth_red), 0, 0, 999999, 0) ||
+        std::string(igpu_get_last_error()).find("unknown raster handle") == std::string::npos)
     {
         igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
-        return fail("a sampled draw accepted a raster state");
+        return fail("sampled draw accepted an unknown raster handle");
     }
     igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
     if (igpu_texture_read(static_cast<std::uint64_t>(depth_plain_texture), 1, 4, 0, 0) != 65280)
@@ -3974,6 +3979,235 @@ int main()
     if (!igpu_supports(static_cast<std::int32_t>(igpu::Capability::DepthState)))
     {
         return fail("DepthState is false on the OpenGL backend");
+    }
+
+    // Sampled draws apply one raster handle, then write back cull and the scissor test.
+    const auto sample_cull_cw = igpu_raster_state_create(1, 0, false, true);
+    const auto sample_cull_ccw = igpu_raster_state_create(2, 0, false, true);
+    const auto sample_scissor = igpu_raster_state_create(0, 0, true, true);
+    const auto sample_solid = igpu_raster_state_create(0, 0, false, true);
+    const auto sample_blend_write = igpu_blend_state_create(false, 2, 2, 1, 2, 2, 1, true, true, true, true);
+    const auto sample_repeat = igpu_sampler_state_create(0, 0, 0, 1, 1, 1, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (sample_cull_cw == 0 || sample_cull_ccw == 0 || sample_scissor == 0 || sample_solid == 0 ||
+        sample_blend_write == 0 || sample_repeat == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const SampleVertex sample_ccw[] = {
+        {-1.f, -1.f, 0.5f, 0.5f},
+        {0.f, -1.f, 0.5f, 0.5f},
+        {-1.f, 1.f, 0.5f, 0.5f},
+    };
+    const SampleVertex sample_cw[] = {
+        {0.f, -1.f, 0.5f, 0.5f},
+        {-1.f, -1.f, 0.5f, 0.5f},
+        {-1.f, 1.f, 0.5f, 0.5f},
+    };
+    const SampleVertex sample_full[] = {
+        {-1.f, -1.f, 0.5f, 0.5f},
+        {3.f, -1.f, 0.5f, 0.5f},
+        {-1.f, 3.f, 0.5f, 0.5f},
+    };
+    const SampleVertex sample_repeat_uv[] = {
+        {-1.f, -1.f, 1.0625f, 0.5f},
+        {3.f, -1.f, 1.0625f, 0.5f},
+        {-1.f, 3.f, 1.0625f, 0.5f},
+    };
+    const auto sample_ccw_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(sample_ccw)), 0, 1, 16);
+    const auto sample_cw_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(sample_cw)), 0, 1, 16);
+    const auto sample_full_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(sample_full)), 0, 1, 16);
+    const auto sample_repeat_buffer = igpu_buffer_create(static_cast<std::int64_t>(sizeof(sample_repeat_uv)), 0, 1, 16);
+    const auto sr_keep = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto sr_drop = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto sr_front = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto sr_back = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto sr_clip = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto sr_held = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto sr_wide = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto sr_restore = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto sr_rep = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (sample_ccw_buffer == 0 || sample_cw_buffer == 0 || sample_full_buffer == 0 || sample_repeat_buffer == 0 ||
+        sr_keep == 0 || sr_drop == 0 || sr_front == 0 || sr_back == 0 || sr_clip == 0 || sr_held == 0 ||
+        sr_wide == 0 || sr_restore == 0 || sr_rep == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(sample_ccw_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<SampleVertex*>(sample_ccw), sizeof(sample_ccw))) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(sample_cw_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<SampleVertex*>(sample_cw), sizeof(sample_cw))) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(sample_full_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<SampleVertex*>(sample_full), sizeof(sample_full))) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(sample_repeat_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<SampleVertex*>(sample_repeat_uv), sizeof(sample_repeat_uv))))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto report_sr = [&](const char* label, std::int64_t texture, std::int64_t left, std::int64_t right) {
+        const auto got_left = igpu_texture_read(static_cast<std::uint64_t>(texture), 1, 4, 0, 0);
+        const auto got_right = igpu_texture_read(static_cast<std::uint64_t>(texture), 6, 4, 0, 0);
+        std::printf("%s: %lld / %lld\n", label, static_cast<long long>(got_left), static_cast<long long>(got_right));
+        return got_left == left && got_right == right;
+    };
+    const auto draw_sr = [&](std::int64_t texture, std::int64_t buffer, std::uint64_t source, std::int64_t blend,
+                             std::int64_t depth, std::int64_t raster, std::int64_t sampler) {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(texture), saved, viewport))
+        {
+            return false;
+        }
+        const bool drew = igpu_draw_sampled(static_cast<std::uint64_t>(buffer), static_cast<std::uint64_t>(sample_layout),
+                                             4, 0, 3, source, blend, depth, raster, sampler);
+        const bool cull_off = glIsEnabled(GL_CULL_FACE) == GL_FALSE;
+        igpu::gl_color_target_end(saved, viewport);
+        return drew && cull_off;
+    };
+    if (!draw_sr(sr_keep, sample_ccw_buffer, static_cast<std::uint64_t>(sample_depth_red), 0, 0, sample_cull_cw, 0) ||
+        !report_sr("sample ckeep ", sr_keep, 255, 0))
+    {
+        return fail("sampled cull_clockwise dropped a counter-clockwise triangle");
+    }
+    if (!draw_sr(sr_drop, sample_ccw_buffer, static_cast<std::uint64_t>(sample_depth_red), 0, 0, sample_cull_ccw, 0) ||
+        !report_sr("sample cdrop ", sr_drop, 0, 0))
+    {
+        return fail("sampled cull_counterclockwise kept a counter-clockwise triangle");
+    }
+    if (!draw_sr(sr_drop, sample_ccw_buffer, static_cast<std::uint64_t>(sample_depth_red), 0, 0, 0, 0) ||
+        !report_sr("sample c0    ", sr_drop, 255, 0))
+    {
+        return fail("handle 0 did not restore culling after a sampled drop");
+    }
+    if (!draw_sr(sr_front, sample_cw_buffer, static_cast<std::uint64_t>(sample_depth_red), 0, 0, sample_cull_cw, 0) ||
+        !report_sr("sample cfront", sr_front, 0, 0))
+    {
+        return fail("sampled cull_clockwise kept a clockwise triangle");
+    }
+    if (!draw_sr(sr_back, sample_cw_buffer, static_cast<std::uint64_t>(sample_depth_red), 0, 0, sample_cull_ccw, 0) ||
+        !report_sr("sample cback ", sr_back, 255, 0))
+    {
+        return fail("sampled cull_counterclockwise dropped a clockwise triangle");
+    }
+    glScissor(0, 0, 4, 8);
+    if (!draw_sr(sr_clip, sample_full_buffer, static_cast<std::uint64_t>(sample_depth_red), 0, 0, sample_scissor, 0) ||
+        glIsEnabled(GL_SCISSOR_TEST) == GL_TRUE || !scissor_box_kept() ||
+        !report_sr("sample clip  ", sr_clip, 255, 0))
+    {
+        return fail("sampled scissor drew outside the caller rectangle");
+    }
+    if (!draw_sr(sr_clip, sample_full_buffer, static_cast<std::uint64_t>(sample_depth_red), 0, 0, 0, 0) ||
+        glIsEnabled(GL_SCISSOR_TEST) == GL_TRUE || !scissor_box_kept() ||
+        !report_sr("sample s0    ", sr_clip, 255, 255))
+    {
+        return fail("handle 0 left the scissor test enabled after a sampled draw");
+    }
+    glEnable(GL_SCISSOR_TEST);
+    if (!draw_sr(sr_held, sample_full_buffer, static_cast<std::uint64_t>(sample_depth_red), 0, 0, 0, 0) ||
+        glIsEnabled(GL_SCISSOR_TEST) == GL_FALSE || !scissor_box_kept() ||
+        !report_sr("sample sheld ", sr_held, 255, 0))
+    {
+        return fail("handle 0 changed the caller scissor test on a sampled draw");
+    }
+    if (!draw_sr(sr_wide, sample_full_buffer, static_cast<std::uint64_t>(sample_depth_red), 0, 0, sample_solid, 0) ||
+        glIsEnabled(GL_SCISSOR_TEST) == GL_FALSE || !scissor_box_kept() ||
+        !report_sr("sample swide ", sr_wide, 255, 255))
+    {
+        return fail("a sampled raster state left the caller scissor test enabled during the draw");
+    }
+    if (!draw_sr(sr_restore, sample_full_buffer, static_cast<std::uint64_t>(sample_depth_red), 0, 0, 0, 0) ||
+        glIsEnabled(GL_SCISSOR_TEST) == GL_FALSE || !scissor_box_kept() ||
+        !report_sr("sample sback ", sr_restore, 255, 0))
+    {
+        return fail("handle 0 did not see the restored scissor test on a sampled draw");
+    }
+    glDisable(GL_SCISSOR_TEST);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_GREATER);
+    glDepthMask(GL_FALSE);
+    glColorMask(GL_FALSE, GL_TRUE, GL_TRUE, GL_TRUE);
+    if (!igpu::gl_attach_depth(static_cast<std::uint64_t>(sr_rep)) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    {
+        std::int32_t saved = 0;
+        std::int32_t sr_view[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sr_rep), saved, sr_view))
+        {
+            return fail("sample raster combined target begin failed");
+        }
+        const bool drew = igpu_draw_sampled(
+            static_cast<std::uint64_t>(sample_repeat_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 3,
+            static_cast<std::uint64_t>(sample_source), sample_blend_write, depth_off, sample_cull_cw, sample_repeat);
+        GLint func = 0;
+        GLboolean depth_mask = GL_TRUE;
+        GLboolean color_mask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+        glGetIntegerv(GL_DEPTH_FUNC, &func);
+        glGetBooleanv(GL_DEPTH_WRITEMASK, &depth_mask);
+        glGetBooleanv(GL_COLOR_WRITEMASK, color_mask);
+        const bool held = glIsEnabled(GL_DEPTH_TEST) == GL_TRUE && func == GL_GREATER && depth_mask == GL_FALSE &&
+                          glIsEnabled(GL_CULL_FACE) == GL_FALSE && glIsEnabled(GL_SCISSOR_TEST) == GL_FALSE &&
+                          glIsEnabled(GL_BLEND) == GL_FALSE && color_mask[0] == GL_FALSE;
+        igpu::gl_color_target_end(saved, sr_view);
+        if (!drew || !held || !report_sr("sample crep  ", sr_rep, 255, 255))
+        {
+            return fail("a sampled draw did not apply depth, blend, cull, and repeat together");
+        }
+    }
+    glDisable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    if (!draw_sr(sr_rep, sample_repeat_buffer, static_cast<std::uint64_t>(sample_source), 0, 0, 0, 0) ||
+        !report_sr("sample cr0   ", sr_rep, 16711680, 16711680))
+    {
+        return fail("handle 0 left the repeat wrap in place after a sampled raster draw");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(sr_keep), strip_saved_fbo, strip_held_viewport))
+    {
+        return fail("sample raster reject target begin failed");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_ccw_buffer), static_cast<std::uint64_t>(sample_layout), 4,
+                          0, 3, static_cast<std::uint64_t>(sample_depth_red), 0, 0, 999999, 0) ||
+        std::string(igpu_get_last_error()).find("unknown raster handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("sampled draw accepted an unknown raster handle");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_ccw_buffer), static_cast<std::uint64_t>(sample_layout), 4,
+                          0, 3, static_cast<std::uint64_t>(sample_depth_red), 0, 0, -1, 0) ||
+        std::string(igpu_get_last_error()).find("not a state object") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("sampled draw accepted a negative raster handle");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_full_buffer), static_cast<std::uint64_t>(sample_layout), 4,
+                          0, 3, static_cast<std::uint64_t>(sr_keep), 0, 0, sample_cull_cw, 0) ||
+        std::string(igpu_get_last_error()).find("the texture is the current color target") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("sampled raster draw accepted the current color target");
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(sr_keep), 1, 4, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(sr_keep), 6, 4, 0, 0) != 0)
+    {
+        return fail("a rejected sampled raster draw changed pixels");
+    }
+    if (!igpu_state_release(static_cast<std::uint64_t>(sample_solid)) ||
+        igpu_draw_sampled(static_cast<std::uint64_t>(sample_ccw_buffer), static_cast<std::uint64_t>(sample_layout), 4,
+                          0, 3, static_cast<std::uint64_t>(sample_depth_red), 0, 0, sample_solid, 0) ||
+        std::string(igpu_get_last_error()).find("unknown raster handle") == std::string::npos)
+    {
+        return fail("sampled draw accepted a released raster handle");
+    }
+    if (igpu_texture_read(static_cast<std::uint64_t>(sr_keep), 1, 4, 0, 0) != 255)
+    {
+        return fail("a released sampled raster handle changed pixels");
     }
 
     void* context = gl_probe_context();
