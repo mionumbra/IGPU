@@ -204,10 +204,11 @@ namespace igpu
             {
                 return gl_texture_create_kind(kind, width, height, depth, format, render_target, storage);
             }
-            std::int64_t texture_create_mips(std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t, bool, std::int32_t) override
+            std::int64_t texture_create_mips(std::int32_t kind, std::int32_t width, std::int32_t height,
+                                             std::int32_t depth, std::int32_t format, bool storage,
+                                             std::int32_t mip_count) override
             {
-                not_yet("igpu_texture_create");
-                return 0;
+                return gl_texture_create_mips(kind, width, height, depth, format, storage, mip_count);
             }
             bool texture_generate_mips(std::uint64_t) override { return not_yet("igpu_texture_generate_mips"); }
             bool texture_release(std::uint64_t texture) override { return gl_texture_release(texture); }

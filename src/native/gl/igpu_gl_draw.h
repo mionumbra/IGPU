@@ -20,6 +20,8 @@ namespace igpu
 
     std::int64_t gl_texture_create_kind(std::int32_t kind, std::int32_t width, std::int32_t height, std::int32_t depth,
                                         std::int32_t format, bool render_target, bool storage);
+    std::int64_t gl_texture_create_mips(std::int32_t kind, std::int32_t width, std::int32_t height, std::int32_t depth,
+                                        std::int32_t format, bool storage, std::int32_t mip_count);
     bool gl_texture_release(std::uint64_t texture);
     std::int64_t gl_texture_read_level(std::uint64_t texture, std::int32_t x, std::int32_t y, std::int32_t layer,
                                        std::int32_t mip);

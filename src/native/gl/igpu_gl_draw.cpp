@@ -35,6 +35,26 @@
 #define GL_CLAMP_TO_BORDER 0x812D
 #endif
 
+#ifndef GL_TEXTURE_BASE_LEVEL
+#define GL_TEXTURE_BASE_LEVEL 0x813C
+#endif
+
+#ifndef GL_TEXTURE_MAX_LEVEL
+#define GL_TEXTURE_MAX_LEVEL 0x813D
+#endif
+
+#ifndef GL_TEXTURE_LOD_BIAS
+#define GL_TEXTURE_LOD_BIAS 0x8501
+#endif
+
+#ifndef GL_NEAREST_MIPMAP_NEAREST
+#define GL_NEAREST_MIPMAP_NEAREST 0x2700
+#endif
+
+#ifndef GL_LINEAR_MIPMAP_NEAREST
+#define GL_LINEAR_MIPMAP_NEAREST 0x2701
+#endif
+
 #ifndef GL_RENDERBUFFER
 #define GL_RENDERBUFFER 0x8D41
 #define GL_DEPTH_ATTACHMENT 0x8D00
@@ -61,7 +81,18 @@ namespace igpu
             GLuint depth = 0;
             std::int32_t width = 0;
             std::int32_t height = 0;
+            std::int32_t mips = 1;
         };
+
+        std::int32_t gl_mip_size(std::int32_t full, std::int32_t mip)
+        {
+            std::int32_t size = full;
+            for (std::int32_t level = 0; level < mip; ++level)
+            {
+                size = size > 1 ? size / 2 : 1;
+            }
+            return size;
+        }
 
         std::unordered_map<std::uint64_t, BufferObject> g_buffers;
         std::unordered_map<std::uint64_t, TextureObject> g_textures;
@@ -79,6 +110,7 @@ namespace igpu
             float border_blue = 0.f;
             float border_alpha = 1.f;
             bool linear_min = false;
+            float level_offset = 0.f;
         };
 
         std::unordered_map<std::uint64_t, SamplerObject> g_samplers;
@@ -685,6 +717,78 @@ namespace igpu
         return static_cast<std::int64_t>(handle);
     }
 
+    std::int64_t gl_texture_create_mips(std::int32_t kind, std::int32_t width, std::int32_t height, std::int32_t depth,
+                                        std::int32_t format, bool storage, std::int32_t mip_count)
+    {
+        // A 2D rgba8 chain only. Each level is cleared; this driver drops draws
+        // into an image that has never been cleared. Minification stays nearest
+        // between levels so a level offset can select one.
+        if (kind != 0 || depth != 1 || format != 6 || storage || width <= 0 || height <= 0 || width > 16384 ||
+            height > 16384)
+        {
+            set_last_error("igpu_texture_create_mips: the opengl backend only accepts one rgba8 2D chain");
+            return 0;
+        }
+        std::int32_t chain = 1;
+        std::int32_t chain_w = width;
+        std::int32_t chain_h = height;
+        while (chain_w > 1 || chain_h > 1)
+        {
+            chain_w = chain_w > 1 ? chain_w / 2 : 1;
+            chain_h = chain_h > 1 ? chain_h / 2 : 1;
+            ++chain;
+        }
+        if (mip_count != 0 && (mip_count < 1 || mip_count > chain))
+        {
+            set_last_error("igpu_texture_create_mips: mip count must be 0 for the full chain, or between 1 and that chain");
+            return 0;
+        }
+        const std::int32_t mips = mip_count == 0 ? chain : mip_count;
+        const auto& fns = igpu_gl_fns();
+        GLuint texture = 0;
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        for (std::int32_t mip = 0; mip < mips; ++mip)
+        {
+            glTexImage2D(GL_TEXTURE_2D, mip, GL_RGBA, gl_mip_size(width, mip), gl_mip_size(height, mip), 0, GL_RGBA,
+                         GL_UNSIGNED_BYTE, nullptr);
+        }
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, mips - 1);
+        GLuint framebuffer = 0;
+        fns.GenFramebuffers(1, &framebuffer);
+        fns.BindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        GLenum status = GL_FRAMEBUFFER_COMPLETE;
+        for (std::int32_t mip = 0; mip < mips; ++mip)
+        {
+            fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, mip);
+            status = fns.CheckFramebufferStatus(GL_FRAMEBUFFER);
+            if (status != GL_FRAMEBUFFER_COMPLETE)
+            {
+                break;
+            }
+            glClearColor(0.f, 0.f, 0.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
+        fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+        fns.BindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        if (status != GL_FRAMEBUFFER_COMPLETE)
+        {
+            fns.DeleteFramebuffers(1, &framebuffer);
+            glDeleteTextures(1, &texture);
+            set_last_error("igpu_texture_create_mips: the framebuffer is incomplete");
+            return 0;
+        }
+        const std::uint64_t handle = g_next_texture++;
+        g_textures.emplace(handle, TextureObject{texture, framebuffer, 0, width, height, mips});
+        return static_cast<std::int64_t>(handle);
+    }
+
     bool gl_texture_release(std::uint64_t texture)
     {
         const auto it = g_textures.find(texture);
@@ -707,8 +811,10 @@ namespace igpu
                                        std::int32_t mip)
     {
         const auto it = g_textures.find(texture);
-        if (it == g_textures.end() || layer != 0 || mip != 0 || x < 0 || y < 0 || x >= it->second.width ||
-            y >= it->second.height)
+        const std::int32_t mip_width = it == g_textures.end() ? 0 : gl_mip_size(it->second.width, mip);
+        const std::int32_t mip_height = it == g_textures.end() ? 0 : gl_mip_size(it->second.height, mip);
+        if (it == g_textures.end() || layer != 0 || mip < 0 || mip >= it->second.mips || x < 0 || y < 0 ||
+            x >= mip_width || y >= mip_height)
         {
             set_last_error("igpu_texture_read: the pixel is outside this rgba8 texture");
             return 0;
@@ -717,9 +823,17 @@ namespace igpu
         GLint previous = 0;
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous);
         fns.BindFramebuffer(GL_FRAMEBUFFER, it->second.framebuffer);
+        if (mip != 0)
+        {
+            fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, it->second.texture, mip);
+        }
         unsigned char pixel[4] = {};
-        const int gl_row = it->second.height - 1 - y;
+        const int gl_row = mip_height - 1 - y;
         glReadPixels(x, gl_row, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+        if (mip != 0)
+        {
+            fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, it->second.texture, 0);
+        }
         fns.BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous));
         return static_cast<std::int64_t>(pixel[0] | (pixel[1] << 8) | (pixel[2] << 16));
     }
@@ -816,14 +930,14 @@ namespace igpu
         std::int64_t layer = 0;
         std::int64_t mip = 0;
         if (!read_i64(targets[0], target) || !read_i64(layers[0], layer) || !read_i64(mips[0], mip) || layer != 0 ||
-            mip != 0)
+            mip < 0)
         {
             set_last_error("igpu_draw_to_render_targets: the opengl backend accepts one target");
             return false;
         }
         const auto texture = g_textures.find(static_cast<std::uint64_t>(target));
         const auto buffer = g_buffers.find(vertex_buffer);
-        if (texture == g_textures.end() || buffer == g_buffers.end())
+        if (texture == g_textures.end() || buffer == g_buffers.end() || mip >= texture->second.mips)
         {
             set_last_error("igpu_draw_to_render_targets: unknown buffer, layout, or texture");
             return false;
@@ -864,7 +978,13 @@ namespace igpu
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous_fbo);
         glGetIntegerv(GL_VIEWPORT, previous_viewport);
         fns.BindFramebuffer(GL_FRAMEBUFFER, texture->second.framebuffer);
-        glViewport(0, 0, texture->second.width, texture->second.height);
+        if (mip != 0)
+        {
+            fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->second.texture,
+                                     static_cast<GLint>(mip));
+        }
+        glViewport(0, 0, gl_mip_size(texture->second.width, static_cast<std::int32_t>(mip)),
+                   gl_mip_size(texture->second.height, static_cast<std::int32_t>(mip)));
         fns.BindBuffer(GL_ARRAY_BUFFER, buffer->second.id);
         bind_vertices(buffer->second, first_vertex);
         SavedBlend saved_blend{};
@@ -900,6 +1020,10 @@ namespace igpu
         }
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, 0);
+        if (mip != 0)
+        {
+            fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->second.texture, 0);
+        }
         glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2], previous_viewport[3]);
         fns.BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous_fbo));
         fns.BindVertexArray(0);
@@ -1201,6 +1325,9 @@ namespace igpu
         std::int32_t address_v = 0;
         bool linear = false;
         bool linear_min = false;
+        float level_offset = 0.f;
+        bool adjust_min = false;
+        bool adjust_bias = false;
         GLfloat border_color[4] = {0.f, 0.f, 0.f, 1.f};
         if (sampler_state != 0)
         {
@@ -1214,6 +1341,7 @@ namespace igpu
             address_v = sampler_it->second.address_v;
             linear = sampler_it->second.linear;
             linear_min = sampler_it->second.linear_min;
+            level_offset = sampler_it->second.level_offset;
             border_color[0] = sampler_it->second.border_red;
             border_color[1] = sampler_it->second.border_green;
             border_color[2] = sampler_it->second.border_blue;
@@ -1233,6 +1361,7 @@ namespace igpu
         GLint previous_mag = GL_NEAREST;
         GLint previous_min = GL_NEAREST;
         GLfloat previous_border[4] = {0.f, 0.f, 0.f, 0.f};
+        GLfloat previous_bias = 0.f;
         const bool border = address == 3;
         if (sampler_state != 0)
         {
@@ -1250,10 +1379,21 @@ namespace igpu
                 glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, &previous_mag);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             }
-            if (linear_min)
+            if (linear_min && level_offset == 0.f)
             {
                 glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &previous_min);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                adjust_min = true;
+            }
+            if (level_offset != 0.f)
+            {
+                glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, &previous_bias);
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, level_offset);
+                glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &previous_min);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                linear_min ? GL_LINEAR_MIPMAP_NEAREST : GL_NEAREST_MIPMAP_NEAREST);
+                adjust_min = true;
+                adjust_bias = true;
             }
         }
         fns.Uniform1i(sampler, 0);
@@ -1306,7 +1446,11 @@ namespace igpu
             {
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, previous_mag);
             }
-            if (linear_min)
+            if (adjust_bias)
+            {
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, previous_bias);
+            }
+            if (adjust_min)
             {
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, previous_min);
             }
@@ -1320,11 +1464,9 @@ namespace igpu
                                                        std::int32_t address_w, float level_offset, float finest,
                                                        float coarsest)
     {
-        // One mip. finest must be the base level. A non-negative coarsest
-        // cannot select another level on this backend.
         // Magnification and minification may each be nearest or linear.
-        // Mip filtering stays nearest. GL_LINEAR minification is not a mip chain.
-        // U, V, and W may differ. W is checked and not stored; a 2D draw uses U and V.
+        // Mip filtering stays nearest. A level offset selects a coarser level.
+        // The finest level stays 0. U, V, and W may differ. W is checked and not stored.
         if (mip != 0 || (magnification != 0 && magnification != 1) || (minification != 0 && minification != 1))
         {
             set_last_error("igpu_sampler_state_create: the opengl backend only samples the nearest texel");
@@ -1338,7 +1480,7 @@ namespace igpu
             set_last_error("igpu_sampler_state_create: the opengl backend only accepts clamp, repeat, or mirror on every axis");
             return 0;
         }
-        if (level_offset != 0.f || finest != 0.f || !(coarsest >= 0.f))
+        if (finest != 0.f || !(coarsest >= 0.f))
         {
             set_last_error("igpu_sampler_state_create: the opengl backend has no mip chain");
             return 0;
@@ -1346,7 +1488,7 @@ namespace igpu
         const bool linear = magnification == 1;
         const bool linear_min = minification == 1;
         const std::uint64_t handle = g_next_sampler++;
-        g_samplers.emplace(handle, SamplerObject{address_u, address_v, linear, 0.f, 0.f, 0.f, 1.f, linear_min});
+        g_samplers.emplace(handle, SamplerObject{address_u, address_v, linear, 0.f, 0.f, 0.f, 1.f, linear_min, level_offset});
         return static_cast<std::int64_t>(handle);
     }
 
