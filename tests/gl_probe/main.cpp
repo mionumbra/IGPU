@@ -3131,11 +3131,6 @@ int main()
     {
         return fail("wireframe fill was accepted");
     }
-    if (igpu_raster_state_create(0, 0, true, true) != 0 ||
-        std::string(igpu_get_last_error()).find("scissor") == std::string::npos)
-    {
-        return fail("scissor raster state was accepted");
-    }
     if (igpu_raster_state_create(0, 0, false, false) != 0 ||
         std::string(igpu_get_last_error()).find("depth clip") == std::string::npos)
     {
@@ -3310,6 +3305,203 @@ int main()
         igpu_supports(static_cast<std::int32_t>(igpu::Capability::Wireframe)))
     {
         return fail("RasterState or Wireframe has the wrong value on the OpenGL backend");
+    }
+
+    const auto scissor_on = igpu_raster_state_create(0, 0, true, true);
+    const auto scissor_cull = igpu_raster_state_create(2, 0, true, true);
+    if (scissor_on == 0 || scissor_cull == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    // Caller rectangle is the left half of the 8x8 target. The backend toggles
+    // the test and leaves this box alone. The triangle covers the whole target.
+    glScissor(0, 0, 4, 8);
+    const float scissor_vertices[] = {-1.f, -1.f, 3.f, -1.f, -1.f, 3.f};
+    const std::uint16_t scissor_indices[] = {0, 1, 2};
+    const auto scissor_buffer = igpu_buffer_create(24, 0, 1, 8);
+    const auto scissor_index_buffer = igpu_buffer_create(6, 0, 2, 0);
+    const auto scissor_clip_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto scissor_index_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto scissor_target_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto scissor_drop_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto scissor_held_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto scissor_widen_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto scissor_back_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (scissor_buffer == 0 || scissor_index_buffer == 0 || scissor_clip_texture == 0 || scissor_index_texture == 0 ||
+        scissor_target_texture == 0 || scissor_drop_texture == 0 || scissor_held_texture == 0 ||
+        scissor_widen_texture == 0 || scissor_back_texture == 0 ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(scissor_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<float*>(scissor_vertices), 24)) ||
+        !igpu_buffer_write(static_cast<std::uint64_t>(scissor_index_buffer), 0,
+                           gm::wire::GMBuffer(const_cast<std::uint16_t*>(scissor_indices), 6)))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto report_scissor = [&](const char* label, std::int64_t texture, std::int64_t left, std::int64_t right) {
+        const auto got_left = igpu_texture_read(static_cast<std::uint64_t>(texture), 1, 4, 0, 0);
+        const auto got_right = igpu_texture_read(static_cast<std::uint64_t>(texture), 6, 4, 0, 0);
+        std::printf("%s: %lld / %lld\n", label, static_cast<long long>(got_left), static_cast<long long>(got_right));
+        return got_left == left && got_right == right;
+    };
+    const auto scissor_box_kept = []() {
+        GLint box[4] = {};
+        glGetIntegerv(GL_SCISSOR_BOX, box);
+        return box[0] == 0 && box[1] == 0 && box[2] == 4 && box[3] == 8;
+    };
+    const auto draw_scissor = [&](std::int64_t texture, std::int64_t raster) {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(texture), saved, viewport))
+        {
+            return false;
+        }
+        const bool drew = igpu_draw(static_cast<std::uint64_t>(scissor_buffer), 0, static_cast<std::uint64_t>(layout),
+                                     4, 0, 3, 1, 0, 0, raster, 0);
+        const bool test_off = glIsEnabled(GL_SCISSOR_TEST) == GL_FALSE;
+        igpu::gl_color_target_end(saved, viewport);
+        return drew && test_off && scissor_box_kept();
+    };
+    if (!draw_scissor(scissor_clip_texture, scissor_on) ||
+        !report_scissor("scissor clip  ", scissor_clip_texture, 255, 0))
+    {
+        return fail("a scissor raster state drew outside the caller rectangle");
+    }
+    if (!draw_scissor(scissor_clip_texture, 0) ||
+        !report_scissor("scissor plain ", scissor_clip_texture, 255, 255))
+    {
+        return fail("handle 0 left the scissor test enabled");
+    }
+    {
+        std::int32_t saved = 0;
+        std::int32_t held[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(scissor_index_texture), saved, held))
+        {
+            return fail("scissor indexed target begin failed");
+        }
+        const bool drew = igpu_draw_indexed(static_cast<std::uint64_t>(scissor_buffer),
+                                             static_cast<std::uint64_t>(layout),
+                                             static_cast<std::uint64_t>(scissor_index_buffer), 4, 0, 3, 0, 0,
+                                             scissor_on, 0);
+        const bool test_off = glIsEnabled(GL_SCISSOR_TEST) == GL_FALSE;
+        igpu::gl_color_target_end(saved, held);
+        if (!drew || !test_off || !scissor_box_kept() ||
+            !report_scissor("scissor index ", scissor_index_texture, 255, 0))
+        {
+            return fail("indexed scissor drew outside the caller rectangle");
+        }
+    }
+    const auto scissor_target_bytes = encode_u64(static_cast<std::uint64_t>(scissor_target_texture));
+    const auto scissor_zero_bytes = encode_u64(0);
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(scissor_buffer), static_cast<std::uint64_t>(layout), 4,
+                                     0, 3, as_array(scissor_target_bytes), as_array(scissor_zero_bytes),
+                                     as_array(scissor_zero_bytes), 0, 0, scissor_on, 0) ||
+        glIsEnabled(GL_SCISSOR_TEST) == GL_TRUE || !scissor_box_kept() ||
+        !report_scissor("scissor target", scissor_target_texture, 255, 0))
+    {
+        return fail("render-target scissor drew outside the caller rectangle");
+    }
+    if (!draw_scissor(scissor_drop_texture, scissor_cull) ||
+        !report_scissor("scissor drop  ", scissor_drop_texture, 0, 0))
+    {
+        return fail("scissor kept a counter-clockwise triangle that cull should drop");
+    }
+    glEnable(GL_SCISSOR_TEST);
+    {
+        std::int32_t saved = 0;
+        std::int32_t scissor_view[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(scissor_held_texture), saved, scissor_view))
+        {
+            return fail("scissor held target begin failed");
+        }
+        const bool drew = igpu_draw(static_cast<std::uint64_t>(scissor_buffer), 0, static_cast<std::uint64_t>(layout),
+                                     4, 0, 3, 1, 0, 0, 0, 0);
+        const bool test_on = glIsEnabled(GL_SCISSOR_TEST) == GL_TRUE;
+        igpu::gl_color_target_end(saved, scissor_view);
+        if (!drew || !test_on || !scissor_box_kept() ||
+            !report_scissor("scissor held  ", scissor_held_texture, 255, 0))
+        {
+            return fail("handle 0 changed the caller scissor test");
+        }
+    }
+    {
+        std::int32_t saved = 0;
+        std::int32_t scissor_view[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(scissor_widen_texture), saved, scissor_view))
+        {
+            return fail("scissor widen target begin failed");
+        }
+        const bool drew = igpu_draw(static_cast<std::uint64_t>(scissor_buffer), 0, static_cast<std::uint64_t>(layout),
+                                     4, 0, 3, 1, 0, 0, cull_clockwise, 0);
+        const bool test_on = glIsEnabled(GL_SCISSOR_TEST) == GL_TRUE;
+        igpu::gl_color_target_end(saved, scissor_view);
+        if (!drew || !test_on || !scissor_box_kept() ||
+            !report_scissor("scissor widen ", scissor_widen_texture, 255, 255))
+        {
+            return fail("a solid raster state left the caller scissor test enabled during the draw");
+        }
+    }
+    {
+        std::int32_t saved = 0;
+        std::int32_t scissor_view[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(scissor_back_texture), saved, scissor_view))
+        {
+            return fail("scissor back target begin failed");
+        }
+        const bool drew = igpu_draw(static_cast<std::uint64_t>(scissor_buffer), 0, static_cast<std::uint64_t>(layout),
+                                     4, 0, 3, 1, 0, 0, 0, 0);
+        const bool test_on = glIsEnabled(GL_SCISSOR_TEST) == GL_TRUE;
+        igpu::gl_color_target_end(saved, scissor_view);
+        if (!drew || !test_on || !scissor_box_kept() ||
+            !report_scissor("scissor back  ", scissor_back_texture, 255, 0))
+        {
+            return fail("handle 0 did not see the restored scissor test");
+        }
+    }
+    glDisable(GL_SCISSOR_TEST);
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(scissor_clip_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("scissor reject target begin failed");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(scissor_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
+                          3, static_cast<std::uint64_t>(scissor_clip_texture), 0, 0, scissor_on, 0) ||
+        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("a sampled draw accepted a scissor raster state");
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(scissor_clip_texture), 6, 4, 0, 0) != 255)
+    {
+        return fail("a rejected scissor draw changed pixels");
+    }
+    if (!igpu_state_release(static_cast<std::uint64_t>(scissor_on)) ||
+        igpu_state_release(static_cast<std::uint64_t>(scissor_on)) ||
+        std::string(igpu_get_last_error()).find("unknown sampler handle") == std::string::npos)
+    {
+        return fail("scissor release did not retire the handle");
+    }
+    if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(scissor_back_texture), strip_saved_fbo,
+                                     strip_held_viewport))
+    {
+        return fail("released scissor target begin failed");
+    }
+    if (igpu_draw(static_cast<std::uint64_t>(scissor_buffer), 0, static_cast<std::uint64_t>(layout), 4, 0, 3, 1, 0, 0,
+                  scissor_on, 0) ||
+        std::string(igpu_get_last_error()).find("unknown raster handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+        return fail("a released scissor handle was accepted");
+    }
+    igpu::gl_color_target_end(strip_saved_fbo, strip_held_viewport);
+    if (igpu_texture_read(static_cast<std::uint64_t>(scissor_back_texture), 1, 4, 0, 0) != 255)
+    {
+        return fail("a released scissor handle changed pixels");
     }
 
     void* context = gl_probe_context();
