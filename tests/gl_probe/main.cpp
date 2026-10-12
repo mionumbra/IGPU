@@ -1707,10 +1707,10 @@ int main()
     }
     if (igpu_draw_sampled(static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
                           static_cast<std::uint64_t>(sample_source), 1, 0, 0, 0) ||
-        std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
+        std::string(igpu_get_last_error()).find("unknown blend handle") == std::string::npos)
     {
         igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
-        return fail("blend state was accepted on a sampled draw");
+        return fail("a sampler handle was accepted as a sampled blend");
     }
     igpu::gl_color_target_end(sample_saved_fbo, sample_held_viewport);
     if (igpu_texture_read(static_cast<std::uint64_t>(wrap_black_dest), 1, 4, 0, 0) != 0 ||
@@ -2934,12 +2934,141 @@ int main()
         igpu::gl_color_target_end(blend_saved, blend_viewport);
         return fail("depth or raster state was accepted with a blend backend");
     }
-    if (igpu_draw_sampled(static_cast<std::uint64_t>(wrap_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
-                          static_cast<std::uint64_t>(sample_source), blend_src_alpha, 0, 0, 0) ||
+    const auto blend_sample_red0 = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto blend_sample_red = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto blend_sample_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto blend_sample_repeat = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto blend_sample_clamp = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto blend_sample_repeat_sampler =
+        igpu_sampler_state_create(0, 0, 0, 1, 1, 1, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (blend_sample_red0 == 0 || blend_sample_red == 0 || blend_sample_dest == 0 || blend_sample_repeat == 0 ||
+        blend_sample_clamp == 0 || blend_sample_repeat_sampler == 0)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto paint_colour = [&](std::int64_t texture, std::int64_t buffer) {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(texture), saved, viewport))
+        {
+            return false;
+        }
+        const bool drew = igpu_draw(static_cast<std::uint64_t>(buffer), 0, static_cast<std::uint64_t>(colour_layout),
+                                     4, 0, 6, 1, 0, 0, 0, 0);
+        igpu::gl_color_target_end(saved, viewport);
+        return drew;
+    };
+    if (!paint_colour(blend_sample_red0, blend_red0_buffer) || !paint_colour(blend_sample_red, blend_red_buffer) ||
+        !paint_colour(blend_sample_dest, blend_blue_buffer) ||
+        !paint_colour(blend_sample_repeat, blend_blue_buffer) ||
+        !paint_colour(blend_sample_clamp, blend_blue_buffer))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto sample_blend = [&](std::int64_t dest, std::int64_t source, std::int64_t blend, std::int64_t sampler,
+                                   std::uint64_t buffer) {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(dest), saved, viewport))
+        {
+            return false;
+        }
+        const bool drew = igpu_draw_sampled(buffer, static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+                                             static_cast<std::uint64_t>(source), blend, 0, 0, sampler);
+        const bool restored = glIsEnabled(0x0BE2) == GL_FALSE;
+        igpu::gl_color_target_end(saved, viewport);
+        return drew && restored;
+    };
+    if (!sample_blend(blend_sample_dest, blend_sample_red0, blend_src_alpha, 0,
+                      static_cast<std::uint64_t>(sample_buffer)))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!report_blend("sample blend0 ", blend_sample_dest, 16711680))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("sampled src-alpha with alpha 0 replaced the destination");
+    }
+    if (!sample_blend(blend_sample_dest, blend_sample_red, blend_src_alpha, 0,
+                      static_cast<std::uint64_t>(sample_buffer)))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!report_blend("sample blend1 ", blend_sample_dest, 255))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("sampled src-alpha with alpha 255 did not replace the destination");
+    }
+    if (!sample_blend(blend_sample_dest, blend_sample_red0, 0, 0, static_cast<std::uint64_t>(sample_buffer)))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!report_blend("sample plain  ", blend_sample_dest, 255))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("sampled handle 0 with alpha 0 did not write red");
+    }
+    if (!write_uv(1.0625f, 0.5f) ||
+        !sample_blend(blend_sample_repeat, sample_source, blend_src_alpha, blend_sample_repeat_sampler,
+                      static_cast<std::uint64_t>(wrap_buffer)))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!report_blend("sample repeat ", blend_sample_repeat, 255))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("sampled blend did not apply repeat wrapping");
+    }
+    if (!sample_blend(blend_sample_clamp, sample_source, 0, 0, static_cast<std::uint64_t>(wrap_buffer)))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!report_blend("sample clamped", blend_sample_clamp, 16711680))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("sampled blend left the repeat wrap in place");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
+                          6, static_cast<std::uint64_t>(blend_sample_red), 999999, 0, 0, 0) ||
+        std::string(igpu_get_last_error()).find("unknown blend handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("sampled draw accepted an unknown blend handle");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
+                          6, static_cast<std::uint64_t>(blend_sample_red), -1, 0, 0, 0) ||
+        std::string(igpu_get_last_error()).find("not a state object") == std::string::npos)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("sampled draw accepted a negative blend handle");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
+                          6, static_cast<std::uint64_t>(blend_sample_red), 0, 1, 0, 0) ||
+        igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
+                          6, static_cast<std::uint64_t>(blend_sample_red), 0, 0, 1, 0) ||
         std::string(igpu_get_last_error()).find("draws with no extra state") == std::string::npos)
     {
         igpu::gl_color_target_end(blend_saved, blend_viewport);
-        return fail("a sampled draw accepted a live blend state");
+        return fail("sampled draw accepted depth or raster state");
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(colour_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(colour_frag), 1))
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail(igpu_get_last_error().c_str());
     }
     igpu::gl_color_target_end(blend_saved, blend_viewport);
     if (igpu_texture_read(static_cast<std::uint64_t>(blend_mask_texture), 1, 4, 0, 0) != 255)
@@ -2962,6 +3091,13 @@ int main()
     {
         igpu::gl_color_target_end(blend_saved, blend_viewport);
         return fail("a released blend handle was accepted");
+    }
+    if (igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer), static_cast<std::uint64_t>(sample_layout), 4, 0,
+                          6, static_cast<std::uint64_t>(blend_sample_red), blend_src_alpha, 0, 0, 0) ||
+        std::string(igpu_get_last_error()).find("unknown blend handle") == std::string::npos)
+    {
+        igpu::gl_color_target_end(blend_saved, blend_viewport);
+        return fail("a sampled draw accepted a released blend handle");
     }
     igpu::gl_color_target_end(blend_saved, blend_viewport);
     if (igpu_texture_read(static_cast<std::uint64_t>(blend_mask_texture), 1, 4, 0, 0) != 255)
