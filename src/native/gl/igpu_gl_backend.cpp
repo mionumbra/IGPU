@@ -102,10 +102,9 @@ namespace igpu
                 not_yet("igpu_depth_state_create");
                 return 0;
             }
-            std::int64_t raster_state_create(std::int32_t, std::int32_t, bool, bool) override
+            std::int64_t raster_state_create(std::int32_t cull, std::int32_t fill, bool scissor, bool depth_clip) override
             {
-                not_yet("igpu_raster_state_create");
-                return 0;
+                return gl_raster_state_create(cull, fill, scissor, depth_clip);
             }
             std::int64_t sampler_state_create(std::int32_t, bool, std::int32_t) override
             {
