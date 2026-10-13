@@ -2584,6 +2584,11 @@ int main()
     {
         return fail("linear minification on a border sampler was accepted");
     }
+    const auto border_finest = igpu_sampler_state_create(0, 0, 0, 3, 3, 3, 1, 0, 0, 0.f, 1.f, -1.f);
+    if (border_finest != 0 || std::string(igpu_get_last_error()).find("no mip") == std::string::npos)
+    {
+        return fail("a finest level on a border sampler was accepted");
+    }
     const auto wrap_compare = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 1, 0.f, 0.f, -1.f);
     if (wrap_compare != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)
     {
@@ -2594,16 +2599,14 @@ int main()
     {
         return fail("anisotropic sampler was accepted");
     }
-    const auto lod_finest = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 1.f, -1.f);
-    if (lod_finest != 0 || std::string(igpu_get_last_error()).find("no mip") == std::string::npos)
-    {
-        return fail("a finest level above 0 was accepted");
-    }
     const auto lod_source = igpu_texture_create(0, 2, 2, 1, 6, true, false, 2);
     const auto lod_hold_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto lod_coarse_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto lod_plain_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
-    if (lod_source == 0 || lod_hold_dest == 0 || lod_coarse_dest == 0 || lod_plain_dest == 0)
+    const auto lod_finest_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto lod_fine0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (lod_source == 0 || lod_hold_dest == 0 || lod_coarse_dest == 0 || lod_plain_dest == 0 ||
+        lod_finest_dest == 0 || lod_fine0_dest == 0)
     {
         return fail(igpu_get_last_error().c_str());
     }
@@ -2675,7 +2678,8 @@ int main()
     }
     const auto lod_hold = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
     const auto lod_coarse = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 4.f, 0.f, -1.f);
-    if (lod_hold == 0 || lod_coarse == 0)
+    const auto lod_finest = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 1.f, -1.f);
+    if (lod_hold == 0 || lod_coarse == 0 || lod_finest == 0)
     {
         return fail(igpu_get_last_error().c_str());
     }
@@ -2727,6 +2731,30 @@ int main()
     if (lod_plain_left != 255 || lod_plain_right != 255)
     {
         return fail("sampler 0 did not restore the base level after the level offset");
+    }
+    if (!draw_lod(lod_finest_dest, lod_finest))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto lod_finest_left = igpu_texture_read(static_cast<std::uint64_t>(lod_finest_dest), 1, 4, 0, 0);
+    const auto lod_finest_right = igpu_texture_read(static_cast<std::uint64_t>(lod_finest_dest), 6, 4, 0, 0);
+    std::printf("lod finest   : %lld / %lld\n", static_cast<long long>(lod_finest_left),
+                static_cast<long long>(lod_finest_right));
+    if (lod_finest_left != 65280 || lod_finest_right != 65280)
+    {
+        return fail("finest level 1 did not read the green coarser level");
+    }
+    if (!draw_lod(lod_fine0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto lod_fine0_left = igpu_texture_read(static_cast<std::uint64_t>(lod_fine0_dest), 1, 4, 0, 0);
+    const auto lod_fine0_right = igpu_texture_read(static_cast<std::uint64_t>(lod_fine0_dest), 6, 4, 0, 0);
+    std::printf("lod fine0    : %lld / %lld\n", static_cast<long long>(lod_fine0_left),
+                static_cast<long long>(lod_fine0_right));
+    if (lod_fine0_left != 255 || lod_fine0_right != 255)
+    {
+        return fail("sampler 0 did not restore the base level after the finest level");
     }
     if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
         !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
