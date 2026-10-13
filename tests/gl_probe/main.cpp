@@ -2589,6 +2589,11 @@ int main()
     {
         return fail("a finest level on a border sampler was accepted");
     }
+    const auto border_coarsest = igpu_sampler_state_create(0, 0, 0, 3, 3, 3, 1, 0, 0, 0.f, 0.f, 0.f);
+    if (border_coarsest != 0 || std::string(igpu_get_last_error()).find("no mip") == std::string::npos)
+    {
+        return fail("a coarsest level on a border sampler was accepted");
+    }
     const auto wrap_compare = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 1, 0.f, 0.f, -1.f);
     if (wrap_compare != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)
     {
@@ -2605,8 +2610,12 @@ int main()
     const auto lod_plain_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto lod_finest_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto lod_fine0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto lod_cap_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto lod_cap0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto lod_uncap_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     if (lod_source == 0 || lod_hold_dest == 0 || lod_coarse_dest == 0 || lod_plain_dest == 0 ||
-        lod_finest_dest == 0 || lod_fine0_dest == 0)
+        lod_finest_dest == 0 || lod_fine0_dest == 0 || lod_cap_dest == 0 || lod_cap0_dest == 0 ||
+        lod_uncap_dest == 0)
     {
         return fail(igpu_get_last_error().c_str());
     }
@@ -2679,7 +2688,8 @@ int main()
     const auto lod_hold = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
     const auto lod_coarse = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 4.f, 0.f, -1.f);
     const auto lod_finest = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 0.f, 1.f, -1.f);
-    if (lod_hold == 0 || lod_coarse == 0 || lod_finest == 0)
+    const auto lod_cap = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 0, 4.f, 0.f, 0.f);
+    if (lod_hold == 0 || lod_coarse == 0 || lod_finest == 0 || lod_cap == 0)
     {
         return fail(igpu_get_last_error().c_str());
     }
@@ -2755,6 +2765,42 @@ int main()
     if (lod_fine0_left != 255 || lod_fine0_right != 255)
     {
         return fail("sampler 0 did not restore the base level after the finest level");
+    }
+    if (!draw_lod(lod_cap_dest, lod_cap))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto lod_cap_left = igpu_texture_read(static_cast<std::uint64_t>(lod_cap_dest), 1, 4, 0, 0);
+    const auto lod_cap_right = igpu_texture_read(static_cast<std::uint64_t>(lod_cap_dest), 6, 4, 0, 0);
+    std::printf("lod cap      : %lld / %lld\n", static_cast<long long>(lod_cap_left),
+                static_cast<long long>(lod_cap_right));
+    if (lod_cap_left != 255 || lod_cap_right != 255)
+    {
+        return fail("coarsest level 0 did not keep the red base level");
+    }
+    if (!draw_lod(lod_cap0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto lod_cap0_left = igpu_texture_read(static_cast<std::uint64_t>(lod_cap0_dest), 1, 4, 0, 0);
+    const auto lod_cap0_right = igpu_texture_read(static_cast<std::uint64_t>(lod_cap0_dest), 6, 4, 0, 0);
+    std::printf("lod cap0     : %lld / %lld\n", static_cast<long long>(lod_cap0_left),
+                static_cast<long long>(lod_cap0_right));
+    if (lod_cap0_left != 255 || lod_cap0_right != 255)
+    {
+        return fail("sampler 0 did not restore the base level after the coarsest level");
+    }
+    if (!draw_lod(lod_uncap_dest, lod_coarse))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto lod_uncap_left = igpu_texture_read(static_cast<std::uint64_t>(lod_uncap_dest), 1, 4, 0, 0);
+    const auto lod_uncap_right = igpu_texture_read(static_cast<std::uint64_t>(lod_uncap_dest), 6, 4, 0, 0);
+    std::printf("lod uncap    : %lld / %lld\n", static_cast<long long>(lod_uncap_left),
+                static_cast<long long>(lod_uncap_right));
+    if (lod_uncap_left != 65280 || lod_uncap_right != 65280)
+    {
+        return fail("coarsest level 0 stayed applied after the draw");
     }
     if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
         !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
