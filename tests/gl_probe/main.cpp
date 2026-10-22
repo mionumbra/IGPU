@@ -2797,6 +2797,41 @@ int main()
     {
         return fail("coarsest level 0 stayed applied after the draw");
     }
+    const auto border_lod_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_lod0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (border_lod_dest == 0 || border_lod0_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_lod = igpu_sampler_state_create(0, 0, 0, 3, 3, 3, 1, 65280, 0, 4.f, 0.f, -1.f);
+    if (border_lod == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!draw_lod(border_lod_dest, border_lod))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_lod_left = igpu_texture_read(static_cast<std::uint64_t>(border_lod_dest), 1, 4, 0, 0);
+    const auto border_lod_right = igpu_texture_read(static_cast<std::uint64_t>(border_lod_dest), 6, 4, 0, 0);
+    std::printf("border lod   : %lld / %lld\n", static_cast<long long>(border_lod_left),
+                static_cast<long long>(border_lod_right));
+    if (border_lod_left != 65280 || border_lod_right != 65280)
+    {
+        return fail("border level offset 4 did not read the green coarser level");
+    }
+    if (!draw_lod(border_lod0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_lod0_left = igpu_texture_read(static_cast<std::uint64_t>(border_lod0_dest), 1, 4, 0, 0);
+    const auto border_lod0_right = igpu_texture_read(static_cast<std::uint64_t>(border_lod0_dest), 6, 4, 0, 0);
+    std::printf("border lod0  : %lld / %lld\n", static_cast<long long>(border_lod0_left),
+                static_cast<long long>(border_lod0_right));
+    if (border_lod0_left != 255 || border_lod0_right != 255)
+    {
+        return fail("sampler 0 did not restore the base level after the border level offset");
+    }
     const auto mip_border = igpu_sampler_state_create(0, 0, 1, 3, 3, 3, 1, 65280, 0, 0.f, 0.f, -1.f);
     if (mip_border != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
     {
