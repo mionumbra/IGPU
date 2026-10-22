@@ -1573,11 +1573,14 @@ namespace igpu
                                                               float finest, float coarsest)
     {
         // Magnification and minification may each be nearest or linear.
-        // Mip stays nearest. A level offset selects a coarser mip. A finest
-        // level above 0 raises that selection. A coarsest level below the
-        // unlimited sentinel lowers it. Every axis must be border. The border
-        // color is applied only for this draw.
-        if (mip != 0 || (magnification != 0 && magnification != 1) || (minification != 0 && minification != 1))
+        // Linear mip filtering blends neighboring levels. A level offset
+        // selects a coarser mip. A finest level above 0 raises that
+        // selection. A coarsest level below the unlimited sentinel lowers
+        // it. Every axis must be border. The border color is applied only
+        // for this draw.
+        const bool mip_linear = mip == 1;
+        if ((mip != 0 && !mip_linear) || (magnification != 0 && magnification != 1) ||
+            (minification != 0 && minification != 1))
         {
             set_last_error("igpu_sampler_state_create: the opengl backend only samples the nearest texel");
             return 0;
@@ -1596,7 +1599,7 @@ namespace igpu
         const bool linear_min = minification == 1;
         const std::uint64_t handle = g_next_sampler++;
         g_samplers.emplace(handle, SamplerObject{3, 3, linear, red, green, blue, alpha, linear_min, level_offset,
-                                                 finest, coarsest});
+                                                 finest, coarsest, mip_linear});
         return static_cast<std::int64_t>(handle);
     }
 
