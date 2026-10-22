@@ -3093,6 +3093,40 @@ int main()
     {
         return fail("sampler 0 did not restore nearest mip filtering after the border sampler");
     }
+    // Same 2x2 and texture2DLod. Offset 0.5 pushes lod 0.5 onto the green
+    // level. The blue border must not leak into that texel. Sampler 0 must
+    // not keep the offset.
+    const auto border_mbias_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_mbias0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (border_mbias_dest == 0 || border_mbias0_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mbias = igpu_sampler_state_create(0, 0, 1, 3, 3, 3, 1, 16711680, 0, 0.5f, 0.f, -1.f);
+    if (border_mbias == 0 || !draw_lod(border_mbias_dest, border_mbias))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mbias_left = igpu_texture_read(static_cast<std::uint64_t>(border_mbias_dest), 1, 4, 0, 0);
+    const auto border_mbias_right = igpu_texture_read(static_cast<std::uint64_t>(border_mbias_dest), 6, 4, 0, 0);
+    std::printf("border mbias : %lld / %lld\n", static_cast<long long>(border_mbias_left),
+                static_cast<long long>(border_mbias_right));
+    if (border_mbias_left != 65280 || border_mbias_right != 65280)
+    {
+        return fail("border level offset 0.5 with linear mip filtering did not read the green coarser level");
+    }
+    if (!draw_lod(border_mbias0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mbias0_left = igpu_texture_read(static_cast<std::uint64_t>(border_mbias0_dest), 1, 4, 0, 0);
+    const auto border_mbias0_right = igpu_texture_read(static_cast<std::uint64_t>(border_mbias0_dest), 6, 4, 0, 0);
+    std::printf("border mbias0: %lld / %lld\n", static_cast<long long>(border_mbias0_left),
+                static_cast<long long>(border_mbias0_right));
+    if (border_mbias0_left != 65280 || border_mbias0_right != 65280)
+    {
+        return fail("sampler 0 did not restore nearest mip filtering after the border level offset");
+    }
     // Level 0 is red on the left and blue on the right. Level 1 is green.
     // texture2DLod at (0.4, 0.5) with lod 0.5. Nearest minification stays on
     // the red texel. Linear minification mixes that seam with green.
