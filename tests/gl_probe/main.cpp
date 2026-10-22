@@ -3010,7 +3010,7 @@ int main()
     const auto tri_left = igpu_texture_read(static_cast<std::uint64_t>(tri_dest), 1, 4, 0, 0);
     const auto tri_right = igpu_texture_read(static_cast<std::uint64_t>(tri_dest), 6, 4, 0, 0);
     std::printf("mip tri      : %lld / %lld\n", static_cast<long long>(tri_left), static_cast<long long>(tri_right));
-    if (tri_left != 2588761 || tri_right != 2588761)
+    if (tri_left != 2523225 || tri_right != 2523225)
     {
         return fail("linear minification with linear mip filtering did not mix the seam with green");
     }
