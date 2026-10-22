@@ -2935,11 +2935,6 @@ int main()
     {
         return fail("border coarsest level 0 stayed applied after the draw");
     }
-    const auto mip_border = igpu_sampler_state_create(0, 0, 1, 3, 3, 3, 1, 65280, 0, 0.f, 0.f, -1.f);
-    if (mip_border != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
-    {
-        return fail("linear mip filtering on a border sampler was accepted");
-    }
     const char* mip_ps =
         "#version 120\n"
         "#extension GL_ARB_shader_texture_lod : require\n"
@@ -3060,6 +3055,43 @@ int main()
     if (mip_plain_left != 65280 || mip_plain_right != 65280)
     {
         return fail("sampler 0 did not restore nearest mip filtering after the linear mip draw");
+    }
+    // Same 2x2, texture2DLod at (0.25, 0.5), lod 0.5. Border is blue.
+    // Linear mip filtering blends red and green. A leaked border is not 32896.
+    const auto border_mip_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_mip0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (border_mip_dest == 0 || border_mip0_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mip = igpu_sampler_state_create(0, 0, 1, 3, 3, 3, 1, 16711680, 0, 0.f, 0.f, -1.f);
+    if (border_mip == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!draw_lod(border_mip_dest, border_mip))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mip_left = igpu_texture_read(static_cast<std::uint64_t>(border_mip_dest), 1, 4, 0, 0);
+    const auto border_mip_right = igpu_texture_read(static_cast<std::uint64_t>(border_mip_dest), 6, 4, 0, 0);
+    std::printf("border mip   : %lld / %lld\n", static_cast<long long>(border_mip_left),
+                static_cast<long long>(border_mip_right));
+    if (border_mip_left != 32896 || border_mip_right != 32896)
+    {
+        return fail("border linear mip filtering at lod 0.5 was not the red-green mix");
+    }
+    if (!draw_lod(border_mip0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mip0_left = igpu_texture_read(static_cast<std::uint64_t>(border_mip0_dest), 1, 4, 0, 0);
+    const auto border_mip0_right = igpu_texture_read(static_cast<std::uint64_t>(border_mip0_dest), 6, 4, 0, 0);
+    std::printf("border mip0  : %lld / %lld\n", static_cast<long long>(border_mip0_left),
+                static_cast<long long>(border_mip0_right));
+    if (border_mip0_left != 65280 || border_mip0_right != 65280)
+    {
+        return fail("sampler 0 did not restore nearest mip filtering after the border sampler");
     }
     // Level 0 is red on the left and blue on the right. Level 1 is green.
     // texture2DLod at (0.4, 0.5) with lod 0.5. Nearest minification stays on
