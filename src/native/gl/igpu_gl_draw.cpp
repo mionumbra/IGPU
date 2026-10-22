@@ -63,6 +63,10 @@
 #define GL_LINEAR_MIPMAP_NEAREST 0x2701
 #endif
 
+#ifndef GL_NEAREST_MIPMAP_LINEAR
+#define GL_NEAREST_MIPMAP_LINEAR 0x2702
+#endif
+
 #ifndef GL_RENDERBUFFER
 #define GL_RENDERBUFFER 0x8D41
 #define GL_DEPTH_ATTACHMENT 0x8D00
@@ -122,6 +126,7 @@ namespace igpu
             float finest = 0.f;
             // Matches the no-limit value in sampler_state_create_full.
             float coarsest = 3.402823466e+38f;
+            bool linear_mip = false;
         };
 
         std::unordered_map<std::uint64_t, SamplerObject> g_samplers;
@@ -1336,6 +1341,7 @@ namespace igpu
         std::int32_t address_v = 0;
         bool linear = false;
         bool linear_min = false;
+        bool mip_linear = false;
         float level_offset = 0.f;
         float finest = 0.f;
         float coarsest = 3.402823466e+38f;
@@ -1356,6 +1362,7 @@ namespace igpu
             address_v = sampler_it->second.address_v;
             linear = sampler_it->second.linear;
             linear_min = sampler_it->second.linear_min;
+            mip_linear = sampler_it->second.linear_mip;
             level_offset = sampler_it->second.level_offset;
             finest = sampler_it->second.finest;
             coarsest = sampler_it->second.coarsest;
@@ -1411,6 +1418,12 @@ namespace igpu
                 glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &previous_min);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
                                 linear_min ? GL_LINEAR_MIPMAP_NEAREST : GL_NEAREST_MIPMAP_NEAREST);
+                adjust_min = true;
+            }
+            if (mip_linear)
+            {
+                glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &previous_min);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
                 adjust_min = true;
             }
             if (level_offset != 0.f)
@@ -1509,11 +1522,16 @@ namespace igpu
                                                        float coarsest)
     {
         // Magnification and minification may each be nearest or linear.
-        // Mip filtering stays nearest. A level offset selects a coarser level.
-        // A finest level above 0 raises that selection. A coarsest level below
-        // the unlimited sentinel lowers it. U, V, and W may differ.
-        // W is checked and not stored.
-        if (mip != 0 || (magnification != 0 && magnification != 1) || (minification != 0 && minification != 1))
+        // Linear mip filtering is nearest within a level and linear between
+        // levels. It is accepted only with nearest minification, no level
+        // offset, finest 0, and an unlimited coarsest level. A level offset
+        // selects a coarser level. A finest level above 0 raises that
+        // selection. A coarsest level below the unlimited sentinel lowers it.
+        // U, V, and W may differ. W is checked and not stored.
+        const bool mip_linear = mip == 1 && minification == 0 && level_offset == 0.f && finest == 0.f &&
+                                !(coarsest < 3.402823466e+38f);
+        if ((mip != 0 && !mip_linear) || (magnification != 0 && magnification != 1) ||
+            (minification != 0 && minification != 1))
         {
             set_last_error("igpu_sampler_state_create: the opengl backend only samples the nearest texel");
             return 0;
@@ -1534,7 +1552,8 @@ namespace igpu
         const bool linear = magnification == 1;
         const bool linear_min = minification == 1;
         const std::uint64_t handle = g_next_sampler++;
-        g_samplers.emplace(handle, SamplerObject{address_u, address_v, linear, 0.f, 0.f, 0.f, 1.f, linear_min, level_offset, finest, coarsest});
+        g_samplers.emplace(handle, SamplerObject{address_u, address_v, linear, 0.f, 0.f, 0.f, 1.f, linear_min, level_offset,
+                                                 finest, coarsest, mip_linear});
         return static_cast<std::int64_t>(handle);
     }
 
