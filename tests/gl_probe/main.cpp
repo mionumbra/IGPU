@@ -2797,11 +2797,6 @@ int main()
     {
         return fail("coarsest level 0 stayed applied after the draw");
     }
-    const auto mip_with_min = igpu_sampler_state_create(0, 1, 1, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
-    if (mip_with_min != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
-    {
-        return fail("linear minification with linear mip filtering was accepted");
-    }
     const auto mip_border = igpu_sampler_state_create(0, 0, 1, 3, 3, 3, 1, 65280, 0, 0.f, 0.f, -1.f);
     if (mip_border != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
     {
@@ -2927,6 +2922,107 @@ int main()
     if (mip_plain_left != 65280 || mip_plain_right != 65280)
     {
         return fail("sampler 0 did not restore nearest mip filtering after the linear mip draw");
+    }
+    // Level 0 is red on the left and blue on the right. Level 1 is green.
+    // texture2DLod at (0.4, 0.5) with lod 0.5. Nearest minification stays on
+    // the red texel. Linear minification mixes that seam with green.
+    const auto tri_source = igpu_texture_create(0, 2, 2, 1, 6, true, false, 2);
+    const auto tri_near_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto tri_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto tri_plain_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (tri_source == 0 || tri_near_dest == 0 || tri_dest == 0 || tri_plain_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(colour_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(colour_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto tri_target = encode_u64(static_cast<std::uint64_t>(tri_source));
+    const auto tri_zero = encode_u64(0);
+    const auto tri_mip1 = encode_u64(1);
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(colour_buffer),
+                                     static_cast<std::uint64_t>(colour_layout), 4, 0, 12, as_array(tri_target),
+                                     as_array(tri_zero), as_array(tri_zero), 0, 0, 0, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_draw_to_render_targets(static_cast<std::uint64_t>(lod_green_buffer),
+                                     static_cast<std::uint64_t>(colour_layout), 4, 0, 6, as_array(tri_target),
+                                     as_array(tri_zero), as_array(tri_mip1), 0, 0, 0, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (igpu_texture_read(static_cast<std::uint64_t>(tri_source), 0, 0, 0, 0) != 255 ||
+        igpu_texture_read(static_cast<std::uint64_t>(tri_source), 1, 0, 0, 0) != 16711680 ||
+        igpu_texture_read(static_cast<std::uint64_t>(tri_source), 0, 0, 0, 1) != 65280)
+    {
+        return fail("trilinear source was not red, blue, then green");
+    }
+    const char* tri_ps =
+        "#version 120\n"
+        "#extension GL_ARB_shader_texture_lod : require\n"
+        "uniform sampler2D igpu_tex;\n"
+        "varying vec2 v_uv;\n"
+        "void main() {\n"
+        "  gl_FragColor = texture2DLod(igpu_tex, vec2(0.4, 0.5), 0.5);\n"
+        "}\n";
+    const auto tri_frag = igpu_shader_compile(tri_ps, "main", 1, "glsl");
+    if (tri_frag == 0 || !igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(tri_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto tri_near = igpu_sampler_state_create(0, 0, 1, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    const auto tri_linear = igpu_sampler_state_create(0, 1, 1, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (tri_near == 0 || tri_linear == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto draw_tri = [&](std::int64_t dest, std::int64_t sampler) -> bool {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(dest), saved, viewport))
+        {
+            return false;
+        }
+        const bool drew = igpu_draw_sampled(static_cast<std::uint64_t>(sample_buffer),
+                                            static_cast<std::uint64_t>(sample_layout), 4, 0, 6,
+                                            static_cast<std::uint64_t>(tri_source), 0, 0, 0, sampler);
+        igpu::gl_color_target_end(saved, viewport);
+        return drew;
+    };
+    if (!draw_tri(tri_near_dest, tri_near))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto tri_near_left = igpu_texture_read(static_cast<std::uint64_t>(tri_near_dest), 1, 4, 0, 0);
+    const auto tri_near_right = igpu_texture_read(static_cast<std::uint64_t>(tri_near_dest), 6, 4, 0, 0);
+    if (tri_near_left != 32896 || tri_near_right != 32896)
+    {
+        return fail("nearest minification at u=0.4 did not mix red with the green coarser level");
+    }
+    if (!draw_tri(tri_dest, tri_linear))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto tri_left = igpu_texture_read(static_cast<std::uint64_t>(tri_dest), 1, 4, 0, 0);
+    const auto tri_right = igpu_texture_read(static_cast<std::uint64_t>(tri_dest), 6, 4, 0, 0);
+    std::printf("mip tri      : %lld / %lld\n", static_cast<long long>(tri_left), static_cast<long long>(tri_right));
+    if (tri_left != 2523225 || tri_right != 2523225)
+    {
+        return fail("linear minification with linear mip filtering did not mix the seam with green");
+    }
+    if (!draw_tri(tri_plain_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto tri_plain_left = igpu_texture_read(static_cast<std::uint64_t>(tri_plain_dest), 1, 4, 0, 0);
+    const auto tri_plain_right = igpu_texture_read(static_cast<std::uint64_t>(tri_plain_dest), 6, 4, 0, 0);
+    if (tri_plain_left != 65280 || tri_plain_right != 65280)
+    {
+        return fail("sampler 0 did not restore nearest mip filtering after trilinear sampling");
     }
     if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
         !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))

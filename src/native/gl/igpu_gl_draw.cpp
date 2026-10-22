@@ -67,6 +67,10 @@
 #define GL_NEAREST_MIPMAP_LINEAR 0x2702
 #endif
 
+#ifndef GL_LINEAR_MIPMAP_LINEAR
+#define GL_LINEAR_MIPMAP_LINEAR 0x2703
+#endif
+
 #ifndef GL_RENDERBUFFER
 #define GL_RENDERBUFFER 0x8D41
 #define GL_DEPTH_ATTACHMENT 0x8D00
@@ -1426,7 +1430,8 @@ namespace igpu
                 {
                     glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &previous_min);
                 }
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                linear_min ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR);
                 adjust_min = true;
             }
             if (level_offset != 0.f)
@@ -1525,13 +1530,15 @@ namespace igpu
                                                        float coarsest)
     {
         // Magnification and minification may each be nearest or linear.
-        // Linear mip filtering is nearest within a level and linear between
-        // levels. It is accepted with nearest minification, any level offset,
-        // any finest level, and any coarsest level. The offset is added to
-        // the shader LOD. A finest level above 0 raises the selection. A
-        // coarsest level below the unlimited sentinel lowers it. U, V, and W
-        // may differ. W is checked and not stored.
-        const bool mip_linear = mip == 1 && minification == 0;
+        // Linear mip filtering blends neighboring levels. Nearest
+        // minification stays on one texel in the chosen level. Linear
+        // minification blends texels inside that level. Either is accepted
+        // with any level offset, any finest level, and any coarsest level.
+        // The offset is added to the shader LOD. A finest level above 0
+        // raises the selection. A coarsest level below the unlimited
+        // sentinel lowers it. U, V, and W may differ. W is checked and not
+        // stored.
+        const bool mip_linear = mip == 1;
         if ((mip != 0 && !mip_linear) || (magnification != 0 && magnification != 1) ||
             (minification != 0 && minification != 1))
         {
