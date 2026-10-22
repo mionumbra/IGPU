@@ -3324,6 +3324,56 @@ int main()
     {
         return fail("sampler 0 did not restore nearest mip filtering after trilinear sampling");
     }
+    // Same 2x2 and texture2DLod at (0.4, 0.5), lod 0.5. Linear minification
+    // mixes the red-blue seam with the green coarser level. Level 1 is 1x1,
+    // so its linear filter at u=0.4 also takes 0.1 of the blue border.
+    // That is red 89, green 115, blue 51. Clamp-to-edge would stay at
+    // 2523225. The next border sampler uses nearest minification, so the
+    // red-green mix returns. Sampler 0 must not keep the linear min filter.
+    const auto border_mtri_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_mnear_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_mtri0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (border_mtri_dest == 0 || border_mnear_dest == 0 || border_mtri0_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mtri = igpu_sampler_state_create(0, 1, 1, 3, 3, 3, 1, 16711680, 0, 0.f, 0.f, -1.f);
+    if (border_mtri == 0 || !draw_tri(border_mtri_dest, border_mtri))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mtri_left = igpu_texture_read(static_cast<std::uint64_t>(border_mtri_dest), 1, 4, 0, 0);
+    const auto border_mtri_right = igpu_texture_read(static_cast<std::uint64_t>(border_mtri_dest), 6, 4, 0, 0);
+    std::printf("border mtri  : %lld / %lld\n", static_cast<long long>(border_mtri_left),
+                static_cast<long long>(border_mtri_right));
+    if (border_mtri_left != 3371865 || border_mtri_right != 3371865)
+    {
+        return fail("border linear minification with linear mip filtering did not mix the seam, green, and border");
+    }
+    if (!draw_tri(border_mnear_dest, border_mip))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mnear_left = igpu_texture_read(static_cast<std::uint64_t>(border_mnear_dest), 1, 4, 0, 0);
+    const auto border_mnear_right = igpu_texture_read(static_cast<std::uint64_t>(border_mnear_dest), 6, 4, 0, 0);
+    std::printf("border mnear : %lld / %lld\n", static_cast<long long>(border_mnear_left),
+                static_cast<long long>(border_mnear_right));
+    if (border_mnear_left != 32896 || border_mnear_right != 32896)
+    {
+        return fail("border linear minification stayed applied after the nearest minification draw");
+    }
+    if (!draw_tri(border_mtri0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mtri0_left = igpu_texture_read(static_cast<std::uint64_t>(border_mtri0_dest), 1, 4, 0, 0);
+    const auto border_mtri0_right = igpu_texture_read(static_cast<std::uint64_t>(border_mtri0_dest), 6, 4, 0, 0);
+    std::printf("border mtri0 : %lld / %lld\n", static_cast<long long>(border_mtri0_left),
+                static_cast<long long>(border_mtri0_right));
+    if (border_mtri0_left != 65280 || border_mtri0_right != 65280)
+    {
+        return fail("sampler 0 did not restore nearest mip filtering after the border trilinear draw");
+    }
     if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
         !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
     {
