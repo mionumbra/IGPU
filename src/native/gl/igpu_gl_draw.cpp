@@ -1527,11 +1527,11 @@ namespace igpu
         // Magnification and minification may each be nearest or linear.
         // Linear mip filtering is nearest within a level and linear between
         // levels. It is accepted with nearest minification, any level offset,
-        // finest 0, and an unlimited coarsest level. The offset is added to
-        // the shader LOD. A finest level above 0 raises the selection. A
-        // coarsest level below the unlimited sentinel lowers it. U, V, and W
-        // may differ. W is checked and not stored.
-        const bool mip_linear = mip == 1 && minification == 0 && finest == 0.f && !(coarsest < 3.402823466e+38f);
+        // any finest level, and an unlimited coarsest level. The offset is
+        // added to the shader LOD. A finest level above 0 raises the
+        // selection. A coarsest level below the unlimited sentinel lowers it.
+        // U, V, and W may differ. W is checked and not stored.
+        const bool mip_linear = mip == 1 && minification == 0 && !(coarsest < 3.402823466e+38f);
         if ((mip != 0 && !mip_linear) || (magnification != 0 && magnification != 1) ||
             (minification != 0 && minification != 1))
         {
