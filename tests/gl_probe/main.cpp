@@ -2802,11 +2802,6 @@ int main()
     {
         return fail("linear minification with linear mip filtering was accepted");
     }
-    const auto mip_with_finest = igpu_sampler_state_create(0, 0, 1, 0, 0, 0, 1, 0, 0, 0.f, 1.f, -1.f);
-    if (mip_with_finest != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
-    {
-        return fail("a finest level with linear mip filtering was accepted");
-    }
     const auto mip_with_coarsest = igpu_sampler_state_create(0, 0, 1, 0, 0, 0, 1, 0, 0, 0.f, 0.f, 0.f);
     if (mip_with_coarsest != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
     {
@@ -2842,11 +2837,12 @@ int main()
         return fail(mip_error.c_str());
     }
     const auto mip_point_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto mip_fine_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto mip_linear_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto mip_bias_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto mip_plain_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
-    if (mip_point_dest == 0 || mip_linear_dest == 0 || mip_bias_dest == 0 || mip_plain_dest == 0 ||
-        !igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
+    if (mip_point_dest == 0 || mip_fine_dest == 0 || mip_linear_dest == 0 || mip_bias_dest == 0 ||
+        mip_plain_dest == 0 || !igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
         !igpu_shader_bind(static_cast<std::uint64_t>(mip_frag), 1))
     {
         return fail(igpu_get_last_error().c_str());
@@ -2863,6 +2859,24 @@ int main()
     {
         return fail("nearest mip at lod 0.5 did not read the green coarser level");
     }
+    const auto mip_fine = igpu_sampler_state_create(0, 0, 1, 0, 0, 0, 1, 0, 0, 0.f, 1.f, -1.f);
+    if (mip_fine == 0)
+    {
+        const std::string mip_fine_error = igpu_get_last_error();
+        return fail(mip_fine_error.c_str());
+    }
+    if (!draw_lod(mip_fine_dest, mip_fine))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mip_fine_left = igpu_texture_read(static_cast<std::uint64_t>(mip_fine_dest), 1, 4, 0, 0);
+    const auto mip_fine_right = igpu_texture_read(static_cast<std::uint64_t>(mip_fine_dest), 6, 4, 0, 0);
+    std::printf("mip fine     : %lld / %lld\n", static_cast<long long>(mip_fine_left),
+                static_cast<long long>(mip_fine_right));
+    if (mip_fine_left != 65280 || mip_fine_right != 65280)
+    {
+        return fail("finest level 1 with linear mip filtering did not read the green coarser level");
+    }
     if (!draw_lod(mip_linear_dest, mip_linear))
     {
         return fail(igpu_get_last_error().c_str());
@@ -2873,7 +2887,7 @@ int main()
                 static_cast<long long>(mip_linear_right));
     if (mip_linear_left != 32896 || mip_linear_right != 32896)
     {
-        return fail("linear mip at lod 0.5 did not mix red 128 and green 128");
+        return fail("linear mip after the finest level did not return to the red-green mix");
     }
     const auto mip_bias = igpu_sampler_state_create(0, 0, 1, 0, 0, 0, 1, 0, 0, 0.5f, 0.f, -1.f);
     if (mip_bias == 0 || !draw_lod(mip_bias_dest, mip_bias))
