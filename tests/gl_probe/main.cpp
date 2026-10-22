@@ -2563,6 +2563,41 @@ int main()
     {
         return fail("sampler 0 did not restore nearest magnification and minification");
     }
+    const auto border_min_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_min0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (border_min_dest == 0 || border_min0_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_min = igpu_sampler_state_create(0, 1, 0, 3, 3, 3, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (border_min == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!draw_minify(border_min_dest, border_min))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_min_left = igpu_texture_read(static_cast<std::uint64_t>(border_min_dest), 1, 4, 0, 0);
+    const auto border_min_right = igpu_texture_read(static_cast<std::uint64_t>(border_min_dest), 6, 4, 0, 0);
+    std::printf("border min   : %lld / %lld\n", static_cast<long long>(border_min_left),
+                static_cast<long long>(border_min_right));
+    if (border_min_left != 255 || border_min_right != 5046450)
+    {
+        return fail("border point magnification and linear minification were not red and the 178/77 blend");
+    }
+    if (!draw_minify(border_min0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_min0_left = igpu_texture_read(static_cast<std::uint64_t>(border_min0_dest), 1, 4, 0, 0);
+    const auto border_min0_right = igpu_texture_read(static_cast<std::uint64_t>(border_min0_dest), 6, 4, 0, 0);
+    std::printf("border min0  : %lld / %lld\n", static_cast<long long>(border_min0_left),
+                static_cast<long long>(border_min0_right));
+    if (border_min0_left != 255 || border_min0_right != 255)
+    {
+        return fail("sampler 0 did not restore nearest minification after the border sampler");
+    }
     if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
         !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
     {
@@ -2573,11 +2608,6 @@ int main()
     if (border_mixed != 0 || std::string(igpu_get_last_error()).find("border on every axis") == std::string::npos)
     {
         return fail("border mixed with clamp was accepted");
-    }
-    const auto border_minify = igpu_sampler_state_create(0, 1, 0, 3, 3, 3, 1, 0, 0, 0.f, 0.f, -1.f);
-    if (border_minify != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
-    {
-        return fail("linear minification on a border sampler was accepted");
     }
     const auto wrap_compare = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 1, 0.f, 0.f, -1.f);
     if (wrap_compare != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)
