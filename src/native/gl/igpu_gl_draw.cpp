@@ -1572,8 +1572,10 @@ namespace igpu
                                                               float green, float blue, float alpha, float level_offset,
                                                               float finest, float coarsest)
     {
-        // One mip. Magnification may be nearest or linear. Minification and mip stay nearest.
-        // Every axis must be border. The border color is applied only for this draw.
+        // Magnification may be nearest or linear. Minification and mip stay nearest.
+        // A level offset selects a coarser mip and samples the nearest texel in it.
+        // Finest stays 0 and coarsest stays unlimited. Every axis must be border.
+        // The border color is applied only for this draw.
         if (minification != 0 || mip != 0 || (magnification != 0 && magnification != 1))
         {
             set_last_error("igpu_sampler_state_create: the opengl backend only samples the nearest texel");
@@ -1584,14 +1586,14 @@ namespace igpu
             set_last_error("igpu_sampler_state_create: the opengl backend only accepts border on every axis");
             return 0;
         }
-        if (level_offset != 0.f || finest != 0.f || !(coarsest >= 3.402823466e+38f))
+        if (finest != 0.f || !(coarsest >= 3.402823466e+38f))
         {
             set_last_error("igpu_sampler_state_create: the opengl backend has no mip chain");
             return 0;
         }
         const bool linear = magnification == 1;
         const std::uint64_t handle = g_next_sampler++;
-        g_samplers.emplace(handle, SamplerObject{3, 3, linear, red, green, blue, alpha});
+        g_samplers.emplace(handle, SamplerObject{3, 3, linear, red, green, blue, alpha, false, level_offset});
         return static_cast<std::int64_t>(handle);
     }
 
