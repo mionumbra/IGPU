@@ -2802,11 +2802,6 @@ int main()
     {
         return fail("linear minification with linear mip filtering was accepted");
     }
-    const auto mip_with_offset = igpu_sampler_state_create(0, 0, 1, 0, 0, 0, 1, 0, 0, 4.f, 0.f, -1.f);
-    if (mip_with_offset != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
-    {
-        return fail("a level offset with linear mip filtering was accepted");
-    }
     const auto mip_with_finest = igpu_sampler_state_create(0, 0, 1, 0, 0, 0, 1, 0, 0, 0.f, 1.f, -1.f);
     if (mip_with_finest != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
     {
@@ -2848,8 +2843,9 @@ int main()
     }
     const auto mip_point_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto mip_linear_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto mip_bias_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto mip_plain_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
-    if (mip_point_dest == 0 || mip_linear_dest == 0 || mip_plain_dest == 0 ||
+    if (mip_point_dest == 0 || mip_linear_dest == 0 || mip_bias_dest == 0 || mip_plain_dest == 0 ||
         !igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
         !igpu_shader_bind(static_cast<std::uint64_t>(mip_frag), 1))
     {
@@ -2878,6 +2874,19 @@ int main()
     if (mip_linear_left != 32896 || mip_linear_right != 32896)
     {
         return fail("linear mip at lod 0.5 did not mix red 128 and green 128");
+    }
+    const auto mip_bias = igpu_sampler_state_create(0, 0, 1, 0, 0, 0, 1, 0, 0, 0.5f, 0.f, -1.f);
+    if (mip_bias == 0 || !draw_lod(mip_bias_dest, mip_bias))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mip_bias_left = igpu_texture_read(static_cast<std::uint64_t>(mip_bias_dest), 1, 4, 0, 0);
+    const auto mip_bias_right = igpu_texture_read(static_cast<std::uint64_t>(mip_bias_dest), 6, 4, 0, 0);
+    std::printf("mip bias     : %lld / %lld\n", static_cast<long long>(mip_bias_left),
+                static_cast<long long>(mip_bias_right));
+    if (mip_bias_left != 65280 || mip_bias_right != 65280)
+    {
+        return fail("level offset 0.5 with linear mip filtering did not read the green coarser level");
     }
     if (!draw_lod(mip_plain_dest, 0))
     {
