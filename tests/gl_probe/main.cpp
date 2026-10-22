@@ -3175,6 +3175,54 @@ int main()
     {
         return fail("sampler 0 did not restore nearest mip filtering after the border finest level");
     }
+    // Same 2x2 and texture2DLod at lod 0.5. Coarsest level 0 keeps that
+    // fractional level on the red base. The blue border stays outside the
+    // texel. The next border sampler has no coarsest limit, so the
+    // red-green mix returns. Sampler 0 must not keep the linear mip filter.
+    const auto border_mcap_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_mopen_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_mcap0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (border_mcap_dest == 0 || border_mopen_dest == 0 || border_mcap0_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mcap = igpu_sampler_state_create(0, 0, 1, 3, 3, 3, 1, 16711680, 0, 0.f, 0.f, 0.f);
+    if (border_mcap == 0 || !draw_lod(border_mcap_dest, border_mcap))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mcap_left = igpu_texture_read(static_cast<std::uint64_t>(border_mcap_dest), 1, 4, 0, 0);
+    const auto border_mcap_right = igpu_texture_read(static_cast<std::uint64_t>(border_mcap_dest), 6, 4, 0, 0);
+    std::printf("border mcap  : %lld / %lld\n", static_cast<long long>(border_mcap_left),
+                static_cast<long long>(border_mcap_right));
+    if (border_mcap_left != 255 || border_mcap_right != 255)
+    {
+        return fail("border coarsest level 0 with linear mip filtering did not keep the red base level");
+    }
+    if (!draw_lod(border_mopen_dest, border_mip))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mopen_left = igpu_texture_read(static_cast<std::uint64_t>(border_mopen_dest), 1, 4, 0, 0);
+    const auto border_mopen_right = igpu_texture_read(static_cast<std::uint64_t>(border_mopen_dest), 6, 4, 0, 0);
+    std::printf("border mopen : %lld / %lld\n", static_cast<long long>(border_mopen_left),
+                static_cast<long long>(border_mopen_right));
+    if (border_mopen_left != 32896 || border_mopen_right != 32896)
+    {
+        return fail("border coarsest level stayed applied after the linear mip draw");
+    }
+    if (!draw_lod(border_mcap0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mcap0_left = igpu_texture_read(static_cast<std::uint64_t>(border_mcap0_dest), 1, 4, 0, 0);
+    const auto border_mcap0_right = igpu_texture_read(static_cast<std::uint64_t>(border_mcap0_dest), 6, 4, 0, 0);
+    std::printf("border mcap0 : %lld / %lld\n", static_cast<long long>(border_mcap0_left),
+                static_cast<long long>(border_mcap0_right));
+    if (border_mcap0_left != 65280 || border_mcap0_right != 65280)
+    {
+        return fail("sampler 0 did not restore nearest mip filtering after the border coarsest level");
+    }
     // Level 0 is red on the left and blue on the right. Level 1 is green.
     // texture2DLod at (0.4, 0.5) with lod 0.5. Nearest minification stays on
     // the red texel. Linear minification mixes that seam with green.
