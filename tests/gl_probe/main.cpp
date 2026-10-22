@@ -2579,11 +2579,6 @@ int main()
     {
         return fail("linear minification on a border sampler was accepted");
     }
-    const auto border_coarsest = igpu_sampler_state_create(0, 0, 0, 3, 3, 3, 1, 0, 0, 0.f, 0.f, 0.f);
-    if (border_coarsest != 0 || std::string(igpu_get_last_error()).find("no mip") == std::string::npos)
-    {
-        return fail("a coarsest level on a border sampler was accepted");
-    }
     const auto wrap_compare = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 1, 0.f, 0.f, -1.f);
     if (wrap_compare != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)
     {
@@ -2861,6 +2856,54 @@ int main()
     if (border_fine0_left != 255 || border_fine0_right != 255)
     {
         return fail("sampler 0 did not restore the base level after the border finest level");
+    }
+    const auto border_cap_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_cap0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_uncap_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (border_cap_dest == 0 || border_cap0_dest == 0 || border_uncap_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_cap = igpu_sampler_state_create(0, 0, 0, 3, 3, 3, 1, 0, 0, 4.f, 0.f, 0.f);
+    if (border_cap == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!draw_lod(border_cap_dest, border_cap))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_cap_left = igpu_texture_read(static_cast<std::uint64_t>(border_cap_dest), 1, 4, 0, 0);
+    const auto border_cap_right = igpu_texture_read(static_cast<std::uint64_t>(border_cap_dest), 6, 4, 0, 0);
+    std::printf("border cap   : %lld / %lld\n", static_cast<long long>(border_cap_left),
+                static_cast<long long>(border_cap_right));
+    if (border_cap_left != 255 || border_cap_right != 255)
+    {
+        return fail("border coarsest level 0 did not keep the red base level");
+    }
+    if (!draw_lod(border_cap0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_cap0_left = igpu_texture_read(static_cast<std::uint64_t>(border_cap0_dest), 1, 4, 0, 0);
+    const auto border_cap0_right = igpu_texture_read(static_cast<std::uint64_t>(border_cap0_dest), 6, 4, 0, 0);
+    std::printf("border cap0  : %lld / %lld\n", static_cast<long long>(border_cap0_left),
+                static_cast<long long>(border_cap0_right));
+    if (border_cap0_left != 255 || border_cap0_right != 255)
+    {
+        return fail("sampler 0 did not restore the base level after the border coarsest level");
+    }
+    if (!draw_lod(border_uncap_dest, border_lod))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_uncap_left = igpu_texture_read(static_cast<std::uint64_t>(border_uncap_dest), 1, 4, 0, 0);
+    const auto border_uncap_right = igpu_texture_read(static_cast<std::uint64_t>(border_uncap_dest), 6, 4, 0, 0);
+    std::printf("border uncap : %lld / %lld\n", static_cast<long long>(border_uncap_left),
+                static_cast<long long>(border_uncap_right));
+    if (border_uncap_left != 65280 || border_uncap_right != 65280)
+    {
+        return fail("border coarsest level 0 stayed applied after the draw");
     }
     const auto mip_border = igpu_sampler_state_create(0, 0, 1, 3, 3, 3, 1, 65280, 0, 0.f, 0.f, -1.f);
     if (mip_border != 0 || std::string(igpu_get_last_error()).find("nearest") == std::string::npos)
