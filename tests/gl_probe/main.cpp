@@ -2458,7 +2458,10 @@ int main()
     const auto minify_linear_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto minify_swap_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto minify_plain_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
-    if (minify_source == 0 || minify_linear_dest == 0 || minify_swap_dest == 0 || minify_plain_dest == 0)
+    const auto minify_both_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto minify_both0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (minify_source == 0 || minify_linear_dest == 0 || minify_swap_dest == 0 || minify_plain_dest == 0 ||
+        minify_both_dest == 0 || minify_both0_dest == 0)
     {
         return fail(igpu_get_last_error().c_str());
     }
@@ -2562,6 +2565,35 @@ int main()
     if (minify_plain_left != 255 || minify_plain_right != 255)
     {
         return fail("sampler 0 did not restore nearest magnification and minification");
+    }
+    // Same 2x2 and the same shader. Magnification and minification are both
+    // linear, and mip filtering stays nearest. There is no mip chain, so
+    // each side is the 178/77 blend of the red and blue texels. Nearest on
+    // either side would stay pure red. Sampler 0 must restore both filters.
+    const auto minify_both = igpu_sampler_state_create(1, 1, 0, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (minify_both == 0 || !draw_minify(minify_both_dest, minify_both))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto minify_both_left = igpu_texture_read(static_cast<std::uint64_t>(minify_both_dest), 1, 4, 0, 0);
+    const auto minify_both_right = igpu_texture_read(static_cast<std::uint64_t>(minify_both_dest), 6, 4, 0, 0);
+    std::printf("minify both   : %lld / %lld\n", static_cast<long long>(minify_both_left),
+                static_cast<long long>(minify_both_right));
+    if (minify_both_left != 5046450 || minify_both_right != 5046450)
+    {
+        return fail("linear magnification and linear minification were not both the 178/77 blend");
+    }
+    if (!draw_minify(minify_both0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto minify_both0_left = igpu_texture_read(static_cast<std::uint64_t>(minify_both0_dest), 1, 4, 0, 0);
+    const auto minify_both0_right = igpu_texture_read(static_cast<std::uint64_t>(minify_both0_dest), 6, 4, 0, 0);
+    std::printf("minify both0  : %lld / %lld\n", static_cast<long long>(minify_both0_left),
+                static_cast<long long>(minify_both0_right));
+    if (minify_both0_left != 255 || minify_both0_right != 255)
+    {
+        return fail("sampler 0 did not restore nearest magnification and minification after both were linear");
     }
     const auto border_min_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto border_min0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
