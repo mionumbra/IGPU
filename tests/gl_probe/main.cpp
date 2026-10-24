@@ -3428,6 +3428,43 @@ int main()
     {
         return fail("sampler 0 did not restore nearest magnification and nearest mip filtering");
     }
+    // Same 2x2 and the same shader. Magnification, minification, and mip
+    // filtering are all linear. The left half is still the 178/77 seam.
+    // The right half is texture2DLod at (0.4, 0.5), lod 0.5. Linear
+    // minification mixes the red-blue seam into that level, then linear
+    // mip filtering mixes the result with green. Nearest minification
+    // would stay at 32896. Sampler 0 must restore both filters.
+    const auto tri_mag_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto tri_mag0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (tri_mag_dest == 0 || tri_mag0_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto tri_mag = igpu_sampler_state_create(1, 1, 1, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (tri_mag == 0 || !draw_tri(tri_mag_dest, tri_mag))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto tri_mag_left = igpu_texture_read(static_cast<std::uint64_t>(tri_mag_dest), 1, 4, 0, 0);
+    const auto tri_mag_right = igpu_texture_read(static_cast<std::uint64_t>(tri_mag_dest), 6, 4, 0, 0);
+    std::printf("tri mag      : %lld / %lld\n", static_cast<long long>(tri_mag_left),
+                static_cast<long long>(tri_mag_right));
+    if (tri_mag_left != 5046450 || tri_mag_right != 2523225)
+    {
+        return fail("linear magnification with linear minification and linear mip filtering was not the 178/77 seam and the seam-green mix");
+    }
+    if (!draw_tri(tri_mag0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto tri_mag0_left = igpu_texture_read(static_cast<std::uint64_t>(tri_mag0_dest), 1, 4, 0, 0);
+    const auto tri_mag0_right = igpu_texture_read(static_cast<std::uint64_t>(tri_mag0_dest), 6, 4, 0, 0);
+    std::printf("tri mag0     : %lld / %lld\n", static_cast<long long>(tri_mag0_left),
+                static_cast<long long>(tri_mag0_right));
+    if (tri_mag0_left != 255 || tri_mag0_right != 65280)
+    {
+        return fail("sampler 0 did not restore nearest magnification and nearest mip filtering after trilinear magnification");
+    }
     // Same 2x2 and a green border. The left half samples u=1.0 with a tiny
     // derivative, so linear magnification mixes the blue edge texel with
     // that border. The right half uses texture2DLod at (0.4, 0.5), lod 0.5.
