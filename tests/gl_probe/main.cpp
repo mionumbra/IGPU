@@ -3374,6 +3374,60 @@ int main()
     {
         return fail("sampler 0 did not restore nearest mip filtering after the border trilinear draw");
     }
+    // Same 2x2. The left half uses a tiny derivative, so it takes
+    // magnification: linear magnification of level 0 at u=0.4 is the 178/77
+    // seam. The right half uses texture2DLod at lod 0.5, which takes
+    // minification. Nearest minification with linear mip filtering blends the
+    // red texel with the green coarser level. A two-level texture is created
+    // with nearest mip filtering, so lod 0.5 on sampler 0 is green. A
+    // derivative of 1 selects level 1 for both of those min filters.
+    const auto mag_mip_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto mag_mip0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (mag_mip_dest == 0 || mag_mip0_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const char* mag_mip_ps =
+        "#version 120\n"
+        "#extension GL_ARB_shader_texture_lod : require\n"
+        "uniform sampler2D igpu_tex;\n"
+        "varying vec2 v_uv;\n"
+        "void main() {\n"
+        "  vec4 magnified = texture2DGradARB(igpu_tex, vec2(0.4, 0.5), vec2(0.001, 0.0), vec2(0.0, 0.001));\n"
+        "  vec4 minified = texture2DLod(igpu_tex, vec2(0.4, 0.5), 0.5);\n"
+        "  gl_FragColor = v_uv.x < 0.5 ? magnified : minified;\n"
+        "}\n";
+    const auto mag_mip_frag = igpu_shader_compile(mag_mip_ps, "main", 1, "glsl");
+    if (mag_mip_frag == 0 || !igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(mag_mip_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mag_mip = igpu_sampler_state_create(1, 0, 1, 0, 0, 0, 1, 0, 0, 0.f, 0.f, -1.f);
+    if (mag_mip == 0 || !draw_tri(mag_mip_dest, mag_mip))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mag_mip_left = igpu_texture_read(static_cast<std::uint64_t>(mag_mip_dest), 1, 4, 0, 0);
+    const auto mag_mip_right = igpu_texture_read(static_cast<std::uint64_t>(mag_mip_dest), 6, 4, 0, 0);
+    std::printf("mag mip      : %lld / %lld\n", static_cast<long long>(mag_mip_left),
+                static_cast<long long>(mag_mip_right));
+    if (mag_mip_left != 5046450 || mag_mip_right != 32896)
+    {
+        return fail("linear magnification with linear mip filtering was not the 178/77 seam and the red-green mix");
+    }
+    if (!draw_tri(mag_mip0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto mag_mip0_left = igpu_texture_read(static_cast<std::uint64_t>(mag_mip0_dest), 1, 4, 0, 0);
+    const auto mag_mip0_right = igpu_texture_read(static_cast<std::uint64_t>(mag_mip0_dest), 6, 4, 0, 0);
+    std::printf("mag mip0     : %lld / %lld\n", static_cast<long long>(mag_mip0_left),
+                static_cast<long long>(mag_mip0_right));
+    if (mag_mip0_left != 255 || mag_mip0_right != 65280)
+    {
+        return fail("sampler 0 did not restore nearest magnification and nearest mip filtering");
+    }
     if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
         !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
     {
