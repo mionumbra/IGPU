@@ -3428,6 +3428,74 @@ int main()
     {
         return fail("sampler 0 did not restore nearest magnification and nearest mip filtering");
     }
+    // Same 2x2 and a green border. The left half samples u=1.0 with a tiny
+    // derivative, so linear magnification mixes the blue edge texel with
+    // that border. The right half uses texture2DLod at (0.4, 0.5), lod 0.5.
+    // Nearest minification stays on the red texel and ignores the border.
+    // Linear mip filtering then blends it with the green coarser level.
+    // Sampler 0 on this shader is the blue edge and green level 1. Sampler 0
+    // on the previous u=0.4 shader is pure red, so a stuck linear
+    // magnification filter cannot hide behind the edge texel.
+    const auto border_magm_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_mag0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_mag1_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (border_magm_dest == 0 || border_mag0_dest == 0 || border_mag1_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const char* border_magm_ps =
+        "#version 120\n"
+        "#extension GL_ARB_shader_texture_lod : require\n"
+        "uniform sampler2D igpu_tex;\n"
+        "varying vec2 v_uv;\n"
+        "void main() {\n"
+        "  vec4 magnified = texture2DGradARB(igpu_tex, vec2(1.0, 0.5), vec2(0.001, 0.0), vec2(0.0, 0.001));\n"
+        "  vec4 minified = texture2DLod(igpu_tex, vec2(0.4, 0.5), 0.5);\n"
+        "  gl_FragColor = v_uv.x < 0.5 ? magnified : minified;\n"
+        "}\n";
+    const auto border_magm_frag = igpu_shader_compile(border_magm_ps, "main", 1, "glsl");
+    if (border_magm_frag == 0 || !igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
+        !igpu_shader_bind(static_cast<std::uint64_t>(border_magm_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_magm = igpu_sampler_state_create(1, 0, 1, 3, 3, 3, 1, 65280, 0, 0.f, 0.f, -1.f);
+    if (border_magm == 0 || !draw_tri(border_magm_dest, border_magm))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_magm_left = igpu_texture_read(static_cast<std::uint64_t>(border_magm_dest), 1, 4, 0, 0);
+    const auto border_magm_right = igpu_texture_read(static_cast<std::uint64_t>(border_magm_dest), 6, 4, 0, 0);
+    std::printf("border magm  : %lld / %lld\n", static_cast<long long>(border_magm_left),
+                static_cast<long long>(border_magm_right));
+    if (border_magm_left != 8421376 || border_magm_right != 32896)
+    {
+        return fail("border linear magnification with linear mip filtering was not the green-blue edge and the red-green mix");
+    }
+    if (!draw_tri(border_mag0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mag0_left = igpu_texture_read(static_cast<std::uint64_t>(border_mag0_dest), 1, 4, 0, 0);
+    const auto border_mag0_right = igpu_texture_read(static_cast<std::uint64_t>(border_mag0_dest), 6, 4, 0, 0);
+    std::printf("border mag0  : %lld / %lld\n", static_cast<long long>(border_mag0_left),
+                static_cast<long long>(border_mag0_right));
+    if (border_mag0_left != 16711680 || border_mag0_right != 65280)
+    {
+        return fail("sampler 0 did not restore the blue edge and nearest mip filtering after the border draw");
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(mag_mip_frag), 1) || !draw_tri(border_mag1_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_mag1_left = igpu_texture_read(static_cast<std::uint64_t>(border_mag1_dest), 1, 4, 0, 0);
+    const auto border_mag1_right = igpu_texture_read(static_cast<std::uint64_t>(border_mag1_dest), 6, 4, 0, 0);
+    std::printf("border mag1  : %lld / %lld\n", static_cast<long long>(border_mag1_left),
+                static_cast<long long>(border_mag1_right));
+    if (border_mag1_left != 255 || border_mag1_right != 65280)
+    {
+        return fail("sampler 0 did not restore nearest magnification after the border draw");
+    }
     if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
         !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
     {
