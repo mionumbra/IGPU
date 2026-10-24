@@ -3533,6 +3533,65 @@ int main()
     {
         return fail("sampler 0 did not restore nearest magnification after the border draw");
     }
+    // Same 2x2, green border, and the border magnification shader. The left
+    // half samples u=1.0 with a tiny derivative, so linear magnification
+    // mixes the blue edge texel with the green border. The right half uses
+    // texture2DLod at (0.4, 0.5), lod 0.5. Linear minification mixes the
+    // red-blue seam into that level, then linear mip filtering mixes the
+    // result with the green coarser level. The green border matches that
+    // coarse texel, so the right pixel stays at the clamp trilinear value.
+    // Nearest minification would stay at the red-green mix. Sampler 0 on
+    // this shader is the blue edge and green level 1. Sampler 0 on the
+    // u=0.4 shader is pure red, so a stuck linear magnification filter
+    // cannot hide behind the clamped edge texel.
+    const auto border_trim_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_trim0_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto border_trim1_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (border_trim_dest == 0 || border_trim0_dest == 0 || border_trim1_dest == 0)
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(border_magm_frag), 1))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_trim = igpu_sampler_state_create(1, 1, 1, 3, 3, 3, 1, 65280, 0, 0.f, 0.f, -1.f);
+    if (border_trim == 0 || !draw_tri(border_trim_dest, border_trim))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_trim_left = igpu_texture_read(static_cast<std::uint64_t>(border_trim_dest), 1, 4, 0, 0);
+    const auto border_trim_right = igpu_texture_read(static_cast<std::uint64_t>(border_trim_dest), 6, 4, 0, 0);
+    std::printf("border trim  : %lld / %lld\n", static_cast<long long>(border_trim_left),
+                static_cast<long long>(border_trim_right));
+    if (border_trim_left != 8421376 || border_trim_right != 2523225)
+    {
+        return fail("border linear magnification with linear minification and linear mip filtering was not the green-blue edge and the seam-green mix");
+    }
+    if (!draw_tri(border_trim0_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_trim0_left = igpu_texture_read(static_cast<std::uint64_t>(border_trim0_dest), 1, 4, 0, 0);
+    const auto border_trim0_right = igpu_texture_read(static_cast<std::uint64_t>(border_trim0_dest), 6, 4, 0, 0);
+    std::printf("border trim0 : %lld / %lld\n", static_cast<long long>(border_trim0_left),
+                static_cast<long long>(border_trim0_right));
+    if (border_trim0_left != 16711680 || border_trim0_right != 65280)
+    {
+        return fail("sampler 0 did not restore the blue edge and nearest mip filtering after border trilinear magnification");
+    }
+    if (!igpu_shader_bind(static_cast<std::uint64_t>(mag_mip_frag), 1) || !draw_tri(border_trim1_dest, 0))
+    {
+        return fail(igpu_get_last_error().c_str());
+    }
+    const auto border_trim1_left = igpu_texture_read(static_cast<std::uint64_t>(border_trim1_dest), 1, 4, 0, 0);
+    const auto border_trim1_right = igpu_texture_read(static_cast<std::uint64_t>(border_trim1_dest), 6, 4, 0, 0);
+    std::printf("border trim1 : %lld / %lld\n", static_cast<long long>(border_trim1_left),
+                static_cast<long long>(border_trim1_right));
+    if (border_trim1_left != 255 || border_trim1_right != 65280)
+    {
+        return fail("sampler 0 did not restore nearest magnification after border trilinear magnification");
+    }
     if (!igpu_shader_bind(static_cast<std::uint64_t>(sample_vert), 0) ||
         !igpu_shader_bind(static_cast<std::uint64_t>(sample_frag), 1))
     {
