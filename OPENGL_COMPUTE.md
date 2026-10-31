@@ -4,7 +4,7 @@ This is the existing IGPU 0.5.0 API on the GL backend. The WGL probe builds GL; 
 
 ## Capabilities and resources
 
-`ShaderStageCompute` and `UnorderedAccess` require GL 4.3 or the complete compute/SSBO/image extension set, all required dispatch/binding/barrier/query entry points, and at least eight compute SSBO blocks and image units. Each group count is in `1..min(65535, hardware limit)`.
+`ShaderStageCompute` and `UnorderedAccess` require GL 4.3 or the complete compute/SSBO/image extension set, transform-feedback active/paused state queries, all required dispatch/binding/barrier/query entry points, and at least eight compute SSBO blocks and image units. Each group count is in `1..min(65535, hardware limit)`.
 
 `StructuredBuffer` additionally requires 32 SSBO bindings and eight storage blocks in each of the vertex, pixel and compute stages. These conservative gates cover the complete binding contract. GL UBOs and uniform reflection remain unavailable in this batch.
 
@@ -38,7 +38,7 @@ void main() {
 
 ## Dispatch and program lifetime
 
-Stage 2 compiles and links into a separate compute program. Binding, unbinding or releasing compute shaders preserves the current graphics program. A failed compute link preserves the previous shader and executable. Dispatch temporarily uses compute and restores the caller's program. A current program marked for deletion must first be unbound, since switching away would destroy it and prevent restoration.
+Stage 2 compiles and links into a separate compute program. Binding, unbinding or releasing compute shaders preserves the current graphics program. A failed compute link preserves the previous shader and executable. Dispatch temporarily uses compute and restores the caller's program. Active unpaused transform feedback must first be paused or ended; dispatch then preserves its paused capture state. A current program marked for deletion must first be unbound, since switching away would destroy it and prevent restoration.
 
 Dispatch arrays contain 1..8 entries. Kind 0 is an image, kind 1 a Storage buffer; entry position determines binding even with mixed kinds. Thus `[image, buffer, image]` uses image bindings 0 and 2 plus SSBO binding 1. Duplicate targets of the same kind are rejected. A single image may select a nonzero mip; mixed nonzero mips and nonzero layers retain the existing facade's rejection rules.
 

@@ -445,6 +445,50 @@ namespace
         std::printf("compute consumers: vertex/pixel storage inputs render 16 samples, compute image sampling and graphics program restoration passed\n");
         return true;
     }
+    bool transform_feedback_tests()
+    {
+        Fixture t;auto& f=igpu_gl_fns();
+        using Varyings=void(APIENTRY*)(GLuint,GLsizei,const char*const*,GLenum);
+        using Gen=void(APIENTRY*)(GLsizei,GLuint*);using Delete=void(APIENTRY*)(GLsizei,const GLuint*);
+        using Bind=void(APIENTRY*)(GLenum,GLuint);using Begin=void(APIENTRY*)(GLenum);using Action=void(APIENTRY*)();
+        auto varyings=reinterpret_cast<Varyings>(wglGetProcAddress("glTransformFeedbackVaryings"));
+        auto gen=reinterpret_cast<Gen>(wglGetProcAddress("glGenTransformFeedbacks"));
+        auto remove=reinterpret_cast<Delete>(wglGetProcAddress("glDeleteTransformFeedbacks"));
+        auto bind=reinterpret_cast<Bind>(wglGetProcAddress("glBindTransformFeedback"));
+        auto begin=reinterpret_cast<Begin>(wglGetProcAddress("glBeginTransformFeedback"));
+        auto end=reinterpret_cast<Action>(wglGetProcAddress("glEndTransformFeedback"));
+        auto pause=reinterpret_cast<Action>(wglGetProcAddress("glPauseTransformFeedback"));
+        auto resume=reinterpret_cast<Action>(wglGetProcAddress("glResumeTransformFeedback"));
+        if(!check(varyings&&gen&&remove&&bind&&begin&&end&&pause&&resume,"transform feedback inspection"))return false;
+        const auto shader=t.shader(core_source),output=t.buffer();
+        const auto program=f.CreateProgram();t.programs.push_back(program);
+        const auto vertex=f.CreateShader(0x8B31);
+        const char* text="#version 430\nout float captured;void main(){captured=float(gl_VertexID)+.5;gl_Position=vec4(0,0,0,1);}";
+        f.ShaderSource(vertex,1,&text,nullptr);f.CompileShader(vertex);f.AttachShader(program,vertex);f.DeleteShader(vertex);
+        const char* name="captured";varyings(program,1,&name,0x8C8C);f.LinkProgram(program);
+        GLint linked=0;f.GetProgramiv(program,0x8B82,&linked);
+        if(!check(shader&&output&&linked&&igpu_shader_bind(shader,2),"transform feedback fixtures"))return false;
+        GLint previous_tf=0,previous_buffer=0;glGetIntegerv(0x8E25,&previous_tf);glGetIntegerv(0x8C8F,&previous_buffer);
+        const auto discard=glIsEnabled(0x8C89);
+        GLuint tf=0,capture=0,vao=0;gen(1,&tf);bind(0x8E22,tf);
+        f.GenBuffers(1,&capture);f.BindBuffer(0x8C8E,capture);f.BufferData(0x8C8E,64,nullptr,0x88E4);f.BindBufferBase(0x8C8E,0,capture);
+        f.GenVertexArrays(1,&vao);f.BindVertexArray(vao);f.UseProgram(program);glEnable(0x8C89);
+        begin(GL_POINTS);glDrawArrays(GL_POINTS,0,1);
+        bool ok=t.rejected([&]{return dispatch(output);},"active unpaused transform feedback")&&t.read(output,{0,0,0,0});
+        GLint active=0,paused=0;glGetIntegerv(0x8E24,&active);glGetIntegerv(0x8E23,&paused);ok=ok&&active&&!paused;
+        pause();const Snapshot before;
+        const bool dispatched=dispatch(output);glGetIntegerv(0x8E24,&active);glGetIntegerv(0x8E23,&paused);
+        ok=ok&&dispatched&&active&&paused&&before==Snapshot{}&&t.read(output,{7,10,13,16});
+        resume();glDrawArrays(GL_POINTS,1,1);end();
+        std::array<float,2> captured{};f.GetBufferSubData(0x8C8E,0,sizeof(captured),captured.data());
+        const bool after=dispatch(output);ok=ok&&after&&before==Snapshot{}&&captured==std::array<float,2>{.5f,1.5f};
+        const auto error=glGetError();
+        bind(0x8E22,previous_tf);f.BindBuffer(0x8C8E,previous_buffer);remove(1,&tf);f.DeleteBuffers(1,&capture);
+        f.BindVertexArray(t.original.globals[3]);f.DeleteVertexArrays(1,&vao);if(!discard)glDisable(0x8C89);
+        if(!check(ok&&!error,"transform feedback guard, paused dispatch, resume output and post-capture dispatch"))return false;
+        std::printf("compute capture: active feedback rejected without mutation; paused/ended dispatch, resumed captured values and caller program preserved\n");
+        return true;
+    }
     bool capability_tests()
     {
         Fixture t;const auto shader=t.shader(core_source),buffer=t.buffer();
@@ -471,7 +515,7 @@ namespace
 
 bool run_gl_compute_tests()
 {
-    return buffer_and_input_tests() && image_and_multi_tests() && program_and_guard_tests() && graphics_consumers() && capability_tests();
+    return buffer_and_input_tests() && image_and_multi_tests() && program_and_guard_tests() && graphics_consumers() && transform_feedback_tests() && capability_tests();
 }
 
 bool run_gl_compute_shutdown_tests()

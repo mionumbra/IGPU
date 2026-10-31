@@ -11,6 +11,8 @@
 
 验证：旧后端拒绝计算编译见 `out/compute-red-run.log`；晚映射输入被错误接受见 `out/compute-expanded-red-run.log`；图像访问权限 RED 见 `out/compute-image-access-red-run.log`，均已修复。完整探针 `out/compute-complete-build.log`、`out/compute-complete-run.log` 通过：含三维组数、GPU 字、七格式/mip、八缓冲/图像、混合与原位读改写、16 样本顶点/像素读取、立即采样、状态恢复、关闭删除/重绑定和所有旧回归。Windows DLL 构建 `out/compute-dll-build.log` 和交接校验 `out/compute-handover-verified.log` 均通过；独立整批审查在合并前完成。
 
+独立审查指出活动且未暂停的 Transform Feedback 会阻止 UseProgram，导致错误成功。已实际观察 RED（`out/compute-feedback-red-run.log`：accepted=1、GL=0x502），补充分派前检查；回归同时核对未改输出、暂停/结束后成功、恢复捕获得到 0.5/1.5 和图形程序保持。低版本扩展路径也要求可查询捕获状态。
+
 下一整批优先补 UBO 与反射；之后还有三维/数组/立方纹理、多渲染目标、几何/曲面细分等 GL 能力。公开 API、版本与 `.yy`/`.yyp` 不变。
 
 ---

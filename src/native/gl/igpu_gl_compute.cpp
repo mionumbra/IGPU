@@ -110,6 +110,11 @@ namespace igpu
                     return fail(entry, "group counts must fit the context limits and 1..65535");
             if (!program) return fail(entry, "bind a compute shader first");
             if (writes.empty() || writes.size() > 8) return fail(entry, "pass 1 to 8 write targets");
+            GLboolean feedback_active = GL_FALSE, feedback_paused = GL_FALSE;
+            glGetBooleanv(0x8E24 /* TRANSFORM_FEEDBACK_ACTIVE */, &feedback_active);
+            if (feedback_active) glGetBooleanv(0x8E23 /* TRANSFORM_FEEDBACK_PAUSED */, &feedback_paused);
+            if (feedback_active && !feedback_paused)
+                return fail(entry, "pause or end transform feedback before dispatch");
             GLint current = 0, deleted = 0;
             glGetIntegerv(0x8B8D, &current);
             if (current) igpu_gl_fns().GetProgramiv(current, 0x8B80 /* DELETE_STATUS */, &deleted);
@@ -161,9 +166,11 @@ namespace igpu
 
     void gl_compute_initialize()
     {
-        context_compute = gl_context_at_least(4,3) ||
+        // Program switching must be able to inspect active/paused transform feedback.
+        const bool feedback_queries = gl_context_at_least(4,0) || gl_context_extension("GL_ARB_transform_feedback2");
+        context_compute = feedback_queries && (gl_context_at_least(4,3) ||
             (gl_context_extension("GL_ARB_compute_shader") && gl_context_extension("GL_ARB_shader_storage_buffer_object") &&
-             gl_context_extension("GL_ARB_shader_image_load_store"));
+             gl_context_extension("GL_ARB_shader_image_load_store")));
         binding_count = block_limit = image_count = compute_images = 0;
         for (int i = 0; i < 3; ++i) group_limits[i] = stage_blocks[i] = 0;
         if (!context_compute || !igpu_gl_fns().GetIntegeri) return;
