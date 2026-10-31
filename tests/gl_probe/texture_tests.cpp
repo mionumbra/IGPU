@@ -106,7 +106,7 @@ namespace
     };
     struct Parameters
     {
-        std::array<GLint,9> integers{};
+        std::array<GLint,10> integers{};
         std::array<GLfloat,8> floats{};
         bool operator==(const Parameters& b) const { return integers==b.integers && floats==b.floats; }
     };
@@ -115,9 +115,9 @@ namespace
         GLint binding=0; glGetIntegerv(GL_TEXTURE_BINDING_2D,&binding); glBindTexture(GL_TEXTURE_2D,texture);
         Parameters p;
         const GLenum integer_fields[]={GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T,0x8072,GL_TEXTURE_MIN_FILTER,
-            GL_TEXTURE_MAG_FILTER,0x813C,0x813D,0x884C,0x884D};
+            GL_TEXTURE_MAG_FILTER,0x813C,0x813D,0x884C,0x884D,0x8E42};
         const GLenum float_fields[]={0x84FE,0x8501,0x813A,0x813B};
-        for (int i=0;i<9;++i) glGetTexParameteriv(GL_TEXTURE_2D,integer_fields[i],&p.integers[i]);
+        for (int i=0;i<10;++i) glGetTexParameteriv(GL_TEXTURE_2D,integer_fields[i],&p.integers[i]);
         for (int i=0;i<4;++i) glGetTexParameterfv(GL_TEXTURE_2D,float_fields[i],&p.floats[i]);
         glGetTexParameterfv(GL_TEXTURE_2D,GL_TEXTURE_BORDER_COLOR,p.floats.data()+4);
         glBindTexture(GL_TEXTURE_2D,binding); return p;
@@ -267,9 +267,10 @@ namespace
     };
     struct CopyPipeline
     {
-        static constexpr GLenum caps[]={GL_DEPTH_TEST,GL_BLEND,GL_CULL_FACE,GL_SCISSOR_TEST,
+        static constexpr GLenum caps[]={GL_DEPTH_TEST,GL_CULL_FACE,GL_SCISSOR_TEST,
             GL_STENCIL_TEST,0x8C89,0x809D,0x3000,0x3003};
-        std::array<GLboolean,9> enabled{};
+        std::array<GLboolean,8> enabled{};
+        std::vector<GLboolean> blend;
         std::array<GLboolean,4> color{};
         std::array<GLint,2> polygon{};
         std::array<GLint,4> scissor{};
@@ -278,19 +279,27 @@ namespace
         GLint function=0;
         CopyPipeline()
         {
-            for (int i=0;i<9;++i) enabled[i]=glIsEnabled(caps[i]);
+            for (int i=0;i<8;++i) enabled[i]=glIsEnabled(caps[i]);
+            GLint count=0; glGetIntegerv(0x8824 /* MAX_DRAW_BUFFERS */,&count); blend.resize(count);
+            const auto is_enabled=reinterpret_cast<GLboolean(APIENTRY*)(GLenum,GLuint)>(wglGetProcAddress("glIsEnabledi"));
+            for(GLint i=0;i<count;++i) blend[i]=is_enabled(GL_BLEND,i);
             glGetBooleanv(GL_COLOR_WRITEMASK,color.data()); glGetIntegerv(GL_POLYGON_MODE,polygon.data());
             glGetIntegerv(GL_SCISSOR_BOX,scissor.data()); glGetDoublev(GL_DEPTH_RANGE,range.data());
             glGetBooleanv(GL_DEPTH_WRITEMASK,&mask); glGetIntegerv(GL_DEPTH_FUNC,&function);
         }
         bool operator==(const CopyPipeline& b) const
         {
-            return enabled==b.enabled && color==b.color && polygon==b.polygon && scissor==b.scissor &&
+            for(std::size_t i=0;i<blend.size();++i)
+                if(blend[i]!=b.blend[i]) std::fprintf(stderr,"private copy BLEND[%zu] changed %u -> %u\n",i,blend[i],b.blend[i]);
+            return enabled==b.enabled && blend==b.blend && color==b.color && polygon==b.polygon && scissor==b.scissor &&
                    range==b.range && mask==b.mask && function==b.function;
         }
         void restore() const
         {
-            for (int i=0;i<9;++i) { if(enabled[i]) glEnable(caps[i]); else glDisable(caps[i]); }
+            for (int i=0;i<8;++i) { if(enabled[i]) glEnable(caps[i]); else glDisable(caps[i]); }
+            const auto enable=reinterpret_cast<void(APIENTRY*)(GLenum,GLuint)>(wglGetProcAddress("glEnablei"));
+            const auto disable=reinterpret_cast<void(APIENTRY*)(GLenum,GLuint)>(wglGetProcAddress("glDisablei"));
+            for(GLuint i=0;i<blend.size();++i) { if(blend[i]) enable(GL_BLEND,i); else disable(GL_BLEND,i); }
             glColorMask(color[0],color[1],color[2],color[3]);
             if(polygon[0]==polygon[1]) glPolygonMode(GL_FRONT_AND_BACK,polygon[0]);
             else { glPolygonMode(GL_FRONT,polygon[0]); glPolygonMode(GL_BACK,polygon[1]); }
@@ -307,17 +316,20 @@ namespace
     {
         struct RestorePipeline { CopyPipeline saved; ~RestorePipeline(){saved.restore();} } restore_pipeline;
         const auto object=p.name(source);
-        GLint original_texture=0, original_read=0, original_base=0, original_max=0;
+        GLint original_texture=0, original_read=0, original_base=0, original_max=0, original_swizzle=0;
         glGetIntegerv(GL_TEXTURE_BINDING_2D,&original_texture); glGetIntegerv(0x8CAA,&original_read);
         glBindTexture(GL_TEXTURE_2D,object);
         glGetTexParameteriv(GL_TEXTURE_2D,0x813C,&original_base); glGetTexParameteriv(GL_TEXTURE_2D,0x813D,&original_max);
+        glGetTexParameteriv(GL_TEXTURE_2D,0x8E42 /* TEXTURE_SWIZZLE_R */,&original_swizzle);
         struct RestoreRange
         {
-            GLuint object; GLint base,max,binding;
+            GLuint object; GLint base,max,binding,swizzle;
             ~RestoreRange(){ glBindTexture(GL_TEXTURE_2D,object); glTexParameteri(GL_TEXTURE_2D,0x813C,base);
-                glTexParameteri(GL_TEXTURE_2D,0x813D,max); glBindTexture(GL_TEXTURE_2D,binding); }
-        } restore_range{object,original_base,original_max,original_texture};
+                glTexParameteri(GL_TEXTURE_2D,0x813D,max); glTexParameteri(GL_TEXTURE_2D,0x8E42,swizzle);
+                glBindTexture(GL_TEXTURE_2D,binding); }
+        } restore_range{object,original_base,original_max,original_texture,original_swizzle};
         glTexParameteri(GL_TEXTURE_2D,0x813C,1); glTexParameteri(GL_TEXTURE_2D,0x813D,1);
+        glTexParameteri(GL_TEXTURE_2D,0x8E42,GL_ONE);
         glBindTexture(GL_TEXTURE_2D,original_texture);
         auto& f=igpu_gl_fns(); GLuint foreign_read=0;
         f.GenFramebuffers(1,&foreign_read); f.BindFramebuffer(0x8CA8,foreign_read); glReadBuffer(GL_NONE);
@@ -327,6 +339,9 @@ namespace
             ~RestoreRead(){igpu_gl_fns().BindFramebuffer(0x8CA8,previous);igpu_gl_fns().DeleteFramebuffers(1,&object);}
         } restore_read{original_read,foreign_read};
         for(const auto cap : CopyPipeline::caps) glEnable(cap);
+        const auto enable_index=reinterpret_cast<void(APIENTRY*)(GLenum,GLuint)>(wglGetProcAddress("glEnablei"));
+        const auto disable_index=reinterpret_cast<void(APIENTRY*)(GLenum,GLuint)>(wglGetProcAddress("glDisablei"));
+        enable_index(GL_BLEND,0); disable_index(GL_BLEND,1);
         glDepthMask(GL_FALSE); glDepthFunc(GL_GREATER); glColorMask(GL_FALSE,GL_TRUE,GL_FALSE,GL_TRUE);
         glPolygonMode(GL_FRONT_AND_BACK,GL_LINE); glScissor(0,0,0,0);
         const auto set_range=reinterpret_cast<void(APIENTRY*)(GLdouble,GLdouble)>(wglGetProcAddress("glDepthRangedNV"));

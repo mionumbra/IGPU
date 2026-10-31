@@ -8,10 +8,12 @@
 - 比较采样接受 R16F/R32F，覆盖 8 种比较函数、最近点与线性过滤、LOD 限制和各向异性组合。着色器的 `igpu_tex` 必须为 `sampler2DShadow`，普通采样使用 `sampler2D`。错误类型、非单通道浮点源、未知或已释放的采样器在修改绘制状态之前失败。比较加边框仍按公开契约拒绝。
 - **比较路径要求 `GL_NV_depth_buffer_float` 和有效的 `glDepthRangedNV`。** 不具备该能力的上下文在创建比较采样器时明确失败，普通浮点纹理和普通采样不依赖它。已实测 AMD Vega 8 的 GL 4.6 兼容上下文提供该扩展；尚未验证其它驱动和原生平台。
 - 每个源纹理按需持有私有 DEPTH_COMPONENT32F_NV 镜像、FBO、VAO 和复制程序。每次比较绘制前刷新全部 mip，以覆盖外部或 IGPU 对源的更新。每一级通过 texelFetch 和 gl_FragDepth 分正负两次 GPU 绘制，使用 [-FLT_MAX,0] 与 [0,FLT_MAX] 的 NV 深度范围。这样保留有限浮点值，也避免对称范围的视口缩放溢出。不改写调用方着色器，不做 CPU 纹素读回。代价为每次比较绘制 O(全部 mip 纹素数) 的额外 GPU 工作，尚未做脏区或共享复制缓存。
-- 深度复制恢复源 BASE/MAX、纹理及 unpack PBO 绑定、程序、VAO、独立的读写 FBO、视口、深度比较/写入/范围、多边形模式、启用状态和 clip distances。pack PBO 与像素存储参数保持原样。私有对象随源纹理释放和后端关闭清理。保留当前探针的 2D、纹理单元 0、无外部 GL sampler 绑定和既有上下文生命周期约束；外部查询及多视口互操作、NaN/无穷值的比较语义不在本次验证范围内。
+- 深度复制恢复源 BASE/MAX 和红通道 swizzle、纹理及 unpack PBO 绑定、程序、VAO、独立的读写 FBO、视口、深度比较/写入/范围、多边形模式、启用状态和 clip distances。混合开关（含不同渲染目标的独立设置）、pack PBO 与像素存储参数保持原样。私有对象随源纹理释放和后端关闭清理。保留当前探针的 2D、纹理单元 0、无外部 GL sampler 绑定和既有上下文生命周期约束；外部查询及多视口互操作、NaN/无穷值的比较语义不在本次验证范围内。
 - mip 生成会临时选择已分配的 0..mips-1，再恢复调用方 BASE/MAX 和绑定。回归以 4×4 三层纹理、调用方 BASE=MAX=1 验证所有层的真实数据与恢复状态；读回时仅为检查临时打开完整层范围。
 - Release 真实 WGL 探针通过：八种格式的创建/渲染/普通采样及各级 mip 数据；LESS 左黑右红、GREATER 对调、线性边界红 128；1,568 个比较矩阵像素，包含等值、范围外敏感参考值、R16F ±65504、R32F ±1e30 和 ±FLT_MAX；源反复经公开绘制更新、普通采样回切、LOD/各向异性、错误输入无副作用、PBO/像素存储/源采样参数恢复。私有复制另以 wireframe、空 scissor、模板/剔除/clip distances/rasterizer discard、特殊写入掩码与范围及不同读 FBO 验证逐层像素和完整状态，并验证两次同步只创建一个程序。
 - 失败证据均已观察：旧后端拒绝 R32F；mip 生成受调用方层范围限制；普通深度上传截断范围外数值；单个对称全范围导致视口缩放溢出；省略深度范围恢复使专门回归失败。相关改动恢复并重新编译后完整探针通过。最终验证日志见忽略的 `out/float-verified-build.log`、`out/float-verified-run.log`；中间 TDD 日志为 `float-red-*`、`float-mip-red-*`、`float-range-*`、`float-state-red-*` 和 `float-state-green-*`。
+
+- 独立审查的两项回归均已完成 RED/GREEN：复制阶段不需要修改 GL_BLEND，现保持所有索引混合开关原样；texelFetch 受纹理红通道 swizzle 影响，现仅在核心 3.3 或 ARB/EXT 扩展支持时临时选 RED 并恢复。专门用例设置目标 0 开启混合、目标 1 关闭，以及源红通道映射为 ONE，仍须复制出真实的 0.25/0.75 并保持全部状态。日志为 `out/float-blend-red-run.log`、`float-blend-green-run.log`、`float-swizzle-red-run.log` 和 `float-swizzle-green-run.log`。
 
 ## 接着推进
 

@@ -28,6 +28,31 @@ namespace igpu
             return address > 3 && address != (std::numeric_limits<std::uintptr_t>::max)();
         }
 
+        bool has_extension(const char* expected)
+        {
+            using GetStringi = const GLubyte*(APIENTRY*)(GLenum, GLuint);
+            const auto entry = wglGetProcAddress("glGetStringi");
+            if (!valid_proc(entry)) return false;
+            const auto get_string = reinterpret_cast<GetStringi>(entry);
+            GLint count = 0;
+            glGetIntegerv(0x821D /* NUM_EXTENSIONS */, &count);
+            for (GLint i = 0; i < count; ++i)
+            {
+                const auto name = reinterpret_cast<const char*>(get_string(GL_EXTENSIONS, i));
+                if (name && std::strcmp(name, expected) == 0) return true;
+            }
+            return false;
+        }
+
+        bool has_texture_swizzle()
+        {
+            int major = 0, minor = 0;
+            const auto version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+            if (!version || std::sscanf(version, "%d.%d", &major, &minor) != 2) return false;
+            return major > 3 || (major == 3 && minor >= 3) ||
+                has_extension("GL_ARB_texture_swizzle") || has_extension("GL_EXT_texture_swizzle");
+        }
+
         struct CopyState
         {
             GLuint source;
@@ -35,8 +60,10 @@ namespace igpu
             GLint texture = 0, unpack = 0, program = 0, vao = 0, draw = 0, read = 0;
             GLint viewport[4]{}, depth_func = 0, polygon[2]{}, source_base = 0, source_max = 0;
             GLboolean depth_mask = GL_FALSE;
+            bool swizzle_supported = false;
+            GLint source_swizzle = GL_RED;
             GLdouble range[2]{};
-            static constexpr GLenum caps[] = { GL_DEPTH_TEST, GL_BLEND, GL_CULL_FACE,
+            static constexpr GLenum caps[] = { GL_DEPTH_TEST, GL_CULL_FACE,
                 GL_SCISSOR_TEST, GL_STENCIL_TEST, 0x8C89 /* RASTERIZER_DISCARD */, 0x809D /* MULTISAMPLE */ };
             GLboolean enabled[sizeof(caps) / sizeof(caps[0])]{};
             std::vector<GLboolean> clips;
@@ -78,6 +105,12 @@ namespace igpu
                 glGetTexParameteriv(GL_TEXTURE_2D, max_level, &source_max);
                 glTexParameteri(GL_TEXTURE_2D, base_level, 0);
                 glTexParameteri(GL_TEXTURE_2D, max_level, mips - 1);
+                swizzle_supported = has_texture_swizzle();
+                if (swizzle_supported)
+                {
+                    glGetTexParameteriv(GL_TEXTURE_2D, 0x8E42 /* TEXTURE_SWIZZLE_R */, &source_swizzle);
+                    glTexParameteri(GL_TEXTURE_2D, 0x8E42, GL_RED);
+                }
             }
 
             ~CopyState()
@@ -86,6 +119,7 @@ namespace igpu
                 glBindTexture(GL_TEXTURE_2D, source);
                 glTexParameteri(GL_TEXTURE_2D, base_level, source_base);
                 glTexParameteri(GL_TEXTURE_2D, max_level, source_max);
+                if (swizzle_supported) glTexParameteri(GL_TEXTURE_2D, 0x8E42, source_swizzle);
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(texture));
                 f.BindBuffer(unpack_buffer, static_cast<GLuint>(unpack));
                 f.UseProgram(static_cast<GLuint>(program));
@@ -186,18 +220,7 @@ namespace igpu
         int major = 0, minor = 0;
         if (!version || std::sscanf(version, "%d.%d", &major, &minor) != 2 || major < 3 ||
             !valid_proc(wglGetProcAddress("glDepthRangedNV"))) return false;
-        using GetStringi = const GLubyte*(APIENTRY*)(GLenum, GLuint);
-        const auto entry = wglGetProcAddress("glGetStringi");
-        if (!valid_proc(entry)) return false;
-        const auto get_string = reinterpret_cast<GetStringi>(entry);
-        GLint count = 0;
-        glGetIntegerv(0x821D /* NUM_EXTENSIONS */, &count);
-        for (GLint i = 0; i < count; ++i)
-        {
-            const auto name = reinterpret_cast<const char*>(get_string(GL_EXTENSIONS, i));
-            if (name && std::strcmp(name, "GL_NV_depth_buffer_float") == 0) return true;
-        }
-        return false;
+        return has_extension("GL_NV_depth_buffer_float");
     }
 
     bool gl_shadow_sync(GLuint source, std::int32_t width, std::int32_t height,
