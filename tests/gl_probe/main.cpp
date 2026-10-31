@@ -5,6 +5,7 @@
 #include "instanced_tests.h"
 #include "compute_tests.h"
 #include "uniform_tests.h"
+#include "target_tests.h"
 #include "query_shutdown_tests.h"
 
 #include "IGPU_native.h"
@@ -5763,6 +5764,11 @@ int main()
     if (!run_gl_uniform_tests())
     {
         return fail("uniform reflection and buffer suite failed");
+    }
+
+    if (!run_gl_target_tests())
+    {
+        return fail("multiple render-target suite failed");
     }
 
     if (!run_gl_instanced_tests())

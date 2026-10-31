@@ -5,6 +5,8 @@
 #include "igpu_gl_shadow.h"
 #include "igpu_gl_compute.h"
 #include "igpu_gl_uniform.h"
+#include "igpu_gl_targets.h"
+#include "igpu_gl_color_state.h"
 
 #include <Windows.h>
 #include <GL/gl.h>
@@ -350,6 +352,7 @@ namespace igpu
 
         struct SavedBlend
         {
+            GlColorState indexed;
             GLboolean enabled = GL_FALSE;
             GLint src_rgb = GL_ONE;
             GLint dst_rgb = GL_ZERO;
@@ -362,6 +365,7 @@ namespace igpu
 
         void save_blend(SavedBlend& saved)
         {
+            if (saved.indexed.capture(true)) return;
             saved.enabled = glIsEnabled(GL_BLEND);
             glGetIntegerv(0x80C9, &saved.src_rgb);
             glGetIntegerv(0x80C8, &saved.dst_rgb);
@@ -391,6 +395,7 @@ namespace igpu
 
         void restore_blend(const SavedBlend& saved)
         {
+            if (saved.indexed.restore()) return;
             const auto& fns = igpu_gl_fns();
             if (saved.enabled == GL_TRUE)
             {
@@ -1069,6 +1074,8 @@ namespace igpu
         GLint previous_texture = 0, previous_fbo = 0, previous_unpack = 0;
         GLfloat previous_clear[4] = {};
         GLboolean previous_mask[4] = {};
+        GlColorState indexed_masks;
+        indexed_masks.capture(false);
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous_fbo);
         glGetIntegerv(0x88EF /* PIXEL_UNPACK_BUFFER_BINDING */, &previous_unpack);
@@ -1094,12 +1101,12 @@ namespace igpu
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, mips - 1);
         GLuint framebuffer = 0;
         fns.GenFramebuffers(1, &framebuffer);
-        fns.BindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        fns.BindFramebuffer(0x8CA9 /* DRAW_FRAMEBUFFER */, framebuffer);
         GLenum status = GL_FRAMEBUFFER_COMPLETE;
         for (std::int32_t mip = 0; mip < mips; ++mip)
         {
-            fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, mip);
-            status = fns.CheckFramebufferStatus(GL_FRAMEBUFFER);
+            fns.FramebufferTexture2D(0x8CA9 /* DRAW_FRAMEBUFFER */, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, mip);
+            status = fns.CheckFramebufferStatus(0x8CA9 /* DRAW_FRAMEBUFFER */);
             if (status != GL_FRAMEBUFFER_COMPLETE)
             {
                 break;
@@ -1107,12 +1114,13 @@ namespace igpu
             glClearColor(0.f, 0.f, 0.f, 1.f);
             glClear(GL_COLOR_BUFFER_BIT);
         }
-        fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-        fns.BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous_fbo));
+        fns.FramebufferTexture2D(0x8CA9 /* DRAW_FRAMEBUFFER */, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+        fns.BindFramebuffer(0x8CA9 /* DRAW_FRAMEBUFFER */, static_cast<GLuint>(previous_fbo));
         glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
         fns.BindBuffer(0x88EC, static_cast<GLuint>(previous_unpack));
         glClearColor(previous_clear[0], previous_clear[1], previous_clear[2], previous_clear[3]);
-        glColorMask(previous_mask[0], previous_mask[1], previous_mask[2], previous_mask[3]);
+        if (!indexed_masks.restore())
+            glColorMask(previous_mask[0], previous_mask[1], previous_mask[2], previous_mask[3]);
         if (previous_scissor) glEnable(GL_SCISSOR_TEST);
         if (status != GL_FRAMEBUFFER_COMPLETE)
         {
@@ -1267,6 +1275,29 @@ namespace igpu
         return true;
     }
 
+    bool gl_resolve_color_target(std::uint64_t handle,std::int64_t mip,GlColorTarget&out)
+    {
+        const auto found=g_textures.find(handle);
+        if(found==g_textures.end()||!found->second.render_target||mip<0||mip>=found->second.mips)
+        {set_last_error("igpu_draw_to_render_targets: unknown, non-target texture or invalid mip");return false;}
+        const auto&t=found->second;
+        out={t.texture,t.framebuffer,gl_mip_size(t.width,static_cast<std::int32_t>(mip)),gl_mip_size(t.height,static_cast<std::int32_t>(mip))};return true;
+    }
+    bool gl_target_vertex_range(std::uint64_t vertex,std::int64_t first,std::int64_t&count)
+    {
+        const auto found=g_buffers.find(vertex);
+        if(found==g_buffers.end()||found->second.bind!=1||found->second.stride<=0)
+        {set_last_error("igpu_draw_to_render_targets: a valid Vertex buffer is required");return false;}
+        const auto&b=found->second;const auto total=b.size/b.stride;
+        if(first<0||first>total){set_last_error("igpu_draw_to_render_targets: vertex range is outside the buffer");return false;}
+        if(count<0)count=total-first;
+        if(count<=0||count>total-first||first>(std::numeric_limits<GLint>::max)()||count>(std::numeric_limits<GLsizei>::max)())
+        {set_last_error("igpu_draw_to_render_targets: vertex range is outside the buffer");return false;}
+        GLint previous=0;glGetIntegerv(GL_ARRAY_BUFFER_BINDING,&previous);
+        igpu_gl_fns().BindBuffer(GL_ARRAY_BUFFER,b.id);const bool ok=buffer_unmapped(GL_ARRAY_BUFFER,"igpu_draw_to_render_targets");
+        igpu_gl_fns().BindBuffer(GL_ARRAY_BUFFER,static_cast<GLuint>(previous));return ok;
+    }
+
     bool gl_draw_to_render_targets_layer(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                                          std::int64_t first_vertex, std::int64_t vertex_count,
                                          const gm::wire::GMArrayView& targets, const gm::wire::GMArrayView& layers,
@@ -1274,125 +1305,8 @@ namespace igpu
                                          std::int64_t depth_state, std::int64_t raster_state,
                                          std::int64_t sampler_state)
     {
-        GLenum mode = GL_TRIANGLES;
-        const BlendObject* blend = nullptr;
-        const DepthObject* depth = nullptr;
-        const RasterObject* raster = nullptr;
-        if (!gl_draw_accepted("igpu_draw_to_render_targets", primitive, blend_state, depth_state, raster_state,
-                              sampler_state, blend, depth, raster, mode))
-        {
-            return false;
-        }
-        if (targets.size() != 1 || layers.size() != 1 || mips.size() != 1)
-        {
-            set_last_error("igpu_draw_to_render_targets: the opengl backend accepts one target");
-            return false;
-        }
-        std::int64_t target = 0;
-        std::int64_t layer = 0;
-        std::int64_t mip = 0;
-        if (!read_i64(targets[0], target) || !read_i64(layers[0], layer) || !read_i64(mips[0], mip) || layer != 0 ||
-            mip < 0)
-        {
-            set_last_error("igpu_draw_to_render_targets: the opengl backend accepts one target");
-            return false;
-        }
-        const auto texture = g_textures.find(static_cast<std::uint64_t>(target));
-        const auto buffer = g_buffers.find(vertex_buffer);
-        if (texture == g_textures.end() || buffer == g_buffers.end() || !texture->second.render_target || mip >= texture->second.mips)
-        {
-            set_last_error("igpu_draw_to_render_targets: unknown buffer, layout, or texture");
-            return false;
-        }
-        const auto layout_it = g_layouts.find(layout);
-        if (layout_it == g_layouts.end() || (layout_it->second.vertex_stride != buffer->second.stride || layout_it->second.instance_stride != 0))
-        {
-            set_last_error("igpu_draw_to_render_targets: the vertex buffer stride does not match the input layout");
-            return false;
-        }
-        if (buffer->second.bind != 1)
-        {
-            set_last_error("igpu_draw_to_render_targets: the vertex buffer was not created with IgpuBufferBind.Vertex");
-            return false;
-        }
-        if (first_vertex < 0 || vertex_count <= 0 ||
-            (first_vertex + vertex_count) * buffer->second.stride > buffer->second.size)
-        {
-            set_last_error("igpu_draw_to_render_targets: the vertex range is outside the buffer");
-            return false;
-        }
-        GLint program = 0;
-        glGetIntegerv(GL_CURRENT_PROGRAM, &program);
-        if (program == 0)
-        {
-            set_last_error("igpu_draw_to_render_targets: no shader program is bound");
-            return false;
-        }
-
-        const auto& fns = igpu_gl_fns();
-        if (g_vertex_array == 0)
-        {
-            fns.GenVertexArrays(1, &g_vertex_array);
-        }
-        GLint previous_array = 0, previous_vertex_array = 0;
-        glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
-        glGetIntegerv(0x85B5 /* VERTEX_ARRAY_BINDING */, &previous_vertex_array);
-        fns.BindVertexArray(g_vertex_array);
-        GLint previous_fbo = 0;
-        GLint previous_viewport[4] = {};
-        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous_fbo);
-        glGetIntegerv(GL_VIEWPORT, previous_viewport);
-        fns.BindFramebuffer(GL_FRAMEBUFFER, texture->second.framebuffer);
-        if (mip != 0)
-        {
-            fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->second.texture,
-                                     static_cast<GLint>(mip));
-        }
-        glViewport(0, 0, gl_mip_size(texture->second.width, static_cast<std::int32_t>(mip)),
-                   gl_mip_size(texture->second.height, static_cast<std::int32_t>(mip)));
-        fns.BindBuffer(GL_ARRAY_BUFFER, buffer->second.id);
-        bind_vertices(buffer->second, first_vertex);
-        SavedBlend saved_blend{};
-        SavedDepth saved_depth{};
-        SavedCull saved_cull{};
-        if (blend != nullptr)
-        {
-            save_blend(saved_blend);
-            apply_blend(*blend);
-        }
-        if (depth != nullptr)
-        {
-            save_depth(saved_depth);
-            apply_depth(*depth);
-        }
-        if (raster != nullptr)
-        {
-            save_cull(saved_cull);
-            apply_cull(*raster);
-        }
-        glDrawArrays(mode, 0, static_cast<GLsizei>(vertex_count));
-        if (raster != nullptr)
-        {
-            restore_cull(saved_cull);
-        }
-        if (depth != nullptr)
-        {
-            restore_depth(saved_depth);
-        }
-        if (blend != nullptr)
-        {
-            restore_blend(saved_blend);
-        }
-        unbind_vertices();
-        fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
-        if (mip != 0)
-        {
-            fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->second.texture, 0);
-        }
-        glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2], previous_viewport[3]);
-        fns.BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous_fbo));
-        fns.BindVertexArray(static_cast<GLuint>(previous_vertex_array));
-        return true;
+        return gl_draw_targets(vertex_buffer,layout,primitive,first_vertex,vertex_count,targets,&layers,&mips,
+                               blend_state,depth_state,raster_state,sampler_state);
     }
 
     bool gl_draw(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
