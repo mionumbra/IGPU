@@ -2,6 +2,7 @@
 
 #include "igpu_error.h"
 #include "igpu_gl_loader.h"
+#include "igpu_gl_shadow.h"
 
 #include <Windows.h>
 #include <GL/gl.h>
@@ -108,8 +109,28 @@ namespace igpu
             std::int32_t width = 0;
             std::int32_t height = 0;
             std::int32_t mips = 1;
+            std::int32_t format = 6;
+            bool render_target = true;
+            GlShadow shadow{};
         };
 
+        struct TextureFormat { GLint internal; GLenum channels; GLenum type; };
+
+        bool texture_format(std::int32_t format, TextureFormat& out)
+        {
+            switch (format)
+            {
+            case 6:  out = {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE}; return true;
+            case 9:  out = {0x822D /* R16F */, GL_RED, GL_FLOAT}; return true;
+            case 10: out = {0x822E /* R32F */, GL_RED, GL_FLOAT}; return true;
+            case 11: out = {GL_RGBA4, GL_RGBA, GL_UNSIGNED_BYTE}; return true;
+            case 12: out = {0x8229 /* R8 */, GL_RED, GL_UNSIGNED_BYTE}; return true;
+            case 13: out = {0x822B /* RG8 */, 0x8227 /* RG */, GL_UNSIGNED_BYTE}; return true;
+            case 14: out = {0x881A /* RGBA16F */, GL_RGBA, GL_FLOAT}; return true;
+            case 15: out = {0x8814 /* RGBA32F */, GL_RGBA, GL_FLOAT}; return true;
+            default: return false;
+            }
+        }
         std::int32_t gl_mip_size(std::int32_t full, std::int32_t mip)
         {
             std::int32_t size = full;
@@ -142,6 +163,7 @@ namespace igpu
             float coarsest = 3.402823466e+38f;
             bool linear_mip = false;
             std::int32_t anisotropy = 1;
+            GLenum compare = GL_NONE;
         };
 
         std::unordered_map<std::uint64_t, SamplerObject> g_samplers;
@@ -577,14 +599,14 @@ namespace igpu
         }
         if (fns.DeleteFramebuffers != nullptr)
         {
-            for (const auto& entry : g_textures)
+            for (auto& entry : g_textures)
             {
                 fns.DeleteFramebuffers(1, &entry.second.framebuffer);
             }
         }
         if (fns.DeleteRenderbuffers != nullptr)
         {
-            for (const auto& entry : g_textures)
+            for (auto& entry : g_textures)
             {
                 if (entry.second.depth != 0)
                 {
@@ -592,8 +614,9 @@ namespace igpu
                 }
             }
         }
-        for (const auto& entry : g_textures)
+        for (auto& entry : g_textures)
         {
+            gl_shadow_release(entry.second.shadow);
             glDeleteTextures(1, &entry.second.texture);
         }
         g_buffers.clear();
@@ -709,58 +732,31 @@ namespace igpu
         return g_layouts.erase(layout) != 0;
     }
 
+    bool gl_texture_format_supported(std::int32_t format)
+    {
+        TextureFormat native{};
+        return texture_format(format, native);
+    }
+
     std::int64_t gl_texture_create_kind(std::int32_t kind, std::int32_t width, std::int32_t height, std::int32_t depth,
                                         std::int32_t format, bool render_target, bool storage)
     {
-        if (kind != 0 || depth != 1 || format != 6 || !render_target || storage || width <= 0 || height <= 0)
+        const auto handle = gl_texture_create_mips(kind, width, height, depth, format, storage, 1);
+        if (handle > 0)
         {
-            set_last_error("igpu_texture_create: the opengl backend only accepts one rgba8 render target");
-            return 0;
+            g_textures.at(static_cast<std::uint64_t>(handle)).render_target = render_target;
         }
-        const auto& fns = igpu_gl_fns();
-        GLuint texture = 0;
-        glGenTextures(1, &texture);
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        // Keep a single-level image complete when a sampler enables mip filtering.
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        GLuint framebuffer = 0;
-        fns.GenFramebuffers(1, &framebuffer);
-        fns.BindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-        fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-        const GLenum status = fns.CheckFramebufferStatus(GL_FRAMEBUFFER);
-        // This driver drops draws into an image that has never been cleared.
-        glClearColor(0.f, 0.f, 0.f, 1.f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        fns.BindFramebuffer(GL_FRAMEBUFFER, 0);
-        glBindTexture(GL_TEXTURE_2D, 0);
-        if (status != GL_FRAMEBUFFER_COMPLETE)
-        {
-            fns.DeleteFramebuffers(1, &framebuffer);
-            glDeleteTextures(1, &texture);
-            set_last_error("igpu_texture_create: the framebuffer is incomplete");
-            return 0;
-        }
-        const std::uint64_t handle = g_next_texture++;
-        g_textures.emplace(handle, TextureObject{texture, framebuffer, 0, width, height});
-        return static_cast<std::int64_t>(handle);
+        return handle;
     }
-
     std::int64_t gl_texture_create_mips(std::int32_t kind, std::int32_t width, std::int32_t height, std::int32_t depth,
                                         std::int32_t format, bool storage, std::int32_t mip_count)
     {
-        // A 2D rgba8 chain only. Each level is cleared; this driver drops draws
-        // into an image that has never been cleared. Minification stays nearest
-        // between levels so a level offset can select one.
-        if (kind != 0 || depth != 1 || format != 6 || storage || width <= 0 || height <= 0 || width > 16384 ||
+        // Allocate and initialize every color level, preserving caller GL state.
+        TextureFormat native{};
+        if (kind != 0 || depth != 1 || !texture_format(format, native) || storage || width <= 0 || height <= 0 || width > 16384 ||
             height > 16384)
         {
-            set_last_error("igpu_texture_create_mips: the opengl backend only accepts one rgba8 2D chain");
+            set_last_error("igpu_texture_create_mips: the opengl backend requires a supported 2D color format, valid dimensions, and no storage flag");
             return 0;
         }
         std::int32_t chain = 1;
@@ -779,13 +775,25 @@ namespace igpu
         }
         const std::int32_t mips = mip_count == 0 ? chain : mip_count;
         const auto& fns = igpu_gl_fns();
+        GLint previous_texture = 0, previous_fbo = 0, previous_unpack = 0;
+        GLfloat previous_clear[4] = {};
+        GLboolean previous_mask[4] = {};
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous_fbo);
+        glGetIntegerv(0x88EF /* PIXEL_UNPACK_BUFFER_BINDING */, &previous_unpack);
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, previous_clear);
+        glGetBooleanv(GL_COLOR_WRITEMASK, previous_mask);
+        const GLboolean previous_scissor = glIsEnabled(GL_SCISSOR_TEST);
+        fns.BindBuffer(0x88EC /* PIXEL_UNPACK_BUFFER */, 0);
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         GLuint texture = 0;
         glGenTextures(1, &texture);
         glBindTexture(GL_TEXTURE_2D, texture);
         for (std::int32_t mip = 0; mip < mips; ++mip)
         {
-            glTexImage2D(GL_TEXTURE_2D, mip, GL_RGBA, gl_mip_size(width, mip), gl_mip_size(height, mip), 0, GL_RGBA,
-                         GL_UNSIGNED_BYTE, nullptr);
+            glTexImage2D(GL_TEXTURE_2D, mip, native.internal, gl_mip_size(width, mip), gl_mip_size(height, mip), 0,
+                         native.channels, native.type, nullptr);
         }
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -809,8 +817,12 @@ namespace igpu
             glClear(GL_COLOR_BUFFER_BIT);
         }
         fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-        fns.BindFramebuffer(GL_FRAMEBUFFER, 0);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        fns.BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous_fbo));
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
+        fns.BindBuffer(0x88EC, static_cast<GLuint>(previous_unpack));
+        glClearColor(previous_clear[0], previous_clear[1], previous_clear[2], previous_clear[3]);
+        glColorMask(previous_mask[0], previous_mask[1], previous_mask[2], previous_mask[3]);
+        if (previous_scissor) glEnable(GL_SCISSOR_TEST);
         if (status != GL_FRAMEBUFFER_COMPLETE)
         {
             fns.DeleteFramebuffers(1, &framebuffer);
@@ -819,10 +831,33 @@ namespace igpu
             return 0;
         }
         const std::uint64_t handle = g_next_texture++;
-        g_textures.emplace(handle, TextureObject{texture, framebuffer, 0, width, height, mips});
+        g_textures.emplace(handle, TextureObject{texture, framebuffer, 0, width, height, mips, format});
         return static_cast<std::int64_t>(handle);
     }
 
+    bool gl_texture_generate_mips(std::uint64_t texture)
+    {
+        const auto it = g_textures.find(texture);
+        if (it == g_textures.end() || it->second.mips <= 1)
+        {
+            set_last_error("igpu_texture_generate_mips: unknown texture handle or the texture has only one level");
+            return false;
+        }
+        GLint previous = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
+        glBindTexture(GL_TEXTURE_2D, it->second.texture);
+        GLint previous_base = 0, previous_max = 0;
+        glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, &previous_base);
+        glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, &previous_max);
+        // Generate the owned chain even when the caller restricts sampling to one level.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, it->second.mips - 1);
+        igpu_gl_fns().GenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, previous_base);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, previous_max);
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous));
+        return true;
+    }
     bool gl_texture_release(std::uint64_t texture)
     {
         const auto it = g_textures.find(texture);
@@ -836,6 +871,7 @@ namespace igpu
         {
             igpu_gl_fns().DeleteRenderbuffers(1, &it->second.depth);
         }
+        gl_shadow_release(it->second.shadow);
         glDeleteTextures(1, &it->second.texture);
         g_textures.erase(it);
         return true;
@@ -847,7 +883,7 @@ namespace igpu
         const auto it = g_textures.find(texture);
         const std::int32_t mip_width = it == g_textures.end() ? 0 : gl_mip_size(it->second.width, mip);
         const std::int32_t mip_height = it == g_textures.end() ? 0 : gl_mip_size(it->second.height, mip);
-        if (it == g_textures.end() || layer != 0 || mip < 0 || mip >= it->second.mips || x < 0 || y < 0 ||
+        if (it == g_textures.end() || it->second.format != 6 || layer != 0 || mip < 0 || mip >= it->second.mips || x < 0 || y < 0 ||
             x >= mip_width || y >= mip_height)
         {
             set_last_error("igpu_texture_read: the pixel is outside this rgba8 texture");
@@ -971,7 +1007,7 @@ namespace igpu
         }
         const auto texture = g_textures.find(static_cast<std::uint64_t>(target));
         const auto buffer = g_buffers.find(vertex_buffer);
-        if (texture == g_textures.end() || buffer == g_buffers.end() || mip >= texture->second.mips)
+        if (texture == g_textures.end() || buffer == g_buffers.end() || !texture->second.render_target || mip >= texture->second.mips)
         {
             set_last_error("igpu_draw_to_render_targets: unknown buffer, layout, or texture");
             return false;
@@ -1368,6 +1404,7 @@ namespace igpu
         bool adjust_min_lod = false;
         bool adjust_max_lod = false;
         std::int32_t anisotropy = 1;
+        GLenum comparison = GL_NONE;
         GLfloat border_color[4] = {0.f, 0.f, 0.f, 1.f};
         if (sampler_state != 0)
         {
@@ -1386,10 +1423,43 @@ namespace igpu
             finest = sampler_it->second.finest;
             coarsest = sampler_it->second.coarsest;
             anisotropy = sampler_it->second.anisotropy;
+            comparison = sampler_it->second.compare;
             border_color[0] = sampler_it->second.border_red;
             border_color[1] = sampler_it->second.border_green;
             border_color[2] = sampler_it->second.border_blue;
             border_color[3] = sampler_it->second.border_alpha;
+        }
+        GLenum sampler_type = GL_NONE;
+        GLint uniform_count = 0;
+        fns.GetProgramiv(static_cast<GLuint>(program), 0x8B86 /* ACTIVE_UNIFORMS */, &uniform_count);
+        for (GLint index = 0; index < uniform_count; ++index)
+        {
+            char name[64] = {};
+            GLsizei length = 0;
+            GLint count = 0;
+            GLenum type = GL_NONE;
+            fns.GetActiveUniform(static_cast<GLuint>(program), index, sizeof(name), &length, &count, &type, name);
+            if (std::strcmp(name, "igpu_tex") == 0 && count == 1)
+            {
+                sampler_type = type;
+                break;
+            }
+        }
+        const bool comparing = comparison != GL_NONE;
+        if (sampler_type != (comparing ? 0x8B62u /* SAMPLER_2D_SHADOW */ : 0x8B5Eu /* SAMPLER_2D */))
+        {
+            set_last_error("igpu_draw_sampled: igpu_tex must be sampler2DShadow for comparison, sampler2D otherwise");
+            return false;
+        }
+        if (comparing && source->second.format != 9 && source->second.format != 10)
+        {
+            set_last_error("igpu_draw_sampled: comparison sampling requires an R16F or R32F texture");
+            return false;
+        }
+        if (comparing && !gl_shadow_sync(source->second.texture, source->second.width, source->second.height,
+                                         source->second.mips, source->second.shadow))
+        {
+            return false;
         }
         if (g_vertex_array == 0)
         {
@@ -1399,7 +1469,7 @@ namespace igpu
         GLint previous_texture = 0;
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
-        glBindTexture(GL_TEXTURE_2D, source->second.texture);
+        glBindTexture(GL_TEXTURE_2D, comparing ? source->second.shadow.texture : source->second.texture);
         GLint previous_wrap_s = GL_CLAMP_TO_EDGE;
         GLint previous_wrap_t = GL_CLAMP_TO_EDGE;
         GLint previous_mag = GL_NEAREST;
@@ -1411,8 +1481,13 @@ namespace igpu
         GLfloat previous_aniso = 1.f;
         const bool border = address == 3;
         const bool limit_coarsest = coarsest < 3.402823466e+38f;
-        const bool select_mip = level_offset != 0.f || finest != 0.f || limit_coarsest;
+        const bool select_mip = comparing || level_offset != 0.f || finest != 0.f || limit_coarsest;
         const bool adjust_aniso = anisotropy > 1;
+        if (comparing)
+        {
+            glTexParameteri(GL_TEXTURE_2D, 0x884C /* TEXTURE_COMPARE_MODE */, 0x884E /* COMPARE_REF_TO_TEXTURE */);
+            glTexParameteri(GL_TEXTURE_2D, 0x884D /* TEXTURE_COMPARE_FUNC */, comparison);
+        }
         if (sampler_state != 0)
         {
             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, &previous_wrap_s);
@@ -1453,19 +1528,19 @@ namespace igpu
                 adjust_min = true;
             }
             // An anisotropic state specifies every LOD field, including defaults.
-            if (adjust_aniso || level_offset != 0.f)
+            if (comparing || adjust_aniso || level_offset != 0.f)
             {
                 glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, &previous_bias);
                 glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, level_offset);
                 adjust_bias = true;
             }
-            if (adjust_aniso || finest != 0.f)
+            if (comparing || adjust_aniso || finest != 0.f)
             {
                 glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, &previous_min_lod);
                 glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, finest);
                 adjust_min_lod = true;
             }
-            if (adjust_aniso || limit_coarsest)
+            if (comparing || adjust_aniso || limit_coarsest)
             {
                 glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, &previous_max_lod);
                 glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, coarsest);
@@ -1706,6 +1781,37 @@ namespace igpu
         return static_cast<std::int64_t>(handle);
     }
 
+    std::int64_t gl_sampler_state_create_compare(std::int32_t compare, std::int32_t magnification,
+                                                  std::int32_t minification, std::int32_t mip,
+                                                  std::int32_t address_u, std::int32_t address_v,
+                                                  std::int32_t address_w, std::int32_t anisotropy,
+                                                  float level_offset, float finest, float coarsest)
+    {
+        static const GLenum functions[] = {GL_NONE, GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL,
+                                           GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS};
+        if (compare < 1 || compare > 8)
+        {
+            set_last_error("igpu_sampler_state_create: compare must be a cmpfunc_* constant");
+            return 0;
+        }
+        if (anisotropy > 1 && (magnification != 1 || minification != 1 || mip != 1))
+        {
+            set_last_error("igpu_sampler_state_create: anisotropy above 1 requires linear filters");
+            return 0;
+        }
+        if (!gl_shadow_supported())
+        {
+            set_last_error("igpu_sampler_state_create: comparison sampling requires GL_NV_depth_buffer_float");
+            return 0;
+        }
+        const auto handle = gl_sampler_state_create_filters_range(magnification, minification, mip,
+                            address_u, address_v, address_w, level_offset, finest, coarsest, anisotropy);
+        if (handle > 0)
+        {
+            g_samplers.at(static_cast<std::uint64_t>(handle)).compare = functions[compare];
+        }
+        return handle;
+    }
     std::int64_t gl_blend_state_create(bool enabled, std::int32_t src, std::int32_t dest, std::int32_t equation,
                                        std::int32_t src_alpha, std::int32_t dest_alpha, std::int32_t equation_alpha,
                                        bool write_red, bool write_green, bool write_blue, bool write_alpha)

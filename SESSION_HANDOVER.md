@@ -1,3 +1,25 @@
+# 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 浮点纹理、比较采样与 mip 生成完整批次
+
+> 先读本节，再读下方历史。当前工作在 `gl-float-compare`，基于已合并的 PR #42（`e753f80`）。公开 API 和版本保持不变。本批沿用功能分支 → GitHub PR → 合并的已授权流程；实际交付状态以 Git 和 GitHub 为准。
+
+## 当前实现与验证
+
+- GL 2D 颜色纹理支持格式 6/9/10/11/12/13/14/15：RGBA8、R16F、R32F、RGBA4、R8、RG8、RGBA16F、RGBA32F。单级纹理遵守 render_target 标志，多级纹理沿用现有可渲染契约。每一级初始化并可生成 mip；公开整数像素读回仍只接受 RGBA8。storage、数组、立方体和 3D 纹理尚未在 GL 接通。
+- 比较采样接受 R16F/R32F，覆盖 8 种比较函数、最近点与线性过滤、LOD 限制和各向异性组合。着色器的 `igpu_tex` 必须为 `sampler2DShadow`，普通采样使用 `sampler2D`。错误类型、非单通道浮点源、未知或已释放的采样器在修改绘制状态之前失败。比较加边框仍按公开契约拒绝。
+- **比较路径要求 `GL_NV_depth_buffer_float` 和有效的 `glDepthRangedNV`。** 不具备该能力的上下文在创建比较采样器时明确失败，普通浮点纹理和普通采样不依赖它。已实测 AMD Vega 8 的 GL 4.6 兼容上下文提供该扩展；尚未验证其它驱动和原生平台。
+- 每个源纹理按需持有私有 DEPTH_COMPONENT32F_NV 镜像、FBO、VAO 和复制程序。每次比较绘制前刷新全部 mip，以覆盖外部或 IGPU 对源的更新。每一级通过 texelFetch 和 gl_FragDepth 分正负两次 GPU 绘制，使用 [-FLT_MAX,0] 与 [0,FLT_MAX] 的 NV 深度范围。这样保留有限浮点值，也避免对称范围的视口缩放溢出。不改写调用方着色器，不做 CPU 纹素读回。代价为每次比较绘制 O(全部 mip 纹素数) 的额外 GPU 工作，尚未做脏区或共享复制缓存。
+- 深度复制恢复源 BASE/MAX 和红通道 swizzle、纹理及 unpack PBO 绑定、程序、VAO、独立的读写 FBO、视口、深度比较/写入/范围、多边形模式、启用状态和 clip distances。混合开关（含不同渲染目标的独立设置）、pack PBO 与像素存储参数保持原样。私有对象随源纹理释放和后端关闭清理。保留当前探针的 2D、纹理单元 0、无外部 GL sampler 绑定和既有上下文生命周期约束；外部查询及多视口互操作、NaN/无穷值的比较语义不在本次验证范围内。
+- mip 生成会临时选择已分配的 0..mips-1，再恢复调用方 BASE/MAX 和绑定。回归以 4×4 三层纹理、调用方 BASE=MAX=1 验证所有层的真实数据与恢复状态；读回时仅为检查临时打开完整层范围。
+- Release 真实 WGL 探针通过：八种格式的创建/渲染/普通采样及各级 mip 数据；LESS 左黑右红、GREATER 对调、线性边界红 128；1,568 个比较矩阵像素，包含等值、范围外敏感参考值、R16F ±65504、R32F ±1e30 和 ±FLT_MAX；源反复经公开绘制更新、普通采样回切、LOD/各向异性、错误输入无副作用、PBO/像素存储/源采样参数恢复。私有复制另以 wireframe、空 scissor、模板/剔除/clip distances/rasterizer discard、特殊写入掩码与范围及不同读 FBO 验证逐层像素和完整状态，并验证两次同步只创建一个程序。
+- 失败证据均已观察：旧后端拒绝 R32F；mip 生成受调用方层范围限制；普通深度上传截断范围外数值；单个对称全范围导致视口缩放溢出；省略深度范围恢复使专门回归失败。相关改动恢复并重新编译后完整探针通过。最终验证日志见忽略的 `out/float-verified-build.log`、`out/float-verified-run.log`；中间 TDD 日志为 `float-red-*`、`float-mip-red-*`、`float-range-*`、`float-state-red-*` 和 `float-state-green-*`。
+
+- 独立审查的两项回归均已完成 RED/GREEN：复制阶段不需要修改 GL_BLEND，现保持所有索引混合开关原样；texelFetch 受纹理红通道 swizzle 影响，现仅在核心 3.3 或 ARB/EXT 扩展支持时临时选 RED 并恢复。专门用例设置目标 0 开启混合、目标 1 关闭，以及源红通道映射为 ONE，仍须复制出真实的 0.25/0.75 并保持全部状态。日志为 `out/float-blend-red-run.log`、`float-blend-green-run.log`、`float-swizzle-red-run.log` 和 `float-swizzle-green-run.log`。
+
+## 接着推进
+
+按完整能力批次开发，用户已明确授权持续推进以及推送功能分支、创建 PR、合并；不再逐项征求确认。下一批优先补齐 GL 缓冲区的读回、大小、动态调整及使用方式契约，再处理查询/栅栏、实例化、间接和计算等仍未接通的能力。Windows 的正式 GameMaker DLL 继续使用 D3D11，本批 GL 证据来自真实 WGL 探针，不代表跨平台 GameMaker 已完成。
+
+---
 # 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 各向异性采样完整批次
 
 > 先读本节，再读下方历史。当前分支 `gl-aniso-compare`，原有提交 `4347756` 只加了绘制时的各向异性状态；本批把公开创建入口、边框色和 LOD 路径接通，公开 API 和版本保持不变。本批通过功能分支的同一个 PR 交付；实际合并状态以 `git log` 和 GitHub 为准，不直接推 main。
