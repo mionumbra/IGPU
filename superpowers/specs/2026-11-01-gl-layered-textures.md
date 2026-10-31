@@ -1,0 +1,9 @@
+# GL layered texture types
+
+Intent: complete the existing 3D, 2D-array and cubemap texture API as one capability batch. Preserve public0.5.0, no yy/yyp changes, D3D11 formal DLL and feature-PR integration. Continue under standing authorization without repeated approval prompts.
+
+Extract the existing texture metadata/lifecycle into igpu_gl_texture.cpp/.h. Use one native target per kind, native layer/slice attachment helpers and validated subresources across allocation, zeroing, reading, mip generation, MRT, typed ordinary sampling and layered compute image writes. 3D mip depth shrinks; arrays/cubes retain layers/faces. Cube shape is square/depth6. Respect actual context dimensions/depth limits before allocation. TexImage3D/FramebufferTextureLayer are optional gates for3D/array; cubemap uses existing2D face functions. Keep comparison mirrors restricted to existing2D R16F/R32F contract.
+
+MRT duplicate identity becomes(handle,layer,mip); dimensions must match after mip selection. One-target2D retains its owned depth/scissor semantics; layered targets use private color-only FBOs. Reads use a private READ FBO, validate before dimension calculation, preserve PACK state/PBO and separate bindings, and cover RGBA8 kinds. Store/apply/restore samplerW for native targets. All texture parameters/bindings/mip generation use the texture's actual target. Compute binds non2D images layered, preserving all saved image fields.
+
+Acceptance: zeroed subresources, all3D slices/array layers/cube faces, base/nonbase layer MRT including same-texture different layers and cross-kind outputs, typed sampling and3D W addressing, generated mips, whole-layered compute writes, shape/dimension/limit/mip/layer/role/sampler rejection, optional gates, caller indexed/texture/PBO/FBO restoration, native release/shutdown and all existing full GPU regressions. DLL/handover/diff checks and one whole-batch review before merge.

@@ -7,6 +7,9 @@ namespace igpu
     {
         std::uint32_t texture=0,framebuffer=0;
         std::int32_t width=0,height=0;
+        std::uint32_t attachment_target=0x0DE1;
+        std::int32_t layer=0,mip=0;
+        bool layered=false;
     };
     void gl_targets_initialize();
     bool gl_multiple_targets_supported();

@@ -7,6 +7,7 @@
 #include "igpu_gl_compute.h"
 #include "igpu_gl_uniform.h"
 #include "igpu_gl_targets.h"
+#include "igpu_gl_texture.h"
 #include "igpu_gl_loader.h"
 #include "igpu_gl_query.h"
 
@@ -32,13 +33,14 @@ namespace igpu
         class GlBackend final : public Backend
         {
         public:
-            GlBackend() { gl_queries_initialize(); gl_draw_capabilities_initialize(); gl_compute_initialize(); gl_uniform_initialize(); gl_targets_initialize(); }
+            GlBackend() { gl_queries_initialize(); gl_draw_capabilities_initialize(); gl_compute_initialize(); gl_uniform_initialize(); gl_targets_initialize(); gl_textures_initialize(); }
             const char* name() const override { return "opengl"; }
             bool occlusion() const override { return gl_occlusion_supported(); }
             bool timestamps() const override { return gl_timestamps_supported(); }
             bool fences() const override { return gl_fences_supported(); }
             bool instancing_supported() const override { return gl_instancing_supported(); }
             bool indirect_draw_supported() const override { return gl_indirect_draw_supported(); }
+            bool texture_kind_supported(std::int32_t kind) const override { return gl_texture_kind_supported(kind); }
             bool multiple_render_targets_supported() const override { return gl_multiple_targets_supported(); }
             bool uniform_buffer_supported() const override { return gl_uniform_supported(); }
             bool uniform_reflection_supported() const override { return gl_uniform_supported(); }

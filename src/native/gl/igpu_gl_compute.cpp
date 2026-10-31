@@ -155,7 +155,7 @@ namespace igpu
             for (GLuint i = 0; i < writes.size(); ++i)
             {
                 const auto& write = writes[i];
-                if (write.kind == 0) f.BindImageTexture(i, write.texture.name, write.texture.level, GL_FALSE, 0,
+                if (write.kind == 0) f.BindImageTexture(i, write.texture.name, write.texture.level, write.texture.layered ? GL_TRUE : GL_FALSE, 0,
                                                       0x88BA /* READ_WRITE */, write.texture.format);
                 else f.BindBufferBase(ssbo, i, write.buffer.name);
             }

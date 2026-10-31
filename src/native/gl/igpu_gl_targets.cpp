@@ -2,6 +2,7 @@
 #include "igpu_gl_draw.h"
 #include "igpu_gl_loader.h"
 #include "igpu_gl_color_state.h"
+#include "igpu_gl_texture.h"
 #include "igpu_error.h"
 #include <array>
 #include <cmath>
@@ -58,19 +59,18 @@ namespace igpu
         if((layers&&layers->size()!=n)||(mips&&mips->size()!=n))return fail("the lists must be the same length");
         if(n>1&&!gl_multiple_targets_supported())return fail("this context does not support multiple color targets");
         std::array<GlColorTarget,4> resolved{};
-        std::array<std::int64_t,4> handles{},levels{};
+        std::array<std::int64_t,4> handles{},levels{},slices{};
         for(std::size_t i=0;i<n;++i)
         {
-            std::int64_t layer=0;
-            if(!integer(targets[i],handles[i])||(layers&&!integer((*layers)[i],layer))||(mips&&!integer((*mips)[i],levels[i]))||handles[i]<=0||layer!=0||levels[i]<0)
-                return fail("targets and mips must be valid integers; only 2D layer zero is supported");
-            for(std::size_t j=0;j<i;++j)if(handles[i]==handles[j]&&levels[i]==levels[j])return fail("the same texture subresource cannot appear twice");
-            if(!gl_resolve_color_target(static_cast<std::uint64_t>(handles[i]),levels[i],resolved[i]))return false;
+            if(!integer(targets[i],handles[i])||(layers&&!integer((*layers)[i],slices[i]))||(mips&&!integer((*mips)[i],levels[i]))||handles[i]<=0||slices[i]<0||levels[i]<0)
+                return fail("targets, layers and mips must be valid nonnegative integers");
+            for(std::size_t j=0;j<i;++j)if(handles[i]==handles[j]&&levels[i]==levels[j]&&slices[i]==slices[j])return fail("the same texture subresource cannot appear twice");
+            if(!gl_resolve_color_subresource(static_cast<std::uint64_t>(handles[i]),slices[i],levels[i],resolved[i]))return false;
             if(i&&(resolved[i].width!=resolved[0].width||resolved[i].height!=resolved[0].height))return fail("selected target dimensions must match");
         }
         if(!gl_target_vertex_range(vertex,first,count))return false;
         auto&f=igpu_gl_fns();Framebuffer saved;
-        if(n==1)
+        if(n==1&&!resolved[0].layered&&resolved[0].attachment_target==GL_TEXTURE_2D)
         {
             f.BindFramebuffer(draw_framebuffer,resolved[0].framebuffer);
             if(levels[0]){saved.texture=resolved[0].texture;f.FramebufferTexture2D(draw_framebuffer,color0,GL_TEXTURE_2D,saved.texture,static_cast<GLint>(levels[0]));}
@@ -80,8 +80,8 @@ namespace igpu
             f.GenFramebuffers(1,&saved.owned);if(!saved.owned)return fail("cannot create the temporary framebuffer");
             f.BindFramebuffer(draw_framebuffer,saved.owned);
             std::array<GLenum,4> outputs{};
-            for(std::size_t i=0;i<n;++i){outputs[i]=color0+static_cast<GLenum>(i);f.FramebufferTexture2D(draw_framebuffer,outputs[i],GL_TEXTURE_2D,resolved[i].texture,static_cast<GLint>(levels[i]));}
-            f.DrawBuffers(static_cast<GLsizei>(n),outputs.data());
+            for(std::size_t i=0;i<n;++i){outputs[i]=color0+static_cast<GLenum>(i);gl_attach_color(draw_framebuffer,outputs[i],resolved[i]);}
+            if(n>1)f.DrawBuffers(static_cast<GLsizei>(n),outputs.data());
         }
         if(f.CheckFramebufferStatus(draw_framebuffer)!=0x8CD5)return fail("the selected framebuffer is incomplete");
         glViewport(0,0,resolved[0].width,resolved[0].height);
