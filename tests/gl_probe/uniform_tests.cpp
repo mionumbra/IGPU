@@ -152,6 +152,31 @@ namespace
         std::printf("uniform layouts: native metadata, scalar/vector/int/uint/bool, row/column matrices, arrays and vec3 neighbor bytes passed\n");
         std::printf("uniform lifecycle: zero/partial upload, GPU-preserving grow/shrink/regrow and cached reflection passed\n");return true;
     }
+    bool small_packed_blocks()
+    {
+        Fixture t;
+        for(int count=1;count<=3;++count)
+        {
+            std::string source="#version 430\nlayout(local_size_x=1)in;layout(packed,binding=16)uniform Data{";
+            for(int i=0;i<count;++i)source+="float v"+std::to_string(i)+";";
+            source+="};layout(std430,binding=0)buffer Output{uint r[];};void main(){";
+            for(int i=0;i<count;++i)source+="r["+std::to_string(i)+"]=uint(v"+std::to_string(i)+");";
+            source+="}";
+            const auto shader=t.shader(source);const auto blocks=igpu_shader_reflect(shader);
+            if(!check(blocks.size()==1,"small packed reflection"))return false;
+            const auto buffer=t.buffer(blocks[0].size),output=t.buffer(count*4,8,0,4);
+            if(!check(buffer&&output,"allocate exact reflected packed block size"))return false;
+            for(int i=0;i<count;++i)
+                if(!t.write(buffer,shader,("v"+std::to_string(i)).c_str(),std::array<std::int32_t,1>{7+3*i}))return false;
+            if(!check(igpu_uniform_bind(buffer,2,0)&&igpu_shader_bind(shader,2)&&t.dispatch(output),"small packed dispatch"))return false;
+            std::array<std::uint32_t,3> actual{};
+            if(!check(igpu_buffer_read(output,0,gm::wire::GMBuffer(actual.data(),count*4)),"small packed read"))return false;
+            for(int i=0;i<count;++i)if(!check(actual[i]==7+3*i,"small packed literal GPU word"))return false;
+            if(!check(igpu_buffer_resize(buffer,blocks[0].size+4)&&igpu_buffer_resize(buffer,blocks[0].size),"small uniform resize"))return false;
+            std::printf("uniform small packed: %d active scalars, reflected %lld bytes, exact allocation and dispatch passed\n",count,static_cast<long long>(blocks[0].size));
+        }
+        return true;
+    }
     bool packed_and_struct_tests()
     {
         Fixture t;
@@ -215,7 +240,7 @@ namespace
         Fixture t;auto&f=igpu_gl_fns();
         const char*vs="#version 430\nlayout(location=0)in vec2 in_pos;layout(std140,binding=0)uniform VData{vec4 shift;};"
             "void main(){gl_Position=vec4(in_pos+vec2(shift.x-7.0,0),0,1);}";
-        const char*ps="#version 430\nlayout(std140,binding=8)uniform PData{vec4 colour;};out vec4 out_colour;void main(){out_colour=colour/255.0;}";
+        const char*ps="#version 430\nlayout(std140,binding=8)uniform PData{vec4 colour;};uniform sampler2D igpu_tex;out vec4 out_colour;void main(){out_colour=colour/255.0+texelFetch(igpu_tex,ivec2(0),0)/1024.0;}";
         const auto vertex_shader=igpu_shader_compile(vs,"main",0,"glsl"),pixel_shader=igpu_shader_compile(ps,"main",1,"glsl");
         const auto vertex_uniform=t.buffer(16,4,0),pixel_uniform=t.buffer(16);
         const State reflect_before;
@@ -234,6 +259,7 @@ namespace
         const auto layout=igpu_input_layout_create(igpu_get_bound_shader(0),view(wire(std::array<std::int32_t,1>{1})),
             view(wire(std::array<std::int32_t,1>{2})),view(wire(std::array<std::int32_t,1>{0})),1,8,0);
         const auto target=igpu_texture_create(0,4,4,1,6,true,false,1);
+        const auto sample=igpu_texture_create(0,1,1,1,6,false,false,1);
         const auto program=f.CreateProgram();const char*sources[]={vs,ps};
         bool compiled=program!=0;
         for(int i=0;i<2;++i){const auto sh=f.CreateShader(i?0x8B30:0x8B31);f.ShaderSource(sh,1,&sources[i],nullptr);f.CompileShader(sh);GLint ok=0;f.GetShaderiv(sh,0x8B81,&ok);compiled=compiled&&ok;if(ok)f.AttachShader(program,sh);f.DeleteShader(sh);}
@@ -251,15 +277,28 @@ namespace
         ok=ok&&query&&igpu_query_begin(query)&&igpu_draw(vertex,0,layout,5,0,4,1,0,0,0,0);
         if(query){ok=igpu_query_end(query)&&ok;ok=igpu_query_result(query)==16&&ok;igpu_query_release(query);}
         ok=ok&&before==State{}&&igpu_texture_read(target,1,1,0,0)==0x204080;
-        igpu::GlUniformBuffer native;ok=igpu::gl_uniform_buffer(pixel_uniform,native,"test")&&ok;
         using Map=void*(APIENTRY*)(GLenum,std::ptrdiff_t,std::ptrdiff_t,GLbitfield);using Unmap=GLboolean(APIENTRY*)(GLenum);
         auto map=reinterpret_cast<Map>(wglGetProcAddress("glMapBufferRange"));auto unmap=reinterpret_cast<Unmap>(wglGetProcAddress("glUnmapBuffer"));
-        GLint array=0;glGetIntegerv(0x8894,&array);f.BindBuffer(0x8892,native.name);void*mapped=map(0x8892,0,16,1);
-        if(mapped)ok=t.rejected([&]{return igpu_draw(vertex,0,layout,5,0,4,1,0,0,0,0);},"late mapped pixel UBO before draw")&&ok;else ok=false;
-        if(mapped)unmap(0x8892);f.BindBuffer(0x8892,array);
+        GLint array=0;glGetIntegerv(0x8894,&array);
+        for(auto uniform:{vertex_uniform,pixel_uniform})
+        {
+            igpu::GlUniformBuffer native;ok=igpu::gl_uniform_buffer(uniform,native,"test")&&ok;
+            f.BindBuffer(0x8892,native.name);void*mapped=map(0x8892,0,16,1);
+            if(mapped)
+            {
+                ok=t.rejected([&]{return igpu_draw(vertex,0,layout,5,0,4,1,0,0,0,0);},"late mapped graphics UBO before draw")&&ok;
+                ok=t.rejected([&]{return igpu_draw_sampled(vertex,layout,5,0,4,sample,0,0,0,0);},"late mapped graphics UBO before sampled draw")&&ok;
+                ok=igpu_get_last_error().find("mapped")!=std::string::npos&&ok;
+                unmap(0x8892);
+            }
+            else ok=false;
+        }
+        f.BindBuffer(0x8892,array);
+        ok=igpu_draw_sampled(vertex,layout,5,0,4,sample,0,0,0,0)&&ok;
+        ok=igpu_texture_read(target,1,1,0,0)==0x204080&&ok;
         const auto error=glGetError();
         if(begun)igpu::gl_color_target_end(previous,viewport);f.BindFramebuffer(0x8CA8,read);glPopAttrib();
-        igpu_uniform_bind(0,0,0);igpu_uniform_bind(0,1,0);igpu_input_layout_release(layout);igpu_texture_release(target);
+        igpu_uniform_bind(0,0,0);igpu_uniform_bind(0,1,0);igpu_input_layout_release(layout);igpu_texture_release(target);igpu_texture_release(sample);
         t.original.restore();f.DeleteProgram(program);
         if(!check(ok&&!error,"vertex/pixel UBO real pixels and sixteen samples"))return false;
         std::printf("uniform graphics: public vertex/pixel layouts, Static/Dynamic member writes, 16 samples and pixel128/64/32, mapped-input guard passed\n");return true;
@@ -323,7 +362,7 @@ namespace
 
 bool run_gl_uniform_tests()
 {
-    return uniform_core_test()&&unknown_types()&&layout_tests()&&packed_and_struct_tests()&&eight_slots()&&guards_and_claims()&&graphics_inputs()&&capability_tests();
+    return uniform_core_test()&&unknown_types()&&layout_tests()&&packed_and_struct_tests()&&small_packed_blocks()&&eight_slots()&&guards_and_claims()&&graphics_inputs()&&capability_tests();
 }
 
 bool run_gl_uniform_shutdown_tests()

@@ -33,6 +33,8 @@ void main() {
 }
 ```
 
+GL Uniform buffers accept positive sizes in multiples of four bytes, including packed blocks of 4, 8 and 12 bytes. Allocate the reflected native size directly; D3D retains its existing 16-byte allocation rule.
+
 The existing API flow is: reflect `Data`, create a Uniform buffer of its reflected block size, write member `values`, bind that buffer to compute stage 2 slot 0, then dispatch to a Storage output. The reflected `Data.slot` is 0. The SSBO output uses dispatch entry 0 in its independent storage namespace.
 
 Blocks outside their stage's UBO namespace fail reflection with a diagnostic. Use different block names for independent vertex and pixel blocks; native GL linking rules still apply when block definitions are shared across stages.

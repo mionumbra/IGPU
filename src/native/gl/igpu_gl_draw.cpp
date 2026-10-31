@@ -681,7 +681,7 @@ namespace igpu
             if (size <= 0 || size > (std::numeric_limits<GLint>::max)()) return false;
             if (bind == 1) return stride > 0 && size % stride == 0;
             if (bind == 2) return size % 2 == 0;
-            if (bind == 4) return size % 16 == 0;
+            if (bind == 4) return size % 4 == 0;
             if (bind == 8) return stride > 0 && size % stride == 0;
             if (bind == 16) return size >= 16 && size % 4 == 0;
             return bind == 0;
@@ -1775,6 +1775,7 @@ namespace igpu
         const BlendObject* blend = nullptr;
         const DepthObject* depth = nullptr;
         const RasterObject* raster = nullptr;
+        if (!gl_uniform_validate_inputs(0, 1, "igpu_draw_sampled")) return false;
         if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, mode))
         {
             return false;
