@@ -112,6 +112,14 @@ namespace igpu
         // Optional entrypoints gate only their individual capability families.
 #define LOAD_OPTIONAL(field, symbol) \
         fns.field = reinterpret_cast<decltype(fns.field)>(optional_proc(symbol));
+        LOAD_OPTIONAL(GetBooleani, "glGetBooleani_v")
+        LOAD_OPTIONAL(IsEnabledi, "glIsEnabledi")
+        LOAD_OPTIONAL(Enablei, "glEnablei")
+        LOAD_OPTIONAL(Disablei, "glDisablei")
+        LOAD_OPTIONAL(ColorMaski, "glColorMaski")
+        LOAD_OPTIONAL(BlendFuncSeparatei, "glBlendFuncSeparatei")
+        LOAD_OPTIONAL(BlendEquationSeparatei, "glBlendEquationSeparatei")
+        LOAD_OPTIONAL(DrawBuffers, "glDrawBuffers")
         LOAD_OPTIONAL(CopyBufferSubData, "glCopyBufferSubData")
         LOAD_OPTIONAL(ProgramParameteri, "glProgramParameteri")
         LOAD_OPTIONAL(GetActiveUniformBlockiv, "glGetActiveUniformBlockiv")

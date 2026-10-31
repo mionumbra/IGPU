@@ -36,6 +36,14 @@ using IgpuGlGenFramebuffers = void(APIENTRY*)(GLsizei, GLuint*);
 using IgpuGlBindFramebuffer = void(APIENTRY*)(GLenum, GLuint);
 using IgpuGlFramebufferTexture2D = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint, GLint);
 using IgpuGlDeleteFramebuffers = void(APIENTRY*)(GLsizei, const GLuint*);
+using IgpuGlGetBooleani = void(APIENTRY*)(GLenum, GLuint, GLboolean*);
+using IgpuGlIsEnabledi = GLboolean(APIENTRY*)(GLenum, GLuint);
+using IgpuGlEnablei = void(APIENTRY*)(GLenum, GLuint);
+using IgpuGlDisablei = void(APIENTRY*)(GLenum, GLuint);
+using IgpuGlColorMaski = void(APIENTRY*)(GLuint, GLboolean, GLboolean, GLboolean, GLboolean);
+using IgpuGlBlendFuncSeparatei = void(APIENTRY*)(GLuint, GLenum, GLenum, GLenum, GLenum);
+using IgpuGlBlendEquationSeparatei = void(APIENTRY*)(GLuint, GLenum, GLenum);
+using IgpuGlDrawBuffers = void(APIENTRY*)(GLsizei, const GLenum*);
 using IgpuGlCheckFramebufferStatus = GLenum(APIENTRY*)(GLenum);
 using IgpuGlEnableVertexAttribArray = void(APIENTRY*)(GLuint);
 using IgpuGlDisableVertexAttribArray = void(APIENTRY*)(GLuint);
@@ -89,6 +97,14 @@ using IgpuGlDeleteSync = void(APIENTRY*)(IgpuGlSync);
 
 struct IgpuGlFns
 {
+    IgpuGlGetBooleani GetBooleani = nullptr;
+    IgpuGlIsEnabledi IsEnabledi = nullptr;
+    IgpuGlEnablei Enablei = nullptr;
+    IgpuGlDisablei Disablei = nullptr;
+    IgpuGlColorMaski ColorMaski = nullptr;
+    IgpuGlBlendFuncSeparatei BlendFuncSeparatei = nullptr;
+    IgpuGlBlendEquationSeparatei BlendEquationSeparatei = nullptr;
+    IgpuGlDrawBuffers DrawBuffers = nullptr;
     IgpuGlProgramParameteri ProgramParameteri = nullptr;
     IgpuGlGetActiveUniformBlockiv GetActiveUniformBlockiv = nullptr;
     IgpuGlGetActiveUniformBlockName GetActiveUniformBlockName = nullptr;

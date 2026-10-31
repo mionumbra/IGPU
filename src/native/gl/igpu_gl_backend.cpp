@@ -6,6 +6,7 @@
 #include "igpu_gl_draw.h"
 #include "igpu_gl_compute.h"
 #include "igpu_gl_uniform.h"
+#include "igpu_gl_targets.h"
 #include "igpu_gl_loader.h"
 #include "igpu_gl_query.h"
 
@@ -31,13 +32,14 @@ namespace igpu
         class GlBackend final : public Backend
         {
         public:
-            GlBackend() { gl_queries_initialize(); gl_draw_capabilities_initialize(); gl_compute_initialize(); gl_uniform_initialize(); }
+            GlBackend() { gl_queries_initialize(); gl_draw_capabilities_initialize(); gl_compute_initialize(); gl_uniform_initialize(); gl_targets_initialize(); }
             const char* name() const override { return "opengl"; }
             bool occlusion() const override { return gl_occlusion_supported(); }
             bool timestamps() const override { return gl_timestamps_supported(); }
             bool fences() const override { return gl_fences_supported(); }
             bool instancing_supported() const override { return gl_instancing_supported(); }
             bool indirect_draw_supported() const override { return gl_indirect_draw_supported(); }
+            bool multiple_render_targets_supported() const override { return gl_multiple_targets_supported(); }
             bool uniform_buffer_supported() const override { return gl_uniform_supported(); }
             bool uniform_reflection_supported() const override { return gl_uniform_supported(); }
             const UniformLayout* shader_uniforms(std::uint64_t shader) override
@@ -309,15 +311,11 @@ namespace igpu
             bool dispatch_writes(std::int32_t x, std::int32_t y, std::int32_t z,
                                  const gm::wire::GMArrayView& kinds, const gm::wire::GMArrayView& targets) override
             { return gl_dispatch_storage(compute_program, x, y, z, kinds, targets); }
-            bool draw_to_render_targets(std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t, const gm::wire::GMArrayView&) override
-            {
-                return not_yet("igpu_draw_to_render_targets");
-            }
-            bool draw_to_render_targets_level(std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t,
-                                              const gm::wire::GMArrayView&, const gm::wire::GMArrayView&) override
-            {
-                return not_yet("igpu_draw_to_render_targets");
-            }
+            bool draw_to_render_targets(std::uint64_t vertex,std::uint64_t layout,std::int32_t primitive,std::int64_t first,std::int64_t count,const gm::wire::GMArrayView&targets) override
+            {return gl_draw_targets(vertex,layout,primitive,first,count,targets,nullptr,nullptr);}
+            bool draw_to_render_targets_level(std::uint64_t vertex,std::uint64_t layout,std::int32_t primitive,std::int64_t first,std::int64_t count,
+                                              const gm::wire::GMArrayView&targets,const gm::wire::GMArrayView&mips) override
+            {return gl_draw_targets(vertex,layout,primitive,first,count,targets,nullptr,&mips);}
             bool draw_to_render_targets_layer(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                                               std::int64_t first_vertex, std::int64_t vertex_count,
                                               const gm::wire::GMArrayView& targets, const gm::wire::GMArrayView& layers,

@@ -297,7 +297,8 @@ namespace igpu
         // Writable images need a compute shader. Feature level 11.0 has them.
         case Capability::UnorderedAccess:       return device_at_least(D3D_FEATURE_LEVEL_11_0) ||
                    (opengl_backend() && active_backend()->compute_supported());
-        case Capability::MultipleRenderTargets: return native;
+        case Capability::MultipleRenderTargets: return native ||
+                   (opengl_backend() && active_backend()->multiple_render_targets_supported());
 
         // ---- pipeline ----
         case Capability::Instancing:     return native ||
