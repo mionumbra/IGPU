@@ -106,6 +106,7 @@ if(WIN32)
   add_executable(igpu_gl_probe
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/main.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/texture_tests.cpp"
+      "${CMAKE_SOURCE_DIR}/tests/gl_probe/buffer_tests.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/wgl_host.cpp"
       ${IGPU_PROBE_SRCS})
   target_include_directories(igpu_gl_probe PRIVATE

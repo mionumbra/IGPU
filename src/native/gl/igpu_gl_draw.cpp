@@ -9,6 +9,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -99,6 +100,7 @@ namespace igpu
             std::int32_t stride = 0;
             std::int32_t bind = 0;
             GLenum target = GL_ARRAY_BUFFER;
+            std::int32_t usage = 0;
         };
 
         struct TextureObject
@@ -633,27 +635,130 @@ namespace igpu
         g_next_layout = 1;
     }
 
+    namespace
+    {
+        constexpr GLenum buffer_size_parameter = 0x8764;
+        constexpr GLenum buffer_mapped_parameter = 0x88BC;
+        constexpr GLenum copy_read_buffer = 0x8F36;
+        constexpr GLenum copy_write_buffer = 0x8F37;
+
+        struct ArrayBufferBinding
+        {
+            GLint previous = 0;
+            ArrayBufferBinding() { glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous); }
+            ~ArrayBufferBinding() { igpu_gl_fns().BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous)); }
+        };
+
+        struct CopyBufferBindings
+        {
+            GLint read = 0, write = 0;
+            CopyBufferBindings()
+            {
+                glGetIntegerv(copy_read_buffer, &read);
+                glGetIntegerv(copy_write_buffer, &write);
+            }
+            ~CopyBufferBindings()
+            {
+                igpu_gl_fns().BindBuffer(copy_read_buffer, static_cast<GLuint>(read));
+                igpu_gl_fns().BindBuffer(copy_write_buffer, static_cast<GLuint>(write));
+            }
+        };
+
+        bool valid_buffer_size(std::int64_t size, std::int32_t bind, std::int32_t stride)
+        {
+            if (size <= 0 || size > (std::numeric_limits<GLint>::max)()) return false;
+            if (bind == 1) return stride > 0 && size % stride == 0;
+            if (bind == 2) return size % 2 == 0;
+            if (bind == 4) return size % 16 == 0;
+            if (bind == 8) return stride > 0 && size % stride == 0;
+            if (bind == 16) return size >= 16 && size % 4 == 0;
+            return bind == 0;
+        }
+
+        GLenum buffer_hint(std::int32_t usage)
+        {
+            return usage == 1 ? 0x88E8 /* DYNAMIC_DRAW */ : usage == 2 ? 0x88E1 /* STREAM_READ */ : GL_STATIC_DRAW;
+        }
+
+        bool buffer_unmapped(GLenum target, const char* entry)
+        {
+            GLint mapped = GL_FALSE;
+            igpu_gl_fns().GetBufferParameteriv(target, buffer_mapped_parameter, &mapped);
+            if (!mapped) return true;
+            set_last_error(std::string(entry) + ": the buffer is mapped by the caller");
+            return false;
+        }
+
+        bool allocated_buffer_size(GLenum target, std::int64_t expected)
+        {
+            GLint allocated = 0;
+            igpu_gl_fns().GetBufferParameteriv(target, buffer_size_parameter, &allocated);
+            return allocated == expected;
+        }
+
+        void zero_buffer_range(GLenum target, std::int64_t offset, std::int64_t count)
+        {
+            static constexpr unsigned char zeros[65536]{};
+            while (count > 0)
+            {
+                const auto chunk = count < static_cast<std::int64_t>(sizeof(zeros)) ? count : static_cast<std::int64_t>(sizeof(zeros));
+                igpu_gl_fns().BufferSubData(target, static_cast<std::ptrdiff_t>(offset),
+                                           static_cast<std::ptrdiff_t>(chunk), zeros);
+                offset += chunk;
+                count -= chunk;
+            }
+        }
+
+        bool buffer_range_valid(std::int64_t size, std::int64_t offset, const gm::wire::GMBuffer& data,
+                                const char* entry)
+        {
+            const auto bytes = static_cast<std::uint64_t>(data.length());
+            if (offset < 0 || offset > size || bytes == 0 || data.data() == nullptr ||
+                bytes > static_cast<std::uint64_t>(size - offset))
+            {
+                set_last_error(std::string(entry) + ": nonempty data and an in-bounds byte range are required");
+                return false;
+            }
+            return true;
+        }
+    }
+
     std::int64_t gl_buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind, std::int32_t stride)
     {
-        const bool position = usage == 0 && bind == 1 && size > 0 && size % 8 == 0 && (stride == 0 || stride == 8);
-        const bool coloured = usage == 0 && bind == 1 && size > 0 && size % 12 == 0 && stride == 12;
-        const bool textured = usage == 0 && bind == 1 && size > 0 && size % 16 == 0 && stride == 16;
-        const bool index = usage == 0 && bind == 2 && stride == 0 && size > 0 && size % 2 == 0;
-        if (!position && !coloured && !textured && !index)
+        const std::int32_t stored_stride = bind == 1 && stride == 0 ? 8 : stride;
+        const bool vertex = bind == 1 && (stored_stride == 8 || stored_stride == 12 || stored_stride == 16);
+        const bool storage = bind == 8 && stride >= 4 && stride <= 2048 && stride % 4 == 0;
+        const bool other = (bind == 0 || bind == 2 || bind == 4 || bind == 16) && stride == 0;
+        if (usage < 0 || usage > 2 || (usage == 2 ? bind != 0 : bind == 0) ||
+            (!vertex && !storage && !other) || (bind == 16 && usage != 0) ||
+            !valid_buffer_size(size, bind, stored_stride))
         {
-            set_last_error("igpu_buffer_create: the opengl backend only accepts a static float2 vertex buffer, a static position-and-colour vertex buffer, a static position-and-texcoord vertex buffer, or a static 16-bit index buffer");
+            set_last_error("igpu_buffer_create: invalid size, usage, single bind role, or supported record stride");
             return 0;
         }
-        const auto& fns = igpu_gl_fns();
-        const GLenum target = index ? GL_ELEMENT_ARRAY_BUFFER : GL_ARRAY_BUFFER;
-        const std::int32_t stored_stride = index ? 0 : (textured ? 16 : (coloured ? 12 : 8));
+        auto& f = igpu_gl_fns();
+        ArrayBufferBinding saved;
         GLuint id = 0;
-        fns.GenBuffers(1, &id);
-        fns.BindBuffer(target, id);
-        fns.BufferData(target, static_cast<std::ptrdiff_t>(size), nullptr, GL_STATIC_DRAW);
-        fns.BindBuffer(target, 0);
-        const std::uint64_t handle = g_next_buffer++;
-        g_buffers.emplace(handle, BufferObject{id, size, stored_stride, bind, target});
+        f.GenBuffers(1, &id);
+        if (!id)
+        {
+            set_last_error("igpu_buffer_create: could not create a GL buffer");
+            return 0;
+        }
+        // A buffer's storage is independent of its eventual bind role. ARRAY_BUFFER
+        // allocation avoids changing the caller's VAO element-buffer attachment.
+        f.BindBuffer(GL_ARRAY_BUFFER, id);
+        f.BufferData(GL_ARRAY_BUFFER, static_cast<std::ptrdiff_t>(size), nullptr, buffer_hint(usage));
+        if (!allocated_buffer_size(GL_ARRAY_BUFFER, size))
+        {
+            f.DeleteBuffers(1, &id);
+            set_last_error("igpu_buffer_create: buffer allocation failed");
+            return 0;
+        }
+        zero_buffer_range(GL_ARRAY_BUFFER, 0, size);
+        const auto handle = g_next_buffer++;
+        g_buffers.emplace(handle, BufferObject{id, size, stored_stride, bind,
+            static_cast<GLenum>(bind == 2 ? GL_ELEMENT_ARRAY_BUFFER : GL_ARRAY_BUFFER), usage});
         return static_cast<std::int64_t>(handle);
     }
 
@@ -665,15 +770,111 @@ namespace igpu
             set_last_error("igpu_buffer_write: unknown buffer handle");
             return false;
         }
-        if (offset != 0 || static_cast<std::int64_t>(data.length()) != it->second.size)
+        const auto& entry = it->second;
+        if (!buffer_range_valid(entry.size, offset, data, "igpu_buffer_write")) return false;
+        if (entry.usage == 2 || (entry.bind == 16 && (offset != 0 || static_cast<std::uint64_t>(data.length()) != static_cast<std::uint64_t>(entry.size))))
         {
-            set_last_error("igpu_buffer_write: the opengl backend only replaces the whole buffer from offset 0");
+            set_last_error("igpu_buffer_write: Staging is read-only; an Indirect buffer requires a whole upload");
             return false;
         }
-        const auto& fns = igpu_gl_fns();
-        fns.BindBuffer(it->second.target, it->second.id);
-        fns.BufferData(it->second.target, static_cast<std::ptrdiff_t>(it->second.size), data.data(), GL_STATIC_DRAW);
-        fns.BindBuffer(it->second.target, 0);
+        ArrayBufferBinding saved;
+        auto& f = igpu_gl_fns();
+        f.BindBuffer(GL_ARRAY_BUFFER, entry.id);
+        if (!buffer_unmapped(GL_ARRAY_BUFFER, "igpu_buffer_write")) return false;
+        f.BufferSubData(GL_ARRAY_BUFFER, static_cast<std::ptrdiff_t>(offset),
+                        static_cast<std::ptrdiff_t>(data.length()), data.data());
+        return true;
+    }
+
+    bool gl_buffer_read(std::uint64_t buffer, std::int64_t offset, const gm::wire::GMBuffer& dest)
+    {
+        const auto it = g_buffers.find(buffer);
+        if (it == g_buffers.end())
+        {
+            set_last_error("igpu_buffer_read: unknown buffer handle");
+            return false;
+        }
+        const auto& entry = it->second;
+        if (!buffer_range_valid(entry.size, offset, dest, "igpu_buffer_read")) return false;
+        if (entry.usage != 2 && entry.bind != 8)
+        {
+            set_last_error("igpu_buffer_read: only Staging or Storage buffers support CPU readback");
+            return false;
+        }
+        ArrayBufferBinding saved;
+        auto& f = igpu_gl_fns();
+        f.BindBuffer(GL_ARRAY_BUFFER, entry.id);
+        if (!buffer_unmapped(GL_ARRAY_BUFFER, "igpu_buffer_read")) return false;
+        f.GetBufferSubData(GL_ARRAY_BUFFER, static_cast<std::ptrdiff_t>(offset),
+                           static_cast<std::ptrdiff_t>(dest.length()), dest.data());
+        return true;
+    }
+
+    std::int64_t gl_buffer_size(std::uint64_t buffer)
+    {
+        const auto it = g_buffers.find(buffer);
+        if (it != g_buffers.end()) return it->second.size;
+        set_last_error("igpu_buffer_size: unknown buffer handle");
+        return 0;
+    }
+
+    bool gl_buffer_resize(std::uint64_t buffer, std::int64_t size)
+    {
+        const auto it = g_buffers.find(buffer);
+        if (it == g_buffers.end())
+        {
+            set_last_error("igpu_buffer_resize: unknown buffer handle");
+            return false;
+        }
+        auto& entry = it->second;
+        if (entry.usage != 1 || !valid_buffer_size(size, entry.bind, entry.stride))
+        {
+            set_last_error("igpu_buffer_resize: a Dynamic buffer and a valid positive aligned size are required");
+            return false;
+        }
+        auto& f = igpu_gl_fns();
+        if (!f.CopyBufferSubData)
+        {
+            set_last_error("igpu_buffer_resize: this OpenGL context lacks copy-buffer support");
+            return false;
+        }
+        CopyBufferBindings saved;
+        f.BindBuffer(copy_read_buffer, entry.id);
+        if (!buffer_unmapped(copy_read_buffer, "igpu_buffer_resize")) return false;
+        if (size == entry.size) return true;
+        const std::int64_t prefix = size < entry.size ? size : entry.size;
+        GLuint backup = 0;
+        f.GenBuffers(1, &backup);
+        if (!backup)
+        {
+            set_last_error("igpu_buffer_resize: could not create a GPU backup");
+            return false;
+        }
+        struct Backup
+        {
+            GLuint name;
+            ~Backup() { igpu_gl_fns().DeleteBuffers(1, &name); }
+        } owned{backup};
+        f.BindBuffer(copy_write_buffer, backup);
+        f.BufferData(copy_write_buffer, static_cast<std::ptrdiff_t>(prefix), nullptr, 0x88E2 /* STREAM_COPY */);
+        if (!allocated_buffer_size(copy_write_buffer, prefix))
+        {
+            set_last_error("igpu_buffer_resize: GPU backup allocation failed");
+            return false;
+        }
+        f.CopyBufferSubData(copy_read_buffer, copy_write_buffer, 0, 0, static_cast<std::ptrdiff_t>(prefix));
+        // Keep the native object, so VAO references and caller bindings stay valid.
+        f.BindBuffer(copy_write_buffer, entry.id);
+        f.BufferData(copy_write_buffer, static_cast<std::ptrdiff_t>(size), nullptr, buffer_hint(entry.usage));
+        if (!allocated_buffer_size(copy_write_buffer, size))
+        {
+            set_last_error("igpu_buffer_resize: new allocation failed");
+            return false;
+        }
+        f.BindBuffer(copy_read_buffer, backup);
+        f.CopyBufferSubData(copy_read_buffer, copy_write_buffer, 0, 0, static_cast<std::ptrdiff_t>(prefix));
+        zero_buffer_range(copy_write_buffer, prefix, size - prefix);
+        entry.size = size;
         return true;
     }
 
@@ -1042,6 +1243,9 @@ namespace igpu
         {
             fns.GenVertexArrays(1, &g_vertex_array);
         }
+        GLint previous_array = 0, previous_vertex_array = 0;
+        glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
+        glGetIntegerv(0x85B5 /* VERTEX_ARRAY_BINDING */, &previous_vertex_array);
         fns.BindVertexArray(g_vertex_array);
         GLint previous_fbo = 0;
         GLint previous_viewport[4] = {};
@@ -1089,14 +1293,14 @@ namespace igpu
             restore_blend(saved_blend);
         }
         unbind_vertices();
-        fns.BindBuffer(GL_ARRAY_BUFFER, 0);
+        fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         if (mip != 0)
         {
             fns.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->second.texture, 0);
         }
         glViewport(previous_viewport[0], previous_viewport[1], previous_viewport[2], previous_viewport[3]);
         fns.BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previous_fbo));
-        fns.BindVertexArray(0);
+        fns.BindVertexArray(static_cast<GLuint>(previous_vertex_array));
         return true;
     }
 
@@ -1159,7 +1363,9 @@ namespace igpu
             fns.GenVertexArrays(1, &g_vertex_array);
         }
         GLint previous_array = 0;
+        GLint previous_vertex_array = 0;
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
+        glGetIntegerv(0x85B5 /* VERTEX_ARRAY_BINDING */, &previous_vertex_array);
         fns.BindVertexArray(g_vertex_array);
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
         bind_vertices(vertex->second, 0);
@@ -1196,7 +1402,7 @@ namespace igpu
         }
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
-        fns.BindVertexArray(0);
+        fns.BindVertexArray(static_cast<GLuint>(previous_vertex_array));
         return true;
     }
 
@@ -1267,10 +1473,12 @@ namespace igpu
             fns.GenVertexArrays(1, &g_vertex_array);
         }
         GLint previous_array = 0;
+        GLint previous_vertex_array = 0;
         GLint previous_element = 0;
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
-        glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &previous_element);
+        glGetIntegerv(0x85B5 /* VERTEX_ARRAY_BINDING */, &previous_vertex_array);
         fns.BindVertexArray(g_vertex_array);
+        glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &previous_element);
         fns.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
         bind_vertices(vertex->second, 0);
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, index->second.id);
@@ -1309,7 +1517,7 @@ namespace igpu
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(previous_element));
-        fns.BindVertexArray(0);
+        fns.BindVertexArray(static_cast<GLuint>(previous_vertex_array));
         return true;
     }
 
@@ -1466,8 +1674,10 @@ namespace igpu
             fns.GenVertexArrays(1, &g_vertex_array);
         }
         GLint previous_array = 0;
+        GLint previous_vertex_array = 0;
         GLint previous_texture = 0;
         glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &previous_array);
+        glGetIntegerv(0x85B5 /* VERTEX_ARRAY_BINDING */, &previous_vertex_array);
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous_texture);
         glBindTexture(GL_TEXTURE_2D, comparing ? source->second.shadow.texture : source->second.texture);
         GLint previous_wrap_s = GL_CLAMP_TO_EDGE;
@@ -1589,7 +1799,7 @@ namespace igpu
         }
         unbind_vertices();
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
-        fns.BindVertexArray(0);
+        fns.BindVertexArray(static_cast<GLuint>(previous_vertex_array));
         if (sampler_state != 0)
         {
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, previous_wrap_s);

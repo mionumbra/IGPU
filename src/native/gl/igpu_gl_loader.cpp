@@ -44,6 +44,9 @@ namespace igpu
         LOAD(GenBuffers, "glGenBuffers")
         LOAD(BindBuffer, "glBindBuffer")
         LOAD(BufferData, "glBufferData")
+        LOAD(BufferSubData, "glBufferSubData")
+        LOAD(GetBufferSubData, "glGetBufferSubData")
+        LOAD(GetBufferParameteriv, "glGetBufferParameteriv")
         LOAD(DeleteBuffers, "glDeleteBuffers")
         LOAD(GenFramebuffers, "glGenFramebuffers")
         LOAD(BindFramebuffer, "glBindFramebuffer")
@@ -68,6 +71,11 @@ namespace igpu
         LOAD(RenderbufferStorage, "glRenderbufferStorage")
         LOAD(FramebufferRenderbuffer, "glFramebufferRenderbuffer")
 #undef LOAD
+        // Copy-buffer support gates resizing, not the rest of the GL backend.
+        const PROC copy = wglGetProcAddress("glCopyBufferSubData");
+        fns.CopyBufferSubData = copy != nullptr && copy != reinterpret_cast<PROC>(1) &&
+            copy != reinterpret_cast<PROC>(2) && copy != reinterpret_cast<PROC>(3) &&
+            copy != reinterpret_cast<PROC>(-1) ? reinterpret_cast<IgpuGlCopyBufferSubData>(copy) : nullptr;
         return true;
     }
 }
