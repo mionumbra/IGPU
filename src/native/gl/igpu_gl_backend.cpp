@@ -29,11 +29,13 @@ namespace igpu
         class GlBackend final : public Backend
         {
         public:
-            GlBackend() { gl_queries_initialize(); }
+            GlBackend() { gl_queries_initialize(); gl_draw_capabilities_initialize(); }
             const char* name() const override { return "opengl"; }
             bool occlusion() const override { return gl_occlusion_supported(); }
             bool timestamps() const override { return gl_timestamps_supported(); }
             bool fences() const override { return gl_fences_supported(); }
+            bool instancing_supported() const override { return gl_instancing_supported(); }
+            bool indirect_draw_supported() const override { return gl_indirect_draw_supported(); }
             bool buffer_resize_supported() const override { return igpu_gl_fns().CopyBufferSubData != nullptr; }
             std::int64_t timestamp_frequency() const override { return gl_timestamp_frequency(); }
 
@@ -59,26 +61,33 @@ namespace igpu
                 return gl_draw(vertex_buffer, layout, primitive, first_vertex, vertex_count,
                                blend_state, depth_state, raster_state, sampler_state);
             }
-            bool draw_instanced(std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t,
-                                std::int64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t) override
+            bool draw_instanced(std::uint64_t vertex, std::uint64_t instances, std::uint64_t layout,
+                                std::int32_t primitive, std::int64_t first, std::int64_t count,
+                                std::int64_t instance_count, std::int64_t blend, std::int64_t depth,
+                                std::int64_t raster, std::int64_t sampler) override
             {
-                return not_yet("igpu_draw_instanced");
+                return gl_draw_instanced(vertex, instances, layout, primitive, first, count, instance_count,
+                                         blend, depth, raster, sampler);
             }
-            bool draw_indirect(std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t, std::uint64_t, std::int64_t,
-                               std::int64_t, std::int64_t, std::int64_t, std::int64_t) override
+            bool draw_indirect(std::uint64_t vertex, std::uint64_t instances, std::uint64_t layout,
+                               std::int32_t primitive, std::uint64_t args, std::int64_t offset,
+                               std::int64_t blend, std::int64_t depth, std::int64_t raster, std::int64_t sampler) override
             {
-                return not_yet("igpu_draw_indirect");
+                return gl_draw_indirect_record(vertex, instances, layout, 0, false, primitive, args, offset,
+                                               blend, depth, raster, sampler);
             }
             bool draw_patch(std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t, std::int64_t,
                             std::int64_t, std::int64_t, std::int64_t) override
             {
                 return not_yet("igpu_draw_patch");
             }
-            bool draw_indexed_indirect(std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, std::int32_t,
-                                       std::uint64_t, std::int64_t, std::int64_t, std::int64_t, std::int64_t,
-                                       std::int64_t) override
+            bool draw_indexed_indirect(std::uint64_t vertex, std::uint64_t instances, std::uint64_t layout,
+                                       std::uint64_t index, std::int32_t primitive, std::uint64_t args,
+                                       std::int64_t offset, std::int64_t blend, std::int64_t depth,
+                                       std::int64_t raster, std::int64_t sampler) override
             {
-                return not_yet("igpu_draw_indexed_indirect");
+                return gl_draw_indirect_record(vertex, instances, layout, index, true, primitive, args, offset,
+                                               blend, depth, raster, sampler);
             }
             bool draw_indexed(std::uint64_t vertex_buffer, std::uint64_t layout, std::uint64_t index_buffer,
                               std::int32_t primitive, std::int64_t first_index, std::int64_t index_count,

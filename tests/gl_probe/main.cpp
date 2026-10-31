@@ -2,6 +2,7 @@
 #include "texture_tests.h"
 #include "buffer_tests.h"
 #include "query_tests.h"
+#include "instanced_tests.h"
 #include "query_shutdown_tests.h"
 
 #include "IGPU_native.h"
@@ -5750,6 +5751,11 @@ int main()
     if (!run_gl_buffer_tests())
     {
         return fail("buffer lifecycle suite failed");
+    }
+
+    if (!run_gl_instanced_tests())
+    {
+        return fail("instanced and indirect draw suite failed");
     }
 
     if (!run_gl_query_tests())
