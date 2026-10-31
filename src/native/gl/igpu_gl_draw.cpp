@@ -55,6 +55,14 @@
 #define GL_TEXTURE_MAX_LOD 0x813B
 #endif
 
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
+#endif
+
+#ifndef GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
+#endif
+
 #ifndef GL_NEAREST_MIPMAP_NEAREST
 #define GL_NEAREST_MIPMAP_NEAREST 0x2700
 #endif
@@ -131,6 +139,7 @@ namespace igpu
             // Matches the no-limit value in sampler_state_create_full.
             float coarsest = 3.402823466e+38f;
             bool linear_mip = false;
+            std::int32_t anisotropy = 1;
         };
 
         std::unordered_map<std::uint64_t, SamplerObject> g_samplers;
@@ -1353,6 +1362,7 @@ namespace igpu
         bool adjust_bias = false;
         bool adjust_min_lod = false;
         bool adjust_max_lod = false;
+        std::int32_t anisotropy = 1;
         GLfloat border_color[4] = {0.f, 0.f, 0.f, 1.f};
         if (sampler_state != 0)
         {
@@ -1370,6 +1380,7 @@ namespace igpu
             level_offset = sampler_it->second.level_offset;
             finest = sampler_it->second.finest;
             coarsest = sampler_it->second.coarsest;
+            anisotropy = sampler_it->second.anisotropy;
             border_color[0] = sampler_it->second.border_red;
             border_color[1] = sampler_it->second.border_green;
             border_color[2] = sampler_it->second.border_blue;
@@ -1392,9 +1403,11 @@ namespace igpu
         GLfloat previous_bias = 0.f;
         GLfloat previous_min_lod = -1000.f;
         GLfloat previous_max_lod = 1000.f;
+        GLfloat previous_aniso = 1.f;
         const bool border = address == 3;
         const bool limit_coarsest = coarsest < 3.402823466e+38f;
         const bool select_mip = level_offset != 0.f || finest != 0.f || limit_coarsest;
+        const bool adjust_aniso = anisotropy > 1;
         if (sampler_state != 0)
         {
             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, &previous_wrap_s);
@@ -1451,6 +1464,11 @@ namespace igpu
                 glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, &previous_max_lod);
                 glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, coarsest);
                 adjust_max_lod = true;
+            }
+            if (adjust_aniso)
+            {
+                glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, &previous_aniso);
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, static_cast<GLfloat>(anisotropy));
             }
         }
         fns.Uniform1i(sampler, 0);
@@ -1519,6 +1537,10 @@ namespace igpu
             {
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, previous_min);
             }
+            if (adjust_aniso)
+            {
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, previous_aniso);
+            }
         }
         glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
         return true;
@@ -1562,7 +1584,7 @@ namespace igpu
         const bool linear_min = minification == 1;
         const std::uint64_t handle = g_next_sampler++;
         g_samplers.emplace(handle, SamplerObject{address_u, address_v, linear, 0.f, 0.f, 0.f, 1.f, linear_min, level_offset,
-                                                 finest, coarsest, mip_linear});
+                                                 finest, coarsest, mip_linear, 1});
         return static_cast<std::int64_t>(handle);
     }
 
@@ -1599,7 +1621,7 @@ namespace igpu
         const bool linear_min = minification == 1;
         const std::uint64_t handle = g_next_sampler++;
         g_samplers.emplace(handle, SamplerObject{3, 3, linear, red, green, blue, alpha, linear_min, level_offset,
-                                                 finest, coarsest, mip_linear});
+                                                 finest, coarsest, mip_linear, 1});
         return static_cast<std::int64_t>(handle);
     }
 
