@@ -1,6 +1,8 @@
 #include "wgl_host.h"
 #include "texture_tests.h"
 #include "buffer_tests.h"
+#include "query_tests.h"
+#include "query_shutdown_tests.h"
 
 #include "IGPU_native.h"
 #include "igpu_capabilities.h"
@@ -5748,6 +5750,16 @@ int main()
     if (!run_gl_buffer_tests())
     {
         return fail("buffer lifecycle suite failed");
+    }
+
+    if (!run_gl_query_tests())
+    {
+        return fail("query, timestamp and fence suite failed");
+    }
+
+    if (!run_gl_query_shutdown_tests())
+    {
+        return fail("query and fence shutdown suite failed");
     }
 
     void* context = gl_probe_context();

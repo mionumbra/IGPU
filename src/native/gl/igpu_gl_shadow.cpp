@@ -2,6 +2,7 @@
 
 #include "igpu_error.h"
 #include "igpu_gl_loader.h"
+#include "igpu_gl_query.h"
 
 #include <cstdio>
 #include <cstring>
@@ -237,6 +238,8 @@ namespace igpu
             return fail("gl_shadow_sync: comparison sampling requires GL_NV_depth_buffer_float");
         const auto depth_range = reinterpret_cast<DepthRangeNV>(entry);
         auto& f = igpu_gl_fns();
+        GlOcclusionPause query_scope;
+        if (!query_scope.valid()) return false;
         CopyState saved(source, depth_range, mips);
         const bool initializing = !shadow.texture;
         if (initializing)
@@ -281,6 +284,15 @@ namespace igpu
                 if (!level_matches(level, mip_width, mip_height, true))
                     return fail("gl_shadow_sync: float depth mirror allocation failed");
             }
+            mip_width = mip_width > 1 ? mip_width / 2 : 1;
+            mip_height = mip_height > 1 ? mip_height / 2 : 1;
+        }
+        // Attach non-base levels only after the entire declared mip chain exists.
+        // Intermediate allocations otherwise make those depth attachments incomplete.
+        mip_width = width;
+        mip_height = height;
+        for (GLint level = 0; level < mips; ++level)
+        {
             f.FramebufferTexture2D(framebuffer, 0x8D00 /* DEPTH_ATTACHMENT */, GL_TEXTURE_2D, shadow.texture, level);
             if (f.CheckFramebufferStatus(framebuffer) != 0x8CD5 /* FRAMEBUFFER_COMPLETE */)
                 return fail("gl_shadow_sync: private depth framebuffer is incomplete");

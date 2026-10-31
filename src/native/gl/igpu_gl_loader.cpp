@@ -8,6 +8,14 @@
 namespace
 {
     IgpuGlFns g_fns;
+
+    PROC optional_proc(const char* name)
+    {
+        const PROC entry = wglGetProcAddress(name);
+        return entry != nullptr && entry != reinterpret_cast<PROC>(1) &&
+            entry != reinterpret_cast<PROC>(2) && entry != reinterpret_cast<PROC>(3) &&
+            entry != reinterpret_cast<PROC>(-1) ? entry : nullptr;
+    }
 }
 
 IgpuGlFns& igpu_gl_fns()
@@ -71,11 +79,23 @@ namespace igpu
         LOAD(RenderbufferStorage, "glRenderbufferStorage")
         LOAD(FramebufferRenderbuffer, "glFramebufferRenderbuffer")
 #undef LOAD
-        // Copy-buffer support gates resizing, not the rest of the GL backend.
-        const PROC copy = wglGetProcAddress("glCopyBufferSubData");
-        fns.CopyBufferSubData = copy != nullptr && copy != reinterpret_cast<PROC>(1) &&
-            copy != reinterpret_cast<PROC>(2) && copy != reinterpret_cast<PROC>(3) &&
-            copy != reinterpret_cast<PROC>(-1) ? reinterpret_cast<IgpuGlCopyBufferSubData>(copy) : nullptr;
+        // Optional entrypoints gate only their individual capability families.
+#define LOAD_OPTIONAL(field, symbol) \
+        fns.field = reinterpret_cast<decltype(fns.field)>(optional_proc(symbol));
+        LOAD_OPTIONAL(CopyBufferSubData, "glCopyBufferSubData")
+        LOAD_OPTIONAL(GenQueries, "glGenQueries")
+        LOAD_OPTIONAL(DeleteQueries, "glDeleteQueries")
+        LOAD_OPTIONAL(BeginQuery, "glBeginQuery")
+        LOAD_OPTIONAL(EndQuery, "glEndQuery")
+        LOAD_OPTIONAL(GetQueryiv, "glGetQueryiv")
+        LOAD_OPTIONAL(GetQueryObjectiv, "glGetQueryObjectiv")
+        LOAD_OPTIONAL(GetQueryObjectuiv, "glGetQueryObjectuiv")
+        LOAD_OPTIONAL(GetQueryObjectui64v, "glGetQueryObjectui64v")
+        LOAD_OPTIONAL(QueryCounter, "glQueryCounter")
+        LOAD_OPTIONAL(FenceSync, "glFenceSync")
+        LOAD_OPTIONAL(ClientWaitSync, "glClientWaitSync")
+        LOAD_OPTIONAL(DeleteSync, "glDeleteSync")
+#undef LOAD_OPTIONAL
         return true;
     }
 }
