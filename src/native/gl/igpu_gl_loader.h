@@ -55,8 +55,34 @@ using IgpuGlBindRenderbuffer = void(APIENTRY*)(GLenum, GLuint);
 using IgpuGlRenderbufferStorage = void(APIENTRY*)(GLenum, GLenum, GLsizei, GLsizei);
 using IgpuGlFramebufferRenderbuffer = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint);
 
+using IgpuGlGenQueries = void(APIENTRY*)(GLsizei, GLuint*);
+using IgpuGlDeleteQueries = void(APIENTRY*)(GLsizei, const GLuint*);
+using IgpuGlBeginQuery = void(APIENTRY*)(GLenum, GLuint);
+using IgpuGlEndQuery = void(APIENTRY*)(GLenum);
+using IgpuGlGetQueryiv = void(APIENTRY*)(GLenum, GLenum, GLint*);
+using IgpuGlGetQueryObjectiv = void(APIENTRY*)(GLuint, GLenum, GLint*);
+using IgpuGlGetQueryObjectuiv = void(APIENTRY*)(GLuint, GLenum, GLuint*);
+using IgpuGlGetQueryObjectui64v = void(APIENTRY*)(GLuint, GLenum, std::uint64_t*);
+using IgpuGlQueryCounter = void(APIENTRY*)(GLuint, GLenum);
+using IgpuGlSync = void*;
+using IgpuGlFenceSync = IgpuGlSync(APIENTRY*)(GLenum, GLbitfield);
+using IgpuGlClientWaitSync = GLenum(APIENTRY*)(IgpuGlSync, GLbitfield, std::uint64_t);
+using IgpuGlDeleteSync = void(APIENTRY*)(IgpuGlSync);
+
 struct IgpuGlFns
 {
+    IgpuGlGenQueries GenQueries = nullptr;
+    IgpuGlDeleteQueries DeleteQueries = nullptr;
+    IgpuGlBeginQuery BeginQuery = nullptr;
+    IgpuGlEndQuery EndQuery = nullptr;
+    IgpuGlGetQueryiv GetQueryiv = nullptr;
+    IgpuGlGetQueryObjectiv GetQueryObjectiv = nullptr;
+    IgpuGlGetQueryObjectuiv GetQueryObjectuiv = nullptr;
+    IgpuGlGetQueryObjectui64v GetQueryObjectui64v = nullptr;
+    IgpuGlQueryCounter QueryCounter = nullptr;
+    IgpuGlFenceSync FenceSync = nullptr;
+    IgpuGlClientWaitSync ClientWaitSync = nullptr;
+    IgpuGlDeleteSync DeleteSync = nullptr;
     IgpuGlCreateShader CreateShader = nullptr;
     IgpuGlShaderSource ShaderSource = nullptr;
     IgpuGlCompileShader CompileShader = nullptr;

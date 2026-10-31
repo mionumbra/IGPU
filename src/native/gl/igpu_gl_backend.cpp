@@ -5,6 +5,7 @@
 #include "igpu_error.h"
 #include "igpu_gl_draw.h"
 #include "igpu_gl_loader.h"
+#include "igpu_gl_query.h"
 
 #include <Windows.h>
 #include <GL/gl.h>
@@ -28,26 +29,27 @@ namespace igpu
         class GlBackend final : public Backend
         {
         public:
+            GlBackend() { gl_queries_initialize(); }
             const char* name() const override { return "opengl"; }
-            bool occlusion() const override { return false; }
-            bool timestamps() const override { return false; }
-            bool fences() const override { return false; }
+            bool occlusion() const override { return gl_occlusion_supported(); }
+            bool timestamps() const override { return gl_timestamps_supported(); }
+            bool fences() const override { return gl_fences_supported(); }
             bool buffer_resize_supported() const override { return igpu_gl_fns().CopyBufferSubData != nullptr; }
-            std::int64_t timestamp_frequency() const override { return 0; }
+            std::int64_t timestamp_frequency() const override { return gl_timestamp_frequency(); }
 
             bool texture_format(std::int32_t format) const override { return gl_texture_format_supported(format); }
 
-            std::uint64_t query_create(std::int32_t) override { not_yet("igpu_query_create"); return 0; }
-            bool query_begin(std::uint64_t) override { return not_yet("igpu_query_begin"); }
-            bool query_end(std::uint64_t) override { return not_yet("igpu_query_end"); }
-            bool query_ready(std::uint64_t) override { return not_yet("igpu_query_ready"); }
-            std::int64_t query_result(std::uint64_t) override { not_yet("igpu_query_result"); return 0; }
-            bool query_release(std::uint64_t) override { return not_yet("igpu_query_release"); }
+            std::uint64_t query_create(std::int32_t kind) override { return gl_query_create(kind); }
+            bool query_begin(std::uint64_t id) override { return gl_query_begin(id); }
+            bool query_end(std::uint64_t id) override { return gl_query_end(id); }
+            bool query_ready(std::uint64_t id) override { return gl_query_ready(id); }
+            std::int64_t query_result(std::uint64_t id) override { return gl_query_result(id); }
+            bool query_release(std::uint64_t id) override { return gl_query_release(id); }
 
-            std::uint64_t fence_create() override { not_yet("igpu_fence_create"); return 0; }
-            bool fence_signal(std::uint64_t) override { return not_yet("igpu_fence_signal"); }
-            bool fence_signaled(std::uint64_t) override { return not_yet("igpu_fence_signaled"); }
-            bool fence_release(std::uint64_t) override { return not_yet("igpu_fence_release"); }
+            std::uint64_t fence_create() override { return gl_fence_create(); }
+            bool fence_signal(std::uint64_t id) override { return gl_fence_signal(id); }
+            bool fence_signaled(std::uint64_t id) override { return gl_fence_signaled(id); }
+            bool fence_release(std::uint64_t id) override { return gl_fence_release(id); }
 
             bool draw(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                       std::int64_t first_vertex, std::int64_t vertex_count,
@@ -304,6 +306,7 @@ namespace igpu
 
             ~GlBackend() override
             {
+                gl_queries_release();
                 const auto& fns = igpu_gl_fns();
                 if (program != 0 && fns.DeleteProgram != nullptr)
                 {
