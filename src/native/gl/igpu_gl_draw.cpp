@@ -6,6 +6,8 @@
 #include <Windows.h>
 #include <GL/gl.h>
 
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -53,6 +55,14 @@
 
 #ifndef GL_TEXTURE_MAX_LOD
 #define GL_TEXTURE_MAX_LOD 0x813B
+#endif
+
+#ifndef GL_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_TEXTURE_MAX_ANISOTROPY_EXT 0x84FE
+#endif
+
+#ifndef GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT 0x84FF
 #endif
 
 #ifndef GL_NEAREST_MIPMAP_NEAREST
@@ -131,6 +141,7 @@ namespace igpu
             // Matches the no-limit value in sampler_state_create_full.
             float coarsest = 3.402823466e+38f;
             bool linear_mip = false;
+            std::int32_t anisotropy = 1;
         };
 
         std::unordered_map<std::uint64_t, SamplerObject> g_samplers;
@@ -711,6 +722,9 @@ namespace igpu
         glGenTextures(1, &texture);
         glBindTexture(GL_TEXTURE_2D, texture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        // Keep a single-level image complete when a sampler enables mip filtering.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1353,6 +1367,7 @@ namespace igpu
         bool adjust_bias = false;
         bool adjust_min_lod = false;
         bool adjust_max_lod = false;
+        std::int32_t anisotropy = 1;
         GLfloat border_color[4] = {0.f, 0.f, 0.f, 1.f};
         if (sampler_state != 0)
         {
@@ -1370,6 +1385,7 @@ namespace igpu
             level_offset = sampler_it->second.level_offset;
             finest = sampler_it->second.finest;
             coarsest = sampler_it->second.coarsest;
+            anisotropy = sampler_it->second.anisotropy;
             border_color[0] = sampler_it->second.border_red;
             border_color[1] = sampler_it->second.border_green;
             border_color[2] = sampler_it->second.border_blue;
@@ -1392,9 +1408,11 @@ namespace igpu
         GLfloat previous_bias = 0.f;
         GLfloat previous_min_lod = -1000.f;
         GLfloat previous_max_lod = 1000.f;
+        GLfloat previous_aniso = 1.f;
         const bool border = address == 3;
         const bool limit_coarsest = coarsest < 3.402823466e+38f;
         const bool select_mip = level_offset != 0.f || finest != 0.f || limit_coarsest;
+        const bool adjust_aniso = anisotropy > 1;
         if (sampler_state != 0)
         {
             glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, &previous_wrap_s);
@@ -1434,23 +1452,29 @@ namespace igpu
                                 linear_min ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR);
                 adjust_min = true;
             }
-            if (level_offset != 0.f)
+            // An anisotropic state specifies every LOD field, including defaults.
+            if (adjust_aniso || level_offset != 0.f)
             {
                 glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, &previous_bias);
                 glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, level_offset);
                 adjust_bias = true;
             }
-            if (finest != 0.f)
+            if (adjust_aniso || finest != 0.f)
             {
                 glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, &previous_min_lod);
                 glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_LOD, finest);
                 adjust_min_lod = true;
             }
-            if (limit_coarsest)
+            if (adjust_aniso || limit_coarsest)
             {
                 glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, &previous_max_lod);
                 glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_LOD, coarsest);
                 adjust_max_lod = true;
+            }
+            if (adjust_aniso)
+            {
+                glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, &previous_aniso);
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, static_cast<GLfloat>(anisotropy));
             }
         }
         fns.Uniform1i(sampler, 0);
@@ -1519,15 +1543,86 @@ namespace igpu
             {
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, previous_min);
             }
+            if (adjust_aniso)
+            {
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, previous_aniso);
+            }
         }
         glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous_texture));
         return true;
     }
 
+    namespace
+    {
+        bool gl_anisotropy_accepted(std::int32_t anisotropy)
+        {
+            if (anisotropy == 1)
+            {
+                return true;
+            }
+            if (anisotropy < 1 || anisotropy > 16)
+            {
+                set_last_error("igpu_sampler_state_create: anisotropy must be in 1..16");
+                return false;
+            }
+            // Check this context rather than caching capabilities across binds.
+            // GL 4.6 makes anisotropic filtering core; earlier contexts advertise
+            // ARB or EXT support. Indexed extension queries keep core profiles
+            // from generating GL_INVALID_ENUM on GL_EXTENSIONS.
+            int major = 0;
+            int minor = 0;
+            const auto version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+            if (version != nullptr)
+            {
+                std::sscanf(version, "%d.%d", &major, &minor);
+            }
+            bool supported = major > 4 || (major == 4 && minor >= 6);
+            if (!supported && major >= 3)
+            {
+                using GetStringi = const GLubyte*(APIENTRY*)(GLenum, GLuint);
+                const PROC entry = wglGetProcAddress("glGetStringi");
+                if (entry != nullptr && entry != reinterpret_cast<PROC>(1) && entry != reinterpret_cast<PROC>(2) &&
+                    entry != reinterpret_cast<PROC>(3) && entry != reinterpret_cast<PROC>(-1))
+                {
+                    const auto get_string_i = reinterpret_cast<GetStringi>(entry);
+                    GLint count = 0;
+                    glGetIntegerv(0x821D /* GL_NUM_EXTENSIONS */, &count);
+                    for (GLint i = 0; i < count && !supported; ++i)
+                    {
+                        const auto extension = reinterpret_cast<const char*>(get_string_i(GL_EXTENSIONS, i));
+                        supported = extension != nullptr &&
+                            (std::strcmp(extension, "GL_EXT_texture_filter_anisotropic") == 0 ||
+                             std::strcmp(extension, "GL_ARB_texture_filter_anisotropic") == 0);
+                    }
+                }
+            }
+            else if (!supported)
+            {
+                const auto extensions = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+                const std::string names = extensions == nullptr ? "" : std::string(" ") + extensions + " ";
+                supported = names.find(" GL_EXT_texture_filter_anisotropic ") != std::string::npos ||
+                            names.find(" GL_ARB_texture_filter_anisotropic ") != std::string::npos;
+            }
+            if (!supported)
+            {
+                set_last_error("igpu_sampler_state_create: this OpenGL context does not support anisotropic filtering");
+                return false;
+            }
+            GLfloat maximum = 1.f;
+            glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &maximum);
+            if (static_cast<GLfloat>(anisotropy) > maximum)
+            {
+                set_last_error("igpu_sampler_state_create: anisotropy exceeds this OpenGL context's maximum");
+                return false;
+            }
+            return true;
+        }
+    }
+
     std::int64_t gl_sampler_state_create_filters_range(std::int32_t magnification, std::int32_t minification,
                                                        std::int32_t mip, std::int32_t address_u, std::int32_t address_v,
                                                        std::int32_t address_w, float level_offset, float finest,
-                                                       float coarsest)
+                                                       float coarsest, std::int32_t anisotropy)
     {
         // Magnification and minification may each be nearest or linear.
         // Linear mip filtering blends neighboring levels. Nearest
@@ -1558,11 +1653,15 @@ namespace igpu
             set_last_error("igpu_sampler_state_create: the opengl backend has no mip chain");
             return 0;
         }
+        if (!gl_anisotropy_accepted(anisotropy))
+        {
+            return 0;
+        }
         const bool linear = magnification == 1;
         const bool linear_min = minification == 1;
         const std::uint64_t handle = g_next_sampler++;
         g_samplers.emplace(handle, SamplerObject{address_u, address_v, linear, 0.f, 0.f, 0.f, 1.f, linear_min, level_offset,
-                                                 finest, coarsest, mip_linear});
+                                                 finest, coarsest, mip_linear, anisotropy});
         return static_cast<std::int64_t>(handle);
     }
 
@@ -1570,7 +1669,7 @@ namespace igpu
                                                               std::int32_t mip, std::int32_t address_u,
                                                               std::int32_t address_v, std::int32_t address_w, float red,
                                                               float green, float blue, float alpha, float level_offset,
-                                                              float finest, float coarsest)
+                                                              float finest, float coarsest, std::int32_t anisotropy)
     {
         // Magnification and minification may each be nearest or linear.
         // Linear mip filtering blends neighboring levels. A level offset
@@ -1595,11 +1694,15 @@ namespace igpu
             set_last_error("igpu_sampler_state_create: the opengl backend has no mip chain");
             return 0;
         }
+        if (!gl_anisotropy_accepted(anisotropy))
+        {
+            return 0;
+        }
         const bool linear = magnification == 1;
         const bool linear_min = minification == 1;
         const std::uint64_t handle = g_next_sampler++;
         g_samplers.emplace(handle, SamplerObject{3, 3, linear, red, green, blue, alpha, linear_min, level_offset,
-                                                 finest, coarsest, mip_linear});
+                                                 finest, coarsest, mip_linear, anisotropy});
         return static_cast<std::int64_t>(handle);
     }
 

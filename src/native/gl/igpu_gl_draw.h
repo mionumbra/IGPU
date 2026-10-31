@@ -29,12 +29,12 @@ namespace igpu
     std::int64_t gl_sampler_state_create_filters_range(std::int32_t magnification, std::int32_t minification,
                                                        std::int32_t mip, std::int32_t address_u, std::int32_t address_v,
                                                        std::int32_t address_w, float level_offset, float finest,
-                                                       float coarsest);
+                                                       float coarsest, std::int32_t anisotropy = 1);
     std::int64_t gl_sampler_state_create_filters_border_range(std::int32_t magnification, std::int32_t minification,
                                                               std::int32_t mip, std::int32_t address_u,
                                                               std::int32_t address_v, std::int32_t address_w, float red,
                                                               float green, float blue, float alpha, float level_offset,
-                                                              float finest, float coarsest);
+                                                              float finest, float coarsest, std::int32_t anisotropy = 1);
     std::int64_t gl_blend_state_create(bool enabled, std::int32_t src, std::int32_t dest, std::int32_t equation,
                                        std::int32_t src_alpha, std::int32_t dest_alpha, std::int32_t equation_alpha,
                                        bool write_red, bool write_green, bool write_blue, bool write_alpha);

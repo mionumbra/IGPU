@@ -5,10 +5,12 @@
 
 #include "core/GMExtWire.h"
 #include "native/gl/igpu_gl_draw.h"
+#include "native/gl/igpu_gl_loader.h"
 
 #include <Windows.h>
 #include <GL/gl.h>
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -17,6 +19,121 @@
 
 namespace
 {
+    constexpr GLenum texture_anisotropy = 0x84FE;
+    constexpr GLenum device_max_anisotropy = 0x84FF;
+    constexpr GLenum texture_wrap_r = 0x8072;
+    constexpr GLenum texture_base_level = 0x813C;
+    constexpr GLenum texture_max_level = 0x813D;
+    constexpr GLenum texture_lod_bias = 0x8501;
+    constexpr GLenum texture_min_lod = 0x813A;
+    constexpr GLenum texture_max_lod = 0x813B;
+
+    struct TextureParameters
+    {
+        std::array<GLint, 7> integers{};
+        std::array<GLfloat, 8> floats{};
+
+        bool operator==(const TextureParameters& other) const
+        {
+            return integers == other.integers && floats == other.floats;
+        }
+    };
+
+    constexpr GLenum integer_texture_parameters[] = {
+        GL_TEXTURE_WRAP_S, GL_TEXTURE_WRAP_T, texture_wrap_r, GL_TEXTURE_MIN_FILTER,
+        GL_TEXTURE_MAG_FILTER, texture_base_level, texture_max_level,
+    };
+    constexpr GLenum float_texture_parameters[] = {
+        texture_anisotropy, texture_lod_bias, texture_min_lod, texture_max_lod,
+    };
+
+    TextureParameters bound_texture_parameters()
+    {
+        TextureParameters result;
+        for (std::size_t i = 0; i < result.integers.size(); ++i)
+        {
+            glGetTexParameteriv(GL_TEXTURE_2D, integer_texture_parameters[i], &result.integers[i]);
+        }
+        for (std::size_t i = 0; i < 4; ++i)
+        {
+            glGetTexParameterfv(GL_TEXTURE_2D, float_texture_parameters[i], &result.floats[i]);
+        }
+        glGetTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, result.floats.data() + 4);
+        return result;
+    }
+
+    TextureParameters texture_parameters(GLuint texture)
+    {
+        GLint previous = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        const auto result = bound_texture_parameters();
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous));
+        return result;
+    }
+
+    void set_texture_parameters(GLuint texture, const TextureParameters& parameters)
+    {
+        GLint previous = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        for (std::size_t i = 0; i < parameters.integers.size(); ++i)
+        {
+            glTexParameteri(GL_TEXTURE_2D, integer_texture_parameters[i], parameters.integers[i]);
+        }
+        for (std::size_t i = 0; i < 4; ++i)
+        {
+            glTexParameterf(GL_TEXTURE_2D, float_texture_parameters[i], parameters.floats[i]);
+        }
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, parameters.floats.data() + 4);
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previous));
+    }
+
+    // Sampler draw-boundary observer: Uniform1i follows sampler application;
+    // the remaining vertex setup does not alter texture parameters. Forward to real GL.
+    struct SamplerDrawObserver
+    {
+        static SamplerDrawObserver* active;
+        IgpuGlUniform1i forward = nullptr;
+        unsigned calls = 0;
+        GLint texture = 0;
+        TextureParameters parameters;
+
+        static void APIENTRY observe(GLint location, GLint value)
+        {
+            auto& observer = *active;
+            ++observer.calls;
+            glGetIntegerv(GL_TEXTURE_BINDING_2D, &observer.texture);
+            observer.parameters = bound_texture_parameters();
+            observer.forward(location, value);
+        }
+
+        bool install()
+        {
+            if (active != nullptr || igpu_gl_fns().Uniform1i == nullptr)
+            {
+                return false;
+            }
+            forward = igpu_gl_fns().Uniform1i;
+            active = this;
+            igpu_gl_fns().Uniform1i = &observe;
+            return true;
+        }
+
+        bool stop()
+        {
+            if (active == this)
+            {
+                igpu_gl_fns().Uniform1i = forward;
+                active = nullptr;
+            }
+            return true;
+        }
+
+        ~SamplerDrawObserver() { stop(); }
+    };
+    SamplerDrawObserver* SamplerDrawObserver::active = nullptr;
+
     int fail(const char* message)
     {
         std::fprintf(stderr, "%s\n", message);
@@ -2715,10 +2832,261 @@ int main()
         return fail("comparison sampler was accepted");
     }
     const auto wrap_aniso = igpu_sampler_state_create(1, 1, 1, 1, 1, 1, 2, 0, 0, 0.f, 0.f, -1.f);
-    if (wrap_aniso != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)
+    if (wrap_aniso <= 0)
     {
-        return fail("anisotropic sampler was accepted");
+        std::fprintf(stderr, "anisotropic constructor: %s\n", igpu_get_last_error().c_str());
+        return fail("noncomparison anisotropic sampler with linear min/mag/mip was rejected");
     }
+    if (glGetError() != GL_NO_ERROR)
+    {
+        return fail("OpenGL error before anisotropic sampler coverage");
+    }
+    GLfloat aniso_device_max = 0.f;
+    glGetFloatv(device_max_anisotropy, &aniso_device_max);
+    if (glGetError() != GL_NO_ERROR || aniso_device_max < 2.f)
+    {
+        return fail("anisotropic sampler was created without usable driver anisotropy support");
+    }
+    const GLint requested_aniso = aniso_device_max >= 4.f ? 4 : 2;
+    const GLfloat caller_aniso = requested_aniso == 4 ? 2.f : 1.f;
+    const auto aniso_blend = igpu_blend_state_create(false, 2, 2, 1, 2, 2, 1, true, true, true, true);
+    const auto aniso_four = igpu_sampler_state_create(1, 1, 1, 0, 1, 2, requested_aniso, 0, 0, 0.f, 0.f, -1.f);
+    if (aniso_blend != wrap_aniso + 1 || aniso_four != aniso_blend + 1)
+    {
+        return fail("anisotropic samplers do not share blend-state handle numbering");
+    }
+
+    // Public validation still requires all three filter bits and anisotropy in 1..16.
+    for (const auto address : {0, 3})
+    {
+        for (int bits = 0; bits < 7; ++bits)
+        {
+            if (igpu_sampler_state_create(bits & 1, (bits >> 1) & 1, (bits >> 2) & 1,
+                                          address, address, address, 2, 65280, 0, 0.f, 0.f, -1.f) != 0 ||
+                igpu_get_last_error().find("requires linear filters") == std::string::npos)
+            {
+                return fail("anisotropy accepted a non-linear mag, min, or mip filter");
+            }
+        }
+        for (const auto invalid : {-1, 0, 17, 2147483647})
+        {
+            if (igpu_sampler_state_create(1, 1, 1, address, address, address, invalid,
+                                          65280, 0, 0.f, 0.f, -1.f) != 0 ||
+                igpu_get_last_error().find("1..16") == std::string::npos)
+            {
+                return fail("anisotropy outside the public 1..16 range was accepted");
+            }
+        }
+    }
+    if (igpu_sampler_state_create(1, 1, 1, 3, 0, 3, 2, 65280, 0, 0.f, 0.f, -1.f) != 0 ||
+        igpu_get_last_error().find("border on every axis") == std::string::npos)
+    {
+        return fail("anisotropy accepted mixed border address axes");
+    }
+    if (igpu_sampler_state_create(1, 1, 1, 0, 4, 0, 2, 0, 0, 0.f, 0.f, -1.f) != 0)
+    {
+        return fail("anisotropy accepted an invalid address mode");
+    }
+    const auto aniso_border = igpu_sampler_state_create(1, 1, 1, 3, 3, 3, requested_aniso, 65280, 0, 0.f, 0.f, -1.f);
+    if (aniso_border != aniso_four + 1)
+    {
+        return fail("all-border anisotropy failed or rejected constructors consumed state handles");
+    }
+    const auto aniso_limit = igpu_sampler_state_create(1, 1, 1, 0, 0, 0, 16, 0, 0, 0.f, 0.f, -1.f);
+    if ((aniso_device_max >= 16.f && aniso_limit <= 0) ||
+        (aniso_device_max < 16.f && (aniso_limit != 0 || igpu_get_last_error().find("max") == std::string::npos)))
+    {
+        return fail("anisotropy 16 did not obey the explicit device maximum contract");
+    }
+
+    const auto get_attachment = reinterpret_cast<void(APIENTRY*)(GLenum, GLenum, GLenum, GLint*)>(
+        wglGetProcAddress("glGetFramebufferAttachmentParameteriv"));
+    if (get_attachment == nullptr)
+    {
+        return fail("cannot observe the source GL texture for anisotropic draws");
+    }
+    const auto texture_name = [&](std::int64_t source) -> GLuint {
+        std::int32_t saved = 0;
+        std::int32_t viewport[4] = {};
+        if (!igpu::gl_color_target_begin(static_cast<std::uint64_t>(source), saved, viewport))
+        {
+            return 0;
+        }
+        GLint name = 0;
+        get_attachment(0x8D40, 0x8CE0, 0x8CD1, &name); // framebuffer, color attachment, object name
+        igpu::gl_color_target_end(saved, viewport);
+        return static_cast<GLuint>(name);
+    };
+    // A uniform source avoids driver-dependent footprints at repeat seams.
+    // Address selection is checked directly at the sampler draw boundary below.
+    const auto aniso_fixture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    std::int32_t aniso_fixture_fbo = 0;
+    std::int32_t aniso_fixture_viewport[4] = {};
+    if (aniso_fixture == 0 || !igpu::gl_color_target_begin(aniso_fixture, aniso_fixture_fbo, aniso_fixture_viewport))
+    {
+        return fail("anisotropic uniform source target creation failed");
+    }
+    GLfloat aniso_clear_color[4] = {};
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, aniso_clear_color);
+    glClearColor(1.f, 0.f, 0.f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glClearColor(aniso_clear_color[0], aniso_clear_color[1], aniso_clear_color[2], aniso_clear_color[3]);
+    igpu::gl_color_target_end(aniso_fixture_fbo, aniso_fixture_viewport);
+    if (igpu_texture_read(aniso_fixture, 1, 4, 0, 0) != 255 || igpu_texture_read(aniso_fixture, 6, 4, 0, 0) != 255)
+    {
+        return fail("anisotropic source is not uniformly red");
+    }
+    const GLuint aniso_source_name = texture_name(aniso_fixture);
+    if (aniso_source_name == 0)
+    {
+        return fail("could not capture anisotropic source texture names");
+    }
+    const auto aniso_source_original = texture_parameters(aniso_source_name);
+    if (aniso_source_original.integers[5] != 0 || aniso_source_original.integers[6] != 0)
+    {
+        return fail("a single-level anisotropic source did not initialize base/max mip level to zero");
+    }
+    auto aniso_caller = aniso_source_original;
+    aniso_caller.floats = {caller_aniso, -0.25f, 0.f, 7.f, 0.25f, 0.5f, 0.75f, 1.f};
+    set_texture_parameters(aniso_source_name, aniso_caller);
+    const auto aniso_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    const auto aniso_reject_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
+    if (aniso_dest == 0 || aniso_reject_dest == 0 || glGetError() != GL_NO_ERROR)
+    {
+        return fail("anisotropic draw fixture setup failed");
+    }
+    const auto aniso_pixels = [&](std::int64_t dest, std::int64_t expected) -> bool {
+        const auto left = igpu_texture_read(static_cast<std::uint64_t>(dest), 1, 4, 0, 0);
+        const auto right = igpu_texture_read(static_cast<std::uint64_t>(dest), 6, 4, 0, 0);
+        if (left != expected || right != expected)
+        {
+            std::fprintf(stderr, "aniso pixels: actual=%lld/%lld expected=%lld\n",
+                         static_cast<long long>(left), static_cast<long long>(right), static_cast<long long>(expected));
+        }
+        return left == expected && right == expected;
+    };
+    SamplerDrawObserver aniso_observer;
+    if (!aniso_observer.install())
+    {
+        return fail("could not install the real-draw anisotropy observer");
+    }
+    const auto draw_aniso = [&](std::int64_t source, GLuint name, std::int64_t sampler,
+                                GLint anisotropy, GLint wrap_s, GLint wrap_t, bool border) -> bool {
+        const auto before = texture_parameters(name);
+        GLint binding_before = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding_before);
+        aniso_observer.calls = 0;
+        const bool drew = sample_from(aniso_dest, sampler, source);
+        GLint binding_after = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding_after);
+        const auto& observed = aniso_observer.parameters;
+        const bool applied = aniso_observer.calls == 1 && aniso_observer.texture == static_cast<GLint>(name) &&
+                             observed.floats[0] == static_cast<GLfloat>(anisotropy) &&
+                             observed.integers[0] == wrap_s && observed.integers[1] == wrap_t &&
+                             observed.integers[3] == GL_LINEAR_MIPMAP_LINEAR && observed.integers[4] == GL_LINEAR &&
+                             (!border || (observed.floats[4] == 0.f && observed.floats[5] == 1.f &&
+                                          observed.floats[6] == 0.f && observed.floats[7] == 1.f));
+        if (!drew || !applied || !(texture_parameters(name) == before) || binding_before != binding_after ||
+            glGetError() != GL_NO_ERROR)
+        {
+            std::fprintf(stderr, "aniso draw: sampler=%lld requested=%d observed=%g calls=%u error=%s\n",
+                         static_cast<long long>(sampler), anisotropy, observed.floats[0], aniso_observer.calls,
+                         igpu_get_last_error().c_str());
+            return false;
+        }
+        return true;
+    };
+    if (!write_uv(1.25f, 0.5f) || !draw_aniso(aniso_fixture, aniso_source_name, wrap_aniso, 2, GL_REPEAT, GL_REPEAT, false) ||
+        !aniso_pixels(aniso_dest, 255))
+    {
+        return fail("anisotropy 2 did not sample the uniform red fixture and restore caller parameters");
+    }
+    if (!write_uv(0.25f, 0.5f) ||
+        !draw_aniso(aniso_fixture, aniso_source_name, aniso_four, requested_aniso, 0x812F, GL_REPEAT, false) ||
+        !aniso_pixels(aniso_dest, 255))
+    {
+        return fail("requested anisotropy was not applied at the real draw and restored to the caller sentinel");
+    }
+    if (aniso_limit > 0 &&
+        (!draw_aniso(aniso_fixture, aniso_source_name, aniso_limit, 16, 0x812F, 0x812F, false) ||
+         !aniso_pixels(aniso_dest, 255)))
+    {
+        return fail("maximum public anisotropy did not reach the real draw");
+    }
+    constexpr GLint aniso_wraps[] = {0x812F, GL_REPEAT, 0x8370}; // clamp, repeat, mirror
+    for (GLint u = 0; u < 3; ++u)
+    {
+        for (GLint v = 0; v < 3; ++v)
+        {
+            for (GLint w = 0; w < 3; ++w)
+            {
+                const auto sampler = igpu_sampler_state_create(1, 1, 1, u, v, w, 2, 0, 0, 0.f, 0.f, -1.f);
+                if (sampler <= 0 || !write_uv(1.25f, 0.5f) ||
+                    !draw_aniso(aniso_fixture, aniso_source_name, sampler, 2, aniso_wraps[u], aniso_wraps[v], false) ||
+                    !aniso_pixels(aniso_dest, 255) || !write_uv(0.5f, 1.25f) ||
+                    !draw_aniso(aniso_fixture, aniso_source_name, sampler, 2, aniso_wraps[u], aniso_wraps[v], false) ||
+                    !aniso_pixels(aniso_dest, 255) || !igpu_state_release(sampler))
+                {
+                    std::fprintf(stderr, "anisotropic address combination: %d/%d/%d\n", u, v, w);
+                    return fail("anisotropic U/V/W address selection, pixels, or restoration failed");
+                }
+            }
+        }
+    }
+    if (!write_uv(2.f, 0.5f) ||
+        !draw_aniso(aniso_fixture, aniso_source_name, aniso_border, requested_aniso, 0x812D, 0x812D, true) ||
+        !aniso_pixels(aniso_dest, 65280) || !write_uv(0.25f, 0.5f) ||
+        !draw_aniso(aniso_fixture, aniso_source_name, aniso_border, requested_aniso, 0x812D, 0x812D, true) ||
+        !aniso_pixels(aniso_dest, 255))
+    {
+        return fail("all-border anisotropy lost its supplied green border, interior texel, or caller border color");
+    }
+    if (!igpu_state_release(wrap_aniso) || igpu_state_release(wrap_aniso) ||
+        igpu_get_last_error().find("unknown sampler handle") == std::string::npos)
+    {
+        return fail("anisotropic sampler release did not retire its handle");
+    }
+    for (const auto invalid : {wrap_aniso, static_cast<std::int64_t>(2147483647), aniso_blend})
+    {
+        GLint viewport_before[4] = {};
+        GLint framebuffer_before = 0;
+        GLint binding_before = 0;
+        glGetIntegerv(GL_VIEWPORT, viewport_before);
+        glGetIntegerv(0x8CA6, &framebuffer_before);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding_before);
+        aniso_observer.calls = 0;
+        if (sample_from(aniso_reject_dest, invalid, aniso_fixture) ||
+            igpu_get_last_error().find("unknown sampler handle") == std::string::npos)
+        {
+            return fail("a released, unknown, or blend handle was accepted as an anisotropic sampler");
+        }
+        GLint aniso_viewport_after[4] = {};
+        GLint aniso_framebuffer_after = 0;
+        GLint binding_after = 0;
+        glGetIntegerv(GL_VIEWPORT, aniso_viewport_after);
+        glGetIntegerv(0x8CA6, &aniso_framebuffer_after);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding_after);
+        if (aniso_observer.calls != 0 || !aniso_pixels(aniso_reject_dest, 0) ||
+            !(texture_parameters(aniso_source_name) == aniso_caller) ||
+            framebuffer_before != aniso_framebuffer_after || binding_before != binding_after ||
+            std::memcmp(viewport_before, aniso_viewport_after, sizeof(viewport_before)) != 0 || glGetError() != GL_NO_ERROR)
+        {
+            return fail("rejected anisotropic draw changed pixels, source parameters, binding, framebuffer, or viewport");
+        }
+    }
+    if (!write_uv(0.25f, 0.5f) ||
+        !draw_aniso(aniso_fixture, aniso_source_name, aniso_four, requested_aniso, 0x812F, GL_REPEAT, false) ||
+        !aniso_pixels(aniso_dest, 255) || !igpu_state_release(aniso_four) || !igpu_state_release(aniso_border) ||
+        !igpu_state_release(aniso_blend) || (aniso_limit > 0 && !igpu_state_release(aniso_limit)) || !aniso_observer.stop())
+    {
+        return fail("anisotropic release affected a live sampler or failed to restore the draw observer");
+    }
+    set_texture_parameters(aniso_source_name, aniso_source_original);
+    if (glGetError() != GL_NO_ERROR)
+    {
+        return fail("OpenGL error after anisotropic creation, draw, rejection, and restoration coverage");
+    }
+    std::printf("aniso draw   : during-draw state, 27 address triples, border, validation, release; max=%g\n", aniso_device_max);
     const auto lod_source = igpu_texture_create(0, 2, 2, 1, 6, true, false, 2);
     const auto lod_hold_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     const auto lod_coarse_dest = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
@@ -2821,6 +3189,67 @@ int main()
         igpu::gl_color_target_end(saved, viewport);
         return drew;
     };
+    // Constant-color mip levels make bias/range checks independent of anisotropic image quality.
+    const GLuint aniso_lod_name = texture_name(lod_source);
+    if (aniso_lod_name == 0)
+    {
+        return fail("could not capture the anisotropic mip source texture");
+    }
+    const auto aniso_lod_original = texture_parameters(aniso_lod_name);
+    auto aniso_lod_caller = aniso_lod_original;
+    aniso_lod_caller.floats = {caller_aniso, 4.f, 1.f, 1.f, 0.25f, 0.5f, 0.75f, 1.f};
+    set_texture_parameters(aniso_lod_name, aniso_lod_caller);
+    if (!aniso_observer.install())
+    {
+        return fail("could not observe the real anisotropic mip draw");
+    }
+    struct AnisoLodCase { float bias; float finest; float coarsest; std::int64_t pixel; };
+    const AnisoLodCase aniso_lod_cases[] = {
+        {0.f, 0.f, -1.f, 255}, {4.f, 0.f, -1.f, 65280},
+        {0.f, 1.f, -1.f, 65280}, {4.f, 0.f, 0.f, 255},
+    };
+    for (const auto address : {0, 3})
+    {
+        for (const auto& test : aniso_lod_cases)
+        {
+            const auto sampler = igpu_sampler_state_create(1, 1, 1, address, address, address, requested_aniso,
+                                                           65280, 0, test.bias, test.finest, test.coarsest);
+            aniso_observer.calls = 0;
+            if (sampler <= 0 || !draw_lod(aniso_dest, sampler))
+            {
+                return fail("anisotropic LOD sampler creation or draw failed");
+            }
+            const auto& observed = aniso_observer.parameters;
+            const GLfloat expected_bias = test.bias;
+            const GLfloat expected_max = test.coarsest < 0.f ? 3.402823466e+38f : test.coarsest;
+            if (aniso_observer.calls != 1 || aniso_observer.texture != static_cast<GLint>(aniso_lod_name) ||
+                observed.floats[0] != static_cast<GLfloat>(requested_aniso) || observed.floats[1] != expected_bias ||
+                observed.floats[2] != test.finest || observed.floats[3] != expected_max ||
+                observed.integers[3] != GL_LINEAR_MIPMAP_LINEAR || observed.integers[4] != GL_LINEAR ||
+                (address == 3 && (observed.floats[4] != 0.f || observed.floats[5] != 1.f ||
+                                  observed.floats[6] != 0.f || observed.floats[7] != 1.f)) ||
+                !(texture_parameters(aniso_lod_name) == aniso_lod_caller) || !aniso_pixels(aniso_dest, test.pixel) ||
+                !igpu_state_release(sampler) || glGetError() != GL_NO_ERROR)
+            {
+                std::fprintf(stderr, "aniso LOD: address=%d bias=%g finest=%g coarsest=%g\n",
+                             address, test.bias, test.finest, test.coarsest);
+                return fail("anisotropic LOD bias/range, mip pixels, border color, or parameter restoration failed");
+            }
+        }
+    }
+    aniso_observer.calls = 0;
+    if (!draw_lod(aniso_dest, 0) || !aniso_pixels(aniso_dest, 65280) ||
+        !(texture_parameters(aniso_lod_name) == aniso_lod_caller) || !aniso_observer.stop())
+    {
+        return fail("sampler zero did not retain the caller's mip and anisotropy state after anisotropic draws");
+    }
+    set_texture_parameters(aniso_lod_name, aniso_lod_original);
+    if (glGetError() != GL_NO_ERROR)
+    {
+        return fail("OpenGL error after anisotropic LOD coverage");
+    }
+    std::printf("aniso LOD    : normal/border base, bias, finest, coarsest; draw-state and mip-range restored\n");
+
     if (!draw_lod(lod_hold_dest, lod_hold))
     {
         return fail(igpu_get_last_error().c_str());
