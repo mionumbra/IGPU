@@ -1,3 +1,23 @@
+# 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 缓冲区生命周期完整批次
+
+> 先读本节，再读下方历史。当前分支 `gl-buffer-lifecycle`，基于已合并 PR #43（`3aefe5d`）。PR #43 已完成浮点纹理、比较采样与 mip 生成，受 NV 扩展支持约束的细节见紧接本节的上一批记录。本批继续使用既有公开 API，版本保持 0.5.0，按已授权的功能分支 → PR → 合并流程交付。
+
+## 当前实现与验证
+
+- GL 缓冲区接通 Static、Dynamic、Staging 使用方式，以及创建、大小查询、局部写入、受限 CPU 读回、动态调整和释放。每个分配及扩容新增区域清零；不会依赖 glBufferData(nullptr) 的未定义初始内容。大小必须为正且不超过 INT_MAX，按各用途校验对齐。
+- 本批支持单一用途：Vertex 的步长为 8/12/16 字节（0 保留历史 float2 的 8 字节行为）；Index 为 16 位、步长 0、大小为偶数；Uniform 步长 0、大小 16 字节对齐；Storage 步长为 4..2048 的 4 字节倍数且大小为整条记录；Indirect 为 Static、步长 0、至少 16 字节且 4 字节对齐。Staging 使用 None、步长 0，不能绑定流水线。组合用途和未知标志在 GL 创建时明确拒绝。
+- Static/Dynamic 写入允许合法字节区间，保留其余数据；Indirect 仍要求从偏移 0 整体上传。Staging 拒绝 CPU 写入。公开读回只接受 Staging 或 Storage，保留 CPU 目标区间之外的数据；普通顶点/索引/Uniform/Indirect 缓冲区不会悄悄放宽读回规则。未知或已释放句柄、空数据、负偏移、超大/越界范围均明确失败。
+- Dynamic 扩缩容以临时 GPU 缓冲区保存重叠前缀，再为原对象调整存储、复制前缀并清零扩容尾部。原生 GL 对象名称不变，已有 VAO 引用继续有效，不做 CPU 数据读回来搬迁。Static/Staging 调整失败。copy-buffer 入口按上下文可选加载，缺少时仅调整操作明确失败，创建、普通更新和读回不受影响。外部已映射的缓冲区拒绝读写/调整。
+- 创建、读写统一用临时 ARRAY_BUFFER 绑定操作，避免 Index 分配误改调用方的 VAO/EBO；返回前恢复绑定。调整恢复独立的 COPY_READ/COPY_WRITE 绑定。集成测试同时发现四条既有绘制路径会把调用方 VAO 重置为 0，渲染目标绘制还会清掉 ARRAY_BUFFER；现均恢复调用方输入状态，索引绘制在私有 VAO 上保存/恢复私有 EBO，不借用调用方的 EBO。
+- TDD 初始失败是旧后端拒绝 Dynamic 创建；扩展回归又实测到调用方 VAO=2/EBO=41 被绘制改成 0。修复后 Release WGL 完整探针通过：20 种合法与 34 种非法分配、实际 GPU 字节与零值、局部更新、扩缩容重叠数据/尾部/对象身份、Staging/Storage 读回、错误调用无副作用、外部绑定和数据保持，以及覆盖全部四条绘制路径的十一个真实渲染场景，并验证外部映射和缺少 copy 入口时的拒绝与状态保持。原有八种纹理与 1,568 个比较像素回归同时通过。最终日志见忽略的 `out/buffer-verified-build.log`、`out/buffer-verified-run.log`；中间证据为 `buffer-red-*`、`buffer-matrix-*` 和 `buffer-draw-green-*`。
+- 能力查询与实现同步：GL 的 BufferReadback 为 true，BufferResize 取决于当前后端的可选复制入口，缺少时仍保留读回能力。该元数据遗漏也已先观察 RED 再修复为 GREEN（`out/buffer-caps-red-run.log`、`buffer-caps-green-run.log`）。共享能力代码通过内部后端钩子查询，正式 DLL 不增加 GL 链接依赖；Release `IGPU.dll` 和 GL 探针均已构建通过。
+- Windows 正式 GameMaker DLL 仍是 D3D11；本批行为变更由真实 WGL 探针验证。Uniform/Storage/Indirect 缓冲区的生命周期支持不等于对应着色器绑定、计算或间接绘制已经接通，这些入口继续明确报告尚未实现。
+
+## 接着推进
+
+用户要求持续按完整能力批次推进，并已授权推送、创建 PR 和合并。下一批优先把查询、时间戳和栅栏做成闭环；遮挡查询需要排除比较采样内部镜像复制绘制的样本，不能直接把全部内部 GL 绘制计为用户绘制。随后继续实例化、间接、计算和剩余纹理用途。复用现有构建缓存，主线程负责构建与集成，测试/审查可独立并行，不再逐项停下来询问确认。
+
+---
 # 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 浮点纹理、比较采样与 mip 生成完整批次
 
 > 先读本节，再读下方历史。当前工作在 `gl-float-compare`，基于已合并的 PR #42（`e753f80`）。公开 API 和版本保持不变。本批沿用功能分支 → GitHub PR → 合并的已授权流程；实际交付状态以 Git 和 GitHub 为准。

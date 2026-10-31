@@ -1,5 +1,6 @@
 #include "wgl_host.h"
 #include "texture_tests.h"
+#include "buffer_tests.h"
 
 #include "IGPU_native.h"
 #include "igpu_capabilities.h"
@@ -393,10 +394,11 @@ int main()
     {
         return fail(igpu_get_last_error().c_str());
     }
-    if (igpu_buffer_create(24, 1, 2, 0) != 0 || igpu_buffer_create(24, 0, 2, 2) != 0 ||
+    const auto dynamic_indices = igpu_buffer_create(24, 1, 2, 0);
+    if (!dynamic_indices || !igpu_buffer_release(dynamic_indices) || igpu_buffer_create(24, 0, 2, 2) != 0 ||
         igpu_buffer_create(23, 0, 2, 0) != 0)
     {
-        return fail("dynamic, strided, or odd index buffer was accepted");
+        return fail("dynamic index creation or invalid index description validation failed");
     }
     const auto indexed_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
     if (indexed_texture == 0)
@@ -5741,6 +5743,11 @@ int main()
     if (!run_gl_texture_tests())
     {
         return fail("floating texture and comparison suite failed" );
+    }
+
+    if (!run_gl_buffer_tests())
+    {
+        return fail("buffer lifecycle suite failed");
     }
 
     void* context = gl_probe_context();

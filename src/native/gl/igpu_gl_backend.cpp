@@ -32,6 +32,7 @@ namespace igpu
             bool occlusion() const override { return false; }
             bool timestamps() const override { return false; }
             bool fences() const override { return false; }
+            bool buffer_resize_supported() const override { return igpu_gl_fns().CopyBufferSubData != nullptr; }
             std::int64_t timestamp_frequency() const override { return 0; }
 
             bool texture_format(std::int32_t format) const override { return gl_texture_format_supported(format); }
@@ -452,9 +453,12 @@ namespace igpu
             {
                 return gl_buffer_write(buffer, offset, data);
             }
-            bool buffer_resize(std::uint64_t, std::int64_t) override { return not_yet("igpu_buffer_resize"); }
-            bool buffer_read(std::uint64_t, std::int64_t, const gm::wire::GMBuffer&) override { return not_yet("igpu_buffer_read"); }
-            std::int64_t buffer_size(std::uint64_t) override { not_yet("igpu_buffer_size"); return 0; }
+            bool buffer_resize(std::uint64_t buffer, std::int64_t size) override { return gl_buffer_resize(buffer, size); }
+            bool buffer_read(std::uint64_t buffer, std::int64_t offset, const gm::wire::GMBuffer& dest) override
+            {
+                return gl_buffer_read(buffer, offset, dest);
+            }
+            std::int64_t buffer_size(std::uint64_t buffer) override { return gl_buffer_size(buffer); }
             bool buffer_release(std::uint64_t buffer) override { return gl_buffer_release(buffer); }
             bool storage_bind(std::uint64_t, std::int32_t, std::int32_t) override { return not_yet("igpu_storage_bind"); }
             bool buffer_patch(std::uint64_t, std::int64_t, const void*, std::size_t, const char*) override

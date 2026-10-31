@@ -313,8 +313,9 @@ namespace igpu
         case Capability::VertexBuffer:  return native || opengl_backend();
         case Capability::IndexBuffer:   return native || opengl_backend();
         case Capability::UniformBuffer: return native;
-        case Capability::BufferResize:  return native;
-        case Capability::BufferReadback: return native;
+        case Capability::BufferResize:  return native ||
+                   (opengl_backend() && active_backend()->buffer_resize_supported());
+        case Capability::BufferReadback: return native || opengl_backend();
 
         // ---- drawing ----
         // DrawStateRestore reports whether IGPU puts the input assembler back
