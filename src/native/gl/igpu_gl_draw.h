@@ -22,6 +22,8 @@ namespace igpu
                                         std::int32_t format, bool render_target, bool storage);
     std::int64_t gl_texture_create_mips(std::int32_t kind, std::int32_t width, std::int32_t height, std::int32_t depth,
                                         std::int32_t format, bool storage, std::int32_t mip_count);
+    bool gl_texture_format_supported(std::int32_t format);
+    bool gl_texture_generate_mips(std::uint64_t texture);
     bool gl_texture_release(std::uint64_t texture);
     std::int64_t gl_texture_read_level(std::uint64_t texture, std::int32_t x, std::int32_t y, std::int32_t layer,
                                        std::int32_t mip);
@@ -35,6 +37,11 @@ namespace igpu
                                                               std::int32_t address_v, std::int32_t address_w, float red,
                                                               float green, float blue, float alpha, float level_offset,
                                                               float finest, float coarsest, std::int32_t anisotropy = 1);
+    std::int64_t gl_sampler_state_create_compare(std::int32_t compare, std::int32_t magnification,
+                                                  std::int32_t minification, std::int32_t mip,
+                                                  std::int32_t address_u, std::int32_t address_v,
+                                                  std::int32_t address_w, std::int32_t anisotropy,
+                                                  float level_offset, float finest, float coarsest);
     std::int64_t gl_blend_state_create(bool enabled, std::int32_t src, std::int32_t dest, std::int32_t equation,
                                        std::int32_t src_alpha, std::int32_t dest_alpha, std::int32_t equation_alpha,
                                        bool write_red, bool write_green, bool write_blue, bool write_alpha);

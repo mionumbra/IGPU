@@ -1,4 +1,5 @@
 #include "wgl_host.h"
+#include "texture_tests.h"
 
 #include "IGPU_native.h"
 #include "igpu_capabilities.h"
@@ -2827,9 +2828,9 @@ int main()
         return fail("border mixed with clamp was accepted");
     }
     const auto wrap_compare = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 1, 0.f, 0.f, -1.f);
-    if (wrap_compare != 0 || std::string(igpu_get_last_error()).find("does not implement") == std::string::npos)
+    if (wrap_compare <= 0 || !igpu_state_release(wrap_compare))
     {
-        return fail("comparison sampler was accepted");
+        return fail("comparison sampler could not be created and released");
     }
     const auto wrap_aniso = igpu_sampler_state_create(1, 1, 1, 1, 1, 1, 2, 0, 0, 0.f, 0.f, -1.f);
     if (wrap_aniso <= 0)
@@ -5735,6 +5736,11 @@ int main()
     if (igpu_texture_read(static_cast<std::uint64_t>(sr_keep), 1, 4, 0, 0) != 255)
     {
         return fail("a released sampled raster handle changed pixels");
+    }
+
+    if (!run_gl_texture_tests())
+    {
+        return fail("floating texture and comparison suite failed" );
     }
 
     void* context = gl_probe_context();

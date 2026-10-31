@@ -34,7 +34,7 @@ namespace igpu
             bool fences() const override { return false; }
             std::int64_t timestamp_frequency() const override { return 0; }
 
-            bool texture_format(std::int32_t format) const override { return format == 6; }
+            bool texture_format(std::int32_t format) const override { return gl_texture_format_supported(format); }
 
             std::uint64_t query_create(std::int32_t) override { not_yet("igpu_query_create"); return 0; }
             bool query_begin(std::uint64_t) override { return not_yet("igpu_query_begin"); }
@@ -201,11 +201,14 @@ namespace igpu
                     magnification, minification, mip, address_u, address_v, address_w, red, green, blue, alpha,
                     level_offset, finest, coarsest);
             }
-            std::int64_t sampler_state_create_compare(std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t,
-                                                      std::int32_t, std::int32_t, std::int32_t, float, float, float) override
+            std::int64_t sampler_state_create_compare(std::int32_t compare, std::int32_t magnification,
+                                                      std::int32_t minification, std::int32_t mip,
+                                                      std::int32_t address_u, std::int32_t address_v,
+                                                      std::int32_t address_w, std::int32_t anisotropy,
+                                                      float level_offset, float finest, float coarsest) override
             {
-                not_yet("igpu_sampler_state_create");
-                return 0;
+                return gl_sampler_state_create_compare(compare, magnification, minification, mip, address_u,
+                                                       address_v, address_w, anisotropy, level_offset, finest, coarsest);
             }
             bool state_release(std::uint64_t handle) override { return gl_state_release(handle); }
 
@@ -225,7 +228,7 @@ namespace igpu
             {
                 return gl_texture_create_mips(kind, width, height, depth, format, storage, mip_count);
             }
-            bool texture_generate_mips(std::uint64_t) override { return not_yet("igpu_texture_generate_mips"); }
+            bool texture_generate_mips(std::uint64_t texture) override { return gl_texture_generate_mips(texture); }
             bool texture_release(std::uint64_t texture) override { return gl_texture_release(texture); }
             std::int64_t texture_get_pixel(std::uint64_t, std::int32_t, std::int32_t) override
             {
