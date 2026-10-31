@@ -55,6 +55,14 @@ using IgpuGlBindRenderbuffer = void(APIENTRY*)(GLenum, GLuint);
 using IgpuGlRenderbufferStorage = void(APIENTRY*)(GLenum, GLenum, GLsizei, GLsizei);
 using IgpuGlFramebufferRenderbuffer = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint);
 
+using IgpuGlDispatchCompute = void(APIENTRY*)(GLuint, GLuint, GLuint);
+using IgpuGlMemoryBarrier = void(APIENTRY*)(GLbitfield);
+using IgpuGlBindImageTexture = void(APIENTRY*)(GLuint, GLuint, GLint, GLboolean, GLint, GLenum, GLenum);
+using IgpuGlBindBufferBase = void(APIENTRY*)(GLenum, GLuint, GLuint);
+using IgpuGlBindBufferRange = void(APIENTRY*)(GLenum, GLuint, GLuint, std::ptrdiff_t, std::ptrdiff_t);
+using IgpuGlGetIntegeri = void(APIENTRY*)(GLenum, GLuint, GLint*);
+using IgpuGlGetInteger64i = void(APIENTRY*)(GLenum, GLuint, std::int64_t*);
+
 using IgpuGlDrawArraysInstanced = void(APIENTRY*)(GLenum, GLint, GLsizei, GLsizei);
 using IgpuGlVertexAttribDivisor = void(APIENTRY*)(GLuint, GLuint);
 using IgpuGlDrawArraysIndirect = void(APIENTRY*)(GLenum, const void*);
@@ -76,6 +84,13 @@ using IgpuGlDeleteSync = void(APIENTRY*)(IgpuGlSync);
 
 struct IgpuGlFns
 {
+    IgpuGlDispatchCompute DispatchCompute = nullptr;
+    IgpuGlMemoryBarrier MemoryBarrier = nullptr;
+    IgpuGlBindImageTexture BindImageTexture = nullptr;
+    IgpuGlBindBufferBase BindBufferBase = nullptr;
+    IgpuGlBindBufferRange BindBufferRange = nullptr;
+    IgpuGlGetIntegeri GetIntegeri = nullptr;
+    IgpuGlGetInteger64i GetInteger64i = nullptr;
     IgpuGlDrawArraysInstanced DrawArraysInstanced = nullptr;
     IgpuGlVertexAttribDivisor VertexAttribDivisor = nullptr;
     IgpuGlDrawArraysIndirect DrawArraysIndirect = nullptr;

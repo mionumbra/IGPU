@@ -34,6 +34,8 @@ namespace igpu
         virtual bool timestamps() const = 0;
         virtual bool fences() const = 0;
         virtual bool buffer_resize_supported() const { return false; }
+        virtual bool compute_supported() const { return false; }
+        virtual bool structured_buffer_supported() const { return false; }
         virtual bool instancing_supported() const { return false; }
         virtual bool indirect_draw_supported() const { return false; }
 
