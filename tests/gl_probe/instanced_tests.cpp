@@ -157,7 +157,7 @@ namespace
 bool run_gl_instanced_tests()
 {
     Fixture p;if(!p.initialize())return false;
-    constexpr std::uint32_t red=255,green=65280;
+    constexpr std::uint32_t red=255;
     if(!p.image([&]{return p.direct(0,p.basic);},0,{red,0,red},32,"builtin InstanceID")||
         !p.image([&]{return p.direct(p.instances,p.uv);},1,{red,0,red},32,"step-1 UV")||
         !p.image([&]{return p.direct(p.instances,p.uv,1);},1,{red,0,0},16,"one instance")||
@@ -171,8 +171,8 @@ bool run_gl_instanced_tests()
         if(!check(layout&&buffer&&igpu_buffer_write(buffer,0,gm::wire::GMBuffer(data.data(),data.size())),"padded instances")||
             !p.image([&]{return p.direct(buffer,layout);},1,{red,0,red},32,"padded instance stride"))return false;
     }
-    const auto colors=p.buffer(16,1,8);std::array<unsigned char,16> bytes={255,0,0,255,0,0,0,0,0,255,0,255,0,0,0,0};
-    if(!p.write(colors,bytes)||!p.image([&]{return p.direct(colors,p.colour);},2,{red,0,green},32,"normalized colour instances")||
+    const auto colors=p.buffer(16,1,8);std::array<unsigned char,16> bytes={128,0,0,255,0,0,0,0,0,64,0,255,0,0,0,0};
+    if(!p.write(colors,bytes)||!p.image([&]{return p.direct(colors,p.colour);},2,{128,0,16384},32,"normalized colour instances")||
         !p.image([&]{return p.indirect(0,p.basic);},0,{red,0,red},32,"array indirect")||
         !p.image([&]{return p.indirect(p.instances,p.uv,true);},1,{red,0,red},32,"indexed indirect baseVertex")||
         !p.commands_set({4,1,1,1},{4,1,0,1,1})||

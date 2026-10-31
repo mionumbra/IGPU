@@ -13,14 +13,14 @@
 
 ## 验证与交付
 
-先观察旧后端拒绝合法双实例绘制（`out/instanced-red-run.log`），随后核心 GREEN。完整 Release WGL 探针通过（`out/instanced-final-matrix-build.log`、`out/instanced-final-matrix-run.log`）：
+先观察旧后端拒绝合法双实例绘制（`out/instanced-red-run.log`），随后核心 GREEN。完整 Release WGL 探针通过（`out/instanced-verified-build.log`、`out/instanced-verified-run.log`）：
 
 - 十七个真实渲染场景，核对 0/16/32/48 遮挡样本数及左/中/右实际像素；覆盖 InstanceID、逐实例 UV 与规范化颜色、8/12/16 记录步长、动态扩缩容保留前缀与零扩展。
 - 数组/索引间接绘制、0/32 字节记录偏移、正负 baseVertex、两类 baseInstance、全零命令无操作，以及实例绘制之后的普通逐顶点属性读取。
 - 输出状态覆盖与恢复、调用方绑定和 64 字节外部哨兵、数值/用途/缺流/无程序/释放句柄错误，以及通过真实 MapBuffer 制造的外部映射拒绝。
 - 缺少除数或间接入口时能力与操作一致降级。全部旧纹理/1,568 比较像素、缓冲区生命周期、查询/区间/栅栏、隐藏复制排除、外部查询缓冲区和 shutdown/rebind 回归同时通过。
 
-独立整批审查、共享头变更后的 Windows DLL 构建与最终交付正在收尾，以实际 Git、GitHub 与日志为准。复用现有缓存，由主线程完成实现/测试，避免测试工作交接成为等待点。
+独立整批审查没有 Critical/Important；共享头变更后的 Windows DLL 构建、交接文档与空白检查通过。审查建议的颜色断言已加强到红 128 / 绿 64：临时关闭归一化可实测复现 RED（`out/instanced-normalization-red-run.log`），恢复原实现后完整探针 GREEN；生产代码与审查版本一致。以实际 Git、GitHub 交付状态为准。复用现有缓存，由主线程完成实现/测试，避免测试工作交接成为等待点。
 
 ## 后续方向
 
