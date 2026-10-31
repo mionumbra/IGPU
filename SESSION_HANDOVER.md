@@ -12,6 +12,8 @@
 
 后续优先整批补多渲染目标，再处理三维/数组/立方纹理、几何/曲面细分等 GL 能力。现有 Windows DLL 的 D3D11 能力边界保持。
 
+Independent review fixes: sampled draws now reject late-mapped vertex/pixel UBOs; GL Uniform allocation/resize accepts four-byte multiples for exact packed 4/8/12-byte blocks. D3D alignment unchanged. RED: `out/uniform-review-packed-red-run.log`, `out/uniform-review-sampled-red-run.log`; complete GREEN: `out/uniform-review-green-run.log` ends PASS.
+
 ---
 
 # 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 计算与存储资源完整批次
