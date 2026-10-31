@@ -4,6 +4,7 @@
 #include "igpu_gl_loader.h"
 #include "igpu_gl_shadow.h"
 #include "igpu_gl_compute.h"
+#include "igpu_gl_uniform.h"
 
 #include <Windows.h>
 #include <GL/gl.h>
@@ -557,6 +558,7 @@ namespace igpu
                               const BlendObject*& blend, const DepthObject*& depth, const RasterObject*& raster,
                               GLenum& mode)
         {
+            if (!gl_uniform_validate_inputs(0, 1, entry)) return false;
             if (!gl_pipeline_accepted(entry, primitive, mode))
             {
                 return false;
@@ -679,7 +681,7 @@ namespace igpu
             if (size <= 0 || size > (std::numeric_limits<GLint>::max)()) return false;
             if (bind == 1) return stride > 0 && size % stride == 0;
             if (bind == 2) return size % 2 == 0;
-            if (bind == 4) return size % 16 == 0;
+            if (bind == 4) return size % 4 == 0;
             if (bind == 8) return stride > 0 && size % stride == 0;
             if (bind == 16) return size >= 16 && size % 4 == 0;
             return bind == 0;
@@ -896,6 +898,7 @@ namespace igpu
             set_last_error("igpu_buffer_release: unknown buffer handle");
             return false;
         }
+        gl_uniform_release_buffer(buffer);
         gl_storage_release_buffer(buffer);
         igpu_gl_fns().DeleteBuffers(1, &it->second.id);
         g_buffers.erase(it);
@@ -961,6 +964,35 @@ namespace igpu
     bool gl_input_layout_release(std::uint64_t layout)
     {
         return g_layouts.erase(layout) != 0;
+    }
+
+    bool gl_uniform_buffer(std::uint64_t handle, GlUniformBuffer& out, const char* entry)
+    {
+        const auto found = g_buffers.find(handle);
+        if (found == g_buffers.end() || found->second.bind != 4)
+        {
+            set_last_error(std::string(entry) + ": the buffer needs IgpuBufferBind.Uniform");
+            return false;
+        }
+        ArrayBufferBinding saved;
+        igpu_gl_fns().BindBuffer(GL_ARRAY_BUFFER, found->second.id);
+        if (!buffer_unmapped(GL_ARRAY_BUFFER, entry)) return false;
+        out = {found->second.id, found->second.size};
+        return true;
+    }
+    bool gl_uniform_patch(std::uint64_t buffer, std::int64_t offset, const void* data, std::size_t size, const char* entry)
+    {
+        GlUniformBuffer resolved;
+        if (!gl_uniform_buffer(buffer, resolved, entry)) return false;
+        if (!data || size == 0 || offset < 0 || offset > resolved.bytes || size > static_cast<std::uint64_t>(resolved.bytes-offset))
+        {
+            set_last_error(std::string(entry) + ": the member does not fit in the uniform buffer");
+            return false;
+        }
+        ArrayBufferBinding saved;
+        auto& f = igpu_gl_fns();f.BindBuffer(GL_ARRAY_BUFFER, resolved.name);
+        f.BufferSubData(GL_ARRAY_BUFFER, static_cast<std::ptrdiff_t>(offset), static_cast<std::ptrdiff_t>(size), data);
+        return true;
     }
 
     bool gl_storage_buffer(std::uint64_t handle, GlStorageBuffer& out, const char* entry)
@@ -1743,6 +1775,7 @@ namespace igpu
         const BlendObject* blend = nullptr;
         const DepthObject* depth = nullptr;
         const RasterObject* raster = nullptr;
+        if (!gl_uniform_validate_inputs(0, 1, "igpu_draw_sampled")) return false;
         if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, mode))
         {
             return false;

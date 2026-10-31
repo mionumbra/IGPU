@@ -29,20 +29,16 @@ namespace igpu
             return backend;
         }
 
-        const DeviceState::ShaderEntry* find_compiled(std::int64_t shader, const char* entry)
+        const UniformLayout* find_compiled(std::int64_t shader, const char* entry)
         {
-            if (shader <= 0)
+            if (shader > 0 && active_backend() != nullptr)
             {
-                set_last_error(std::string(entry) + ": unknown shader handle");
-                return nullptr;
+                const auto* layout = active_backend()->shader_uniforms(static_cast<std::uint64_t>(shader));
+                if (layout != nullptr) return layout;
+                if (!last_error().empty()) return nullptr;
             }
-            const auto* found = find_shader(static_cast<std::uint64_t>(shader));
-            if (found == nullptr)
-            {
-                set_last_error(std::string(entry) + ": unknown shader handle");
-                return nullptr;
-            }
-            return found;
+            set_last_error(std::string(entry) + ": unknown shader handle");
+            return nullptr;
         }
 
         const UniformBlock* find_block(const UniformLayout& layout, std::string_view name, const char* entry)
@@ -165,14 +161,15 @@ namespace igpu
                     const bool by_column = member.shape == static_cast<std::int32_t>(UniformShape::MatrixColumns);
                     const std::int32_t majors = by_column ? member.columns : member.rows;
                     const std::int32_t minors = by_column ? member.rows : member.columns;
-                    const std::size_t element_base = static_cast<std::size_t>(element) *
-                        static_cast<std::size_t>(majors) * 16u;
+                    const std::size_t matrix_stride = member.matrix_stride ? member.matrix_stride : 16u;
+                    const std::size_t array_stride = member.array_stride ? member.array_stride : static_cast<std::size_t>(majors) * matrix_stride;
+                    const std::size_t element_base = static_cast<std::size_t>(element) * array_stride;
                     for (std::int32_t major = 0; major < majors; ++major)
                     {
                         for (std::int32_t minor = 0; minor < minors; ++minor)
                         {
                             const std::size_t at = element_base +
-                                static_cast<std::size_t>(major) * 16u +
+                                static_cast<std::size_t>(major) * matrix_stride +
                                 static_cast<std::size_t>(minor) * 4u;
                             if (at + 4 > dest.size())
                             {
@@ -188,7 +185,7 @@ namespace igpu
                     continue;
                 }
 
-                const std::size_t base = as_array ? static_cast<std::size_t>(element) * 16u : 0u;
+                const std::size_t base = as_array ? static_cast<std::size_t>(element) * (member.array_stride ? member.array_stride : 16u) : 0u;
                 for (std::int32_t component = 0; component < per_element; ++component)
                 {
                     const std::size_t at = base + static_cast<std::size_t>(component) * 4u;
@@ -215,7 +212,7 @@ namespace igpu
             return 0;
         }
         const auto* entry = find_compiled(shader, "igpu_shader_block_count");
-        return entry == nullptr ? 0 : static_cast<std::int32_t>(entry->uniforms.blocks.size());
+        return entry == nullptr ? 0 : static_cast<std::int32_t>(entry->blocks.size());
     }
 
     std::string shader_block_name(std::int64_t shader, std::int32_t index)
@@ -230,12 +227,12 @@ namespace igpu
         {
             return {};
         }
-        if (index < 0 || static_cast<std::size_t>(index) >= entry->uniforms.blocks.size())
+        if (index < 0 || static_cast<std::size_t>(index) >= entry->blocks.size())
         {
             set_last_error("igpu_shader_block_name: index is outside the shader");
             return {};
         }
-        return entry->uniforms.blocks[static_cast<std::size_t>(index)].name;
+        return entry->blocks[static_cast<std::size_t>(index)].name;
     }
 
     std::int32_t shader_block_size(std::int64_t shader, std::string_view block)
@@ -250,7 +247,7 @@ namespace igpu
         {
             return 0;
         }
-        const auto* found = find_block(entry->uniforms, block, "igpu_shader_block_size");
+        const auto* found = find_block(*entry, block, "igpu_shader_block_size");
         return found == nullptr ? 0 : static_cast<std::int32_t>(found->size);
     }
 
@@ -266,7 +263,7 @@ namespace igpu
         {
             return -1;
         }
-        const auto* found = find_block(entry->uniforms, block, "igpu_shader_block_slot");
+        const auto* found = find_block(*entry, block, "igpu_shader_block_slot");
         if (found == nullptr)
         {
             return -1;
@@ -291,7 +288,7 @@ namespace igpu
         {
             return 0;
         }
-        const auto* found = find_block(entry->uniforms, block, "igpu_shader_member_count");
+        const auto* found = find_block(*entry, block, "igpu_shader_member_count");
         return found == nullptr ? 0 : static_cast<std::int32_t>(found->members.size());
     }
 
@@ -307,7 +304,7 @@ namespace igpu
         {
             return {};
         }
-        const auto* found = find_block(entry->uniforms, block, "igpu_shader_member_name");
+        const auto* found = find_block(*entry, block, "igpu_shader_member_name");
         if (found == nullptr)
         {
             return {};
@@ -332,7 +329,7 @@ namespace igpu
         {
             return -1;
         }
-        const auto* found_block = find_block(entry->uniforms, block, "igpu_shader_member_offset");
+        const auto* found_block = find_block(*entry, block, "igpu_shader_member_offset");
         if (found_block == nullptr)
         {
             return -1;
@@ -353,7 +350,7 @@ namespace igpu
         {
             return 0;
         }
-        const auto* found_block = find_block(entry->uniforms, block, "igpu_shader_member_size");
+        const auto* found_block = find_block(*entry, block, "igpu_shader_member_size");
         if (found_block == nullptr)
         {
             return 0;
@@ -374,7 +371,7 @@ namespace igpu
         {
             return static_cast<std::int32_t>(UniformType::Unknown);
         }
-        const auto* found_block = find_block(entry->uniforms, block, "igpu_shader_member_type");
+        const auto* found_block = find_block(*entry, block, "igpu_shader_member_type");
         if (found_block == nullptr)
         {
             return static_cast<std::int32_t>(UniformType::Unknown);
@@ -397,7 +394,7 @@ namespace igpu
         {
             return 0;
         }
-        const auto* found_block = find_block(entry->uniforms, block, "igpu_shader_member_rows");
+        const auto* found_block = find_block(*entry, block, "igpu_shader_member_rows");
         if (found_block == nullptr)
         {
             return 0;
@@ -418,7 +415,7 @@ namespace igpu
         {
             return 0;
         }
-        const auto* found_block = find_block(entry->uniforms, block, "igpu_shader_member_columns");
+        const auto* found_block = find_block(*entry, block, "igpu_shader_member_columns");
         if (found_block == nullptr)
         {
             return 0;
@@ -439,7 +436,7 @@ namespace igpu
         {
             return 0;
         }
-        const auto* found_block = find_block(entry->uniforms, block, "igpu_shader_member_elements");
+        const auto* found_block = find_block(*entry, block, "igpu_shader_member_elements");
         if (found_block == nullptr)
         {
             return 0;
@@ -461,7 +458,7 @@ namespace igpu
         {
             return false;
         }
-        const auto* found_block = find_block(shader_entry->uniforms, block, "igpu_uniform_write");
+        const auto* found_block = find_block(*shader_entry, block, "igpu_uniform_write");
         if (found_block == nullptr)
         {
             return false;
@@ -472,19 +469,10 @@ namespace igpu
             return false;
         }
 
-        auto* buffer_entry = find_buffer(buffer);
-        if (buffer_entry == nullptr)
-        {
-            set_last_error("igpu_uniform_write: unknown buffer handle");
-            return false;
-        }
-        if ((buffer_entry->bind & static_cast<std::int32_t>(BufferBind::Uniform)) == 0)
-        {
-            set_last_error("igpu_uniform_write: the buffer was not created with IgpuBufferBind.Uniform");
-            return false;
-        }
-        if (buffer_entry->size < static_cast<std::int64_t>(found_block->size) ||
-            static_cast<std::uint32_t>(buffer_entry->size) < found->offset + found->size)
+        const auto bytes = active_backend()->uniform_buffer_bytes(buffer, "igpu_uniform_write");
+        if (bytes <= 0) return false;
+        if (bytes < static_cast<std::int64_t>(found_block->size) ||
+            static_cast<std::uint64_t>(found->offset) + found->size > static_cast<std::uint64_t>(bytes))
         {
             set_last_error("igpu_uniform_write: the buffer is smaller than the uniform block");
             return false;

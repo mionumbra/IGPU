@@ -6,7 +6,7 @@ This is the existing IGPU 0.5.0 API on the GL backend. The WGL probe builds GL; 
 
 `ShaderStageCompute` and `UnorderedAccess` require GL 4.3 or the complete compute/SSBO/image extension set, transform-feedback active/paused state queries, all required dispatch/binding/barrier/query entry points, and at least eight compute SSBO blocks and image units. Each group count is in `1..min(65535, hardware limit)`.
 
-`StructuredBuffer` additionally requires 32 SSBO bindings and eight storage blocks in each of the vertex, pixel and compute stages. These conservative gates cover the complete binding contract. GL UBOs and uniform reflection remain unavailable in this batch.
+`StructuredBuffer` additionally requires 32 SSBO bindings and eight storage blocks in each of the vertex, pixel and compute stages. These conservative gates cover the complete binding contract. GL UBOs and uniform reflection are documented in `OPENGL_UNIFORMS.md`.
 
 Storage buffers use the existing single Storage role and stride/size restrictions. Combining Storage with Vertex, Index or Indirect remains invalid. Storage images are 2D, depth 1, in RGBA8, R8, RG8, R16F, R32F, RGBA16F or RGBA32F. RGBA4 remains valid for ordinary textures and is rejected for storage images.
 

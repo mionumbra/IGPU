@@ -51,8 +51,8 @@ namespace igpu
     bool buffer_release(std::uint64_t buffer);
     bool storage_bind(std::uint64_t buffer, std::int32_t stage, std::int32_t slot);
 
-    // Patches `size` bytes at `offset` inside a uniform buffer and uploads the
-    // whole block. The buffer keeps a CPU copy so other members stay put.
+    // Patches `size` bytes at `offset` inside a uniform buffer, preserving the
+    // other members. Backends may keep a CPU copy for whole-block uploads.
     bool buffer_patch(std::uint64_t buffer, std::int64_t offset, const void* data,
                       std::size_t size, const char* entry);
 }

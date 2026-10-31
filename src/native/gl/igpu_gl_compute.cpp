@@ -1,4 +1,5 @@
 #include "igpu_gl_compute.h"
+#include "igpu_gl_uniform.h"
 #include "igpu_gl_loader.h"
 #include "igpu_error.h"
 #include <array>
@@ -119,6 +120,7 @@ namespace igpu
             glGetIntegerv(0x8B8D, &current);
             if (current) igpu_gl_fns().GetProgramiv(current, 0x8B80 /* DELETE_STATUS */, &deleted);
             if (deleted) return fail(entry, "unbind the current program pending deletion before dispatch");
+            if (!gl_uniform_validate_inputs(2, 2, entry)) return false;
             // A caller can map an input after claiming it; validate again at dispatch.
             for (const auto& claim : claims)
             {

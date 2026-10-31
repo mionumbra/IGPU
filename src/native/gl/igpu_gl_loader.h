@@ -55,6 +55,11 @@ using IgpuGlBindRenderbuffer = void(APIENTRY*)(GLenum, GLuint);
 using IgpuGlRenderbufferStorage = void(APIENTRY*)(GLenum, GLenum, GLsizei, GLsizei);
 using IgpuGlFramebufferRenderbuffer = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint);
 
+using IgpuGlProgramParameteri = void(APIENTRY*)(GLuint, GLenum, GLint);
+using IgpuGlGetActiveUniformBlockiv = void(APIENTRY*)(GLuint, GLuint, GLenum, GLint*);
+using IgpuGlGetActiveUniformBlockName = void(APIENTRY*)(GLuint, GLuint, GLsizei, GLsizei*, char*);
+using IgpuGlGetActiveUniformsiv = void(APIENTRY*)(GLuint, GLsizei, const GLuint*, GLenum, GLint*);
+
 using IgpuGlDispatchCompute = void(APIENTRY*)(GLuint, GLuint, GLuint);
 using IgpuGlMemoryBarrier = void(APIENTRY*)(GLbitfield);
 using IgpuGlBindImageTexture = void(APIENTRY*)(GLuint, GLuint, GLint, GLboolean, GLint, GLenum, GLenum);
@@ -84,6 +89,10 @@ using IgpuGlDeleteSync = void(APIENTRY*)(IgpuGlSync);
 
 struct IgpuGlFns
 {
+    IgpuGlProgramParameteri ProgramParameteri = nullptr;
+    IgpuGlGetActiveUniformBlockiv GetActiveUniformBlockiv = nullptr;
+    IgpuGlGetActiveUniformBlockName GetActiveUniformBlockName = nullptr;
+    IgpuGlGetActiveUniformsiv GetActiveUniformsiv = nullptr;
     IgpuGlDispatchCompute DispatchCompute = nullptr;
     IgpuGlMemoryBarrier MemoryBarrier = nullptr;
     IgpuGlBindImageTexture BindImageTexture = nullptr;
