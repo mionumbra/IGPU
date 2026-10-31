@@ -55,6 +55,11 @@ using IgpuGlBindRenderbuffer = void(APIENTRY*)(GLenum, GLuint);
 using IgpuGlRenderbufferStorage = void(APIENTRY*)(GLenum, GLenum, GLsizei, GLsizei);
 using IgpuGlFramebufferRenderbuffer = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint);
 
+using IgpuGlDrawArraysInstanced = void(APIENTRY*)(GLenum, GLint, GLsizei, GLsizei);
+using IgpuGlVertexAttribDivisor = void(APIENTRY*)(GLuint, GLuint);
+using IgpuGlDrawArraysIndirect = void(APIENTRY*)(GLenum, const void*);
+using IgpuGlDrawElementsIndirect = void(APIENTRY*)(GLenum, GLenum, const void*);
+
 using IgpuGlGenQueries = void(APIENTRY*)(GLsizei, GLuint*);
 using IgpuGlDeleteQueries = void(APIENTRY*)(GLsizei, const GLuint*);
 using IgpuGlBeginQuery = void(APIENTRY*)(GLenum, GLuint);
@@ -71,6 +76,10 @@ using IgpuGlDeleteSync = void(APIENTRY*)(IgpuGlSync);
 
 struct IgpuGlFns
 {
+    IgpuGlDrawArraysInstanced DrawArraysInstanced = nullptr;
+    IgpuGlVertexAttribDivisor VertexAttribDivisor = nullptr;
+    IgpuGlDrawArraysIndirect DrawArraysIndirect = nullptr;
+    IgpuGlDrawElementsIndirect DrawElementsIndirect = nullptr;
     IgpuGlGenQueries GenQueries = nullptr;
     IgpuGlDeleteQueries DeleteQueries = nullptr;
     IgpuGlBeginQuery BeginQuery = nullptr;
@@ -130,3 +139,9 @@ struct IgpuGlFns
 };
 
 IgpuGlFns& igpu_gl_fns();
+
+namespace igpu
+{
+    bool gl_context_at_least(int major, int minor);
+    bool gl_context_extension(const char* name);
+}

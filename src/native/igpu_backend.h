@@ -34,6 +34,8 @@ namespace igpu
         virtual bool timestamps() const = 0;
         virtual bool fences() const = 0;
         virtual bool buffer_resize_supported() const { return false; }
+        virtual bool instancing_supported() const { return false; }
+        virtual bool indirect_draw_supported() const { return false; }
 
         // Ticks per second. 0 until a timestamp query has completed.
         virtual std::int64_t timestamp_frequency() const = 0;

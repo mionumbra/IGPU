@@ -103,6 +103,14 @@ namespace igpu
             std::int32_t usage = 0;
         };
 
+        struct LayoutObject
+        {
+            int vertex_stride = 0;
+            int instance_stride = 0;
+            bool instance_colour = false;
+        };
+        bool g_instancing_context = false, g_indirect_context = false;
+
         struct TextureObject
         {
             GLuint texture = 0;
@@ -148,7 +156,7 @@ namespace igpu
         std::uint64_t g_next_buffer = 1;
         std::uint64_t g_next_texture = 1;
         std::uint64_t g_next_layout = 1;
-        std::unordered_map<std::uint64_t, int> g_layouts;
+        std::unordered_map<std::uint64_t, LayoutObject> g_layouts;
         struct SamplerObject
         {
             std::int32_t address = 0;
@@ -891,40 +899,59 @@ namespace igpu
         return true;
     }
 
+    void gl_draw_capabilities_initialize()
+    {
+        g_instancing_context = gl_context_at_least(3, 3) ||
+            (gl_context_extension("GL_ARB_draw_instanced") && gl_context_extension("GL_ARB_instanced_arrays"));
+        g_indirect_context = (gl_context_at_least(4, 0) || gl_context_extension("GL_ARB_draw_indirect")) &&
+            (gl_context_at_least(4, 2) || gl_context_extension("GL_ARB_base_instance"));
+    }
+    bool gl_instancing_supported()
+    {
+        const auto& f = igpu_gl_fns();
+        return g_instancing_context && f.DrawArraysInstanced && f.VertexAttribDivisor;
+    }
+    bool gl_indirect_draw_supported()
+    {
+        const auto& f = igpu_gl_fns();
+        return gl_instancing_supported() && g_indirect_context && f.DrawArraysIndirect && f.DrawElementsIndirect;
+    }
+
     std::int64_t gl_input_layout_create(std::int64_t shader, const gm::wire::GMArrayView& usage,
                                         const gm::wire::GMArrayView& type, const gm::wire::GMArrayView& step,
                                         std::int32_t element_count, std::int32_t vertex_stride,
                                         std::int32_t instance_stride)
     {
-        if (shader == 0 || instance_stride != 0)
-        {
-            set_last_error("igpu_input_layout_create: the opengl backend only accepts a float2 position, a float2 position followed by a colour, or a float2 position followed by a float2 texcoord");
-            return 0;
-        }
-        auto element_is = [&](std::size_t index, std::int64_t expect_usage, std::int64_t expect_type) {
-            if (usage.size() <= index || type.size() <= index || step.size() <= index)
-            {
-                return false;
-            }
-            std::int64_t usage_value = 0;
-            std::int64_t type_value = 0;
-            std::int64_t step_value = 0;
-            return read_i64(usage[index], usage_value) && read_i64(type[index], type_value) &&
-                   read_i64(step[index], step_value) && usage_value == expect_usage && type_value == expect_type &&
-                   step_value == 0;
+        auto element_is = [&](std::size_t index, std::int64_t expect_usage, std::int64_t expect_type,
+                              std::int64_t expect_step = 0) {
+            if (usage.size() <= index || type.size() <= index || step.size() <= index) return false;
+            std::int64_t u = 0, t = 0, s = 0;
+            return read_i64(usage[index], u) && read_i64(type[index], t) && read_i64(step[index], s) &&
+                u == expect_usage && t == expect_type && s == expect_step;
         };
         const bool position = element_count == 1 && (vertex_stride == 0 || vertex_stride == 8) && element_is(0, 1, 2);
         const bool coloured = element_count == 2 && (vertex_stride == 0 || vertex_stride == 12) &&
                               element_is(0, 1, 2) && element_is(1, 2, 5);
         const bool textured = element_count == 2 && (vertex_stride == 0 || vertex_stride == 16) &&
                               element_is(0, 1, 2) && element_is(1, 4, 2);
-        if (!position && !coloured && !textured)
+        const bool instance_record = (instance_stride == 8 || instance_stride == 12 || instance_stride == 16) &&
+                                    (vertex_stride == 0 || vertex_stride == 8) && element_count == 2 && element_is(0, 1, 2);
+        const bool instance_colour = instance_record && element_is(1, 2, 5, 1);
+        const bool instance_uv = instance_record && element_is(1, 4, 2, 1);
+        const bool instanced = instance_colour || instance_uv;
+        if (!shader || (!instanced && (!(position || coloured || textured) || instance_stride != 0)))
         {
-            set_last_error("igpu_input_layout_create: the opengl backend only accepts a float2 position, a float2 position followed by a colour, or a float2 position followed by a float2 texcoord");
+            set_last_error("igpu_input_layout_create: the opengl backend accepts float2 position with optional colour/float2 texcoord; step-1 inputs require an 8/12/16-byte instance record");
             return 0;
         }
-        const std::uint64_t handle = g_next_layout++;
-        g_layouts.emplace(handle, textured ? 16 : (coloured ? 12 : 8));
+        if (instanced && !gl_instancing_supported())
+        {
+            set_last_error("igpu_input_layout_create: this OpenGL context does not support instanced attributes");
+            return 0;
+        }
+        const auto handle = g_next_layout++;
+        g_layouts.emplace(handle, LayoutObject{instanced ? 8 : (textured ? 16 : (coloured ? 12 : 8)),
+                                              instanced ? instance_stride : 0, instance_colour});
         return static_cast<std::int64_t>(handle);
     }
 
@@ -1214,7 +1241,7 @@ namespace igpu
             return false;
         }
         const auto layout_it = g_layouts.find(layout);
-        if (layout_it == g_layouts.end() || layout_it->second != buffer->second.stride)
+        if (layout_it == g_layouts.end() || (layout_it->second.vertex_stride != buffer->second.stride || layout_it->second.instance_stride != 0))
         {
             set_last_error("igpu_draw_to_render_targets: the vertex buffer stride does not match the input layout");
             return false;
@@ -1324,7 +1351,7 @@ namespace igpu
             return false;
         }
         const auto layout_it = g_layouts.find(layout);
-        if (layout_it == g_layouts.end() || layout_it->second != vertex->second.stride)
+        if (layout_it == g_layouts.end() || (layout_it->second.vertex_stride != vertex->second.stride || layout_it->second.instance_stride != 0))
         {
             set_last_error("igpu_draw: the vertex buffer stride does not match the input layout");
             return false;
@@ -1406,6 +1433,160 @@ namespace igpu
         return true;
     }
 
+    namespace
+    {
+        struct AdvancedDraw
+        {
+            std::uint64_t vertex = 0, instances = 0, layout = 0, index = 0, args = 0;
+            std::int64_t first = 0, count = 0, instance_count = 0, offset = 0;
+            std::int32_t primitive = 0;
+            bool indirect = false, indexed = false;
+        };
+
+        bool draw_advanced(const char* entry, AdvancedDraw draw, std::int64_t blend_state,
+                           std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state)
+        {
+            const auto fail = [entry](const char* message) { set_last_error(std::string(entry) + ": " + message); return false; };
+            if (draw.indirect ? !gl_indirect_draw_supported() : !gl_instancing_supported())
+                return fail("this OpenGL context does not support this draw path");
+            GLenum mode = GL_TRIANGLES;
+            const BlendObject* blend = nullptr;
+            const DepthObject* depth = nullptr;
+            const RasterObject* raster = nullptr;
+            if (!gl_draw_accepted(entry, draw.primitive, blend_state, depth_state, raster_state, sampler_state,
+                                  blend, depth, raster, mode)) return false;
+            const auto vertex = g_buffers.find(draw.vertex);
+            const auto layout = g_layouts.find(draw.layout);
+            if (vertex == g_buffers.end() || layout == g_layouts.end()) return fail("unknown vertex buffer or input layout");
+            if (vertex->second.bind != 1 || vertex->second.stride <= 0) return fail("the vertex buffer needs IgpuBufferBind.Vertex and a stride");
+            const auto& input = layout->second;
+            if (input.vertex_stride != vertex->second.stride) return fail("the vertex buffer stride does not match the input layout");
+            const BufferObject* instances = nullptr;
+            if (draw.instances)
+            {
+                const auto found = g_buffers.find(draw.instances);
+                if (found == g_buffers.end()) return fail("unknown instance buffer handle");
+                instances = &found->second;
+                if (instances->bind != 1 || instances->stride <= 0) return fail("the instance buffer needs IgpuBufferBind.Vertex and a stride");
+            }
+            if (input.instance_stride && (!instances || instances->stride != input.instance_stride))
+                return fail("the instance buffer stride does not match the input layout");
+            const BufferObject* index = nullptr;
+            const BufferObject* arguments = nullptr;
+            if (draw.indirect)
+            {
+                const auto found = g_buffers.find(draw.args);
+                if (found == g_buffers.end() || found->second.bind != 16) return fail("the argument buffer needs IgpuBufferBind.Indirect");
+                arguments = &found->second;
+                const std::int64_t record = draw.indexed ? 20 : 16;
+                if (arguments->size < record || draw.offset < 0 || draw.offset % 4 || draw.offset > arguments->size - record)
+                    return fail("the argument record does not fit in the buffer");
+                if (draw.indexed)
+                {
+                    const auto found_index = g_buffers.find(draw.index);
+                    if (!draw.index || found_index == g_buffers.end() || found_index->second.bind != 2)
+                        return fail("a 16-bit IgpuBufferBind.Index buffer is required");
+                    index = &found_index->second;
+                }
+            }
+            else
+            {
+                const auto total = vertex->second.size / vertex->second.stride;
+                if (draw.first < 0 || draw.first >= total) return fail("the first vertex is outside the buffer");
+                if (draw.count < 0) draw.count = total - draw.first;
+                if (draw.count <= 0 || draw.count > total - draw.first) return fail("the vertex range is outside the buffer");
+                if (draw.instance_count <= 0 || draw.instance_count > (std::numeric_limits<GLsizei>::max)())
+                    return fail("instance_count must be a positive OpenGL draw count");
+                if (instances && draw.instance_count > instances->size / instances->stride)
+                    return fail("instance_count exceeds the instance buffer");
+            }
+            GLint program = 0;
+            glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+            if (!program) return fail("no shader program is bound");
+            const auto& f = igpu_gl_fns();
+            {
+                ArrayBufferBinding saved;
+                const BufferObject* buffers[] = { &vertex->second, instances, index, arguments };
+                for (const auto buffer : buffers)
+                {
+                    if (!buffer) continue;
+                    f.BindBuffer(GL_ARRAY_BUFFER, buffer->id);
+                    if (!buffer_unmapped(GL_ARRAY_BUFFER, entry)) return false;
+                }
+            }
+            if (!g_vertex_array)
+            {
+                f.GenVertexArrays(1, &g_vertex_array);
+                if (!g_vertex_array) return fail("could not allocate the draw vertex array");
+            }
+            GLint saved_array = 0, saved_vao = 0, saved_index = 0, saved_indirect = 0;
+            glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &saved_array);
+            glGetIntegerv(0x85B5 /* VERTEX_ARRAY_BINDING */, &saved_vao);
+            if (draw.indirect) glGetIntegerv(0x8F43 /* DRAW_INDIRECT_BUFFER_BINDING */, &saved_indirect);
+            f.BindVertexArray(g_vertex_array);
+            if (draw.indexed) glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &saved_index);
+            f.BindBuffer(GL_ARRAY_BUFFER, vertex->second.id);
+            f.VertexAttribDivisor(0, 0);
+            f.VertexAttribDivisor(1, 0);
+            bind_vertices(vertex->second, 0);
+            if (input.instance_stride)
+            {
+                f.BindBuffer(GL_ARRAY_BUFFER, instances->id);
+                f.EnableVertexAttribArray(1);
+                f.VertexAttribPointer(1, input.instance_colour ? 4 : 2, input.instance_colour ? GL_UNSIGNED_BYTE : GL_FLOAT,
+                                      input.instance_colour ? GL_TRUE : GL_FALSE, input.instance_stride, nullptr);
+                f.VertexAttribDivisor(1, 1);
+            }
+            if (draw.indexed) f.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, index->id);
+            if (draw.indirect) f.BindBuffer(0x8F3F /* DRAW_INDIRECT_BUFFER */, arguments->id);
+            SavedBlend saved_blend{};
+            SavedDepth saved_depth{};
+            SavedCull saved_cull{};
+            if (blend) { save_blend(saved_blend); apply_blend(*blend); }
+            if (depth) { save_depth(saved_depth); apply_depth(*depth); }
+            if (raster) { save_cull(saved_cull); apply_cull(*raster); }
+            if (!draw.indirect)
+                f.DrawArraysInstanced(mode, static_cast<GLint>(draw.first), static_cast<GLsizei>(draw.count),
+                                      static_cast<GLsizei>(draw.instance_count));
+            else
+            {
+                const auto offset = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(draw.offset));
+                if (draw.indexed) f.DrawElementsIndirect(mode, GL_UNSIGNED_SHORT, offset);
+                else f.DrawArraysIndirect(mode, offset);
+            }
+            if (raster) restore_cull(saved_cull);
+            if (depth) restore_depth(saved_depth);
+            if (blend) restore_blend(saved_blend);
+            f.VertexAttribDivisor(1, 0);
+            unbind_vertices();
+            if (draw.indexed) f.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLuint>(saved_index));
+            if (draw.indirect) f.BindBuffer(0x8F3F, static_cast<GLuint>(saved_indirect));
+            f.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(saved_array));
+            f.BindVertexArray(static_cast<GLuint>(saved_vao));
+            return true;
+        }
+    }
+
+    bool gl_draw_instanced(std::uint64_t vertex, std::uint64_t instances, std::uint64_t layout,
+                          std::int32_t primitive, std::int64_t first, std::int64_t count, std::int64_t instance_count,
+                          std::int64_t blend, std::int64_t depth, std::int64_t raster, std::int64_t sampler)
+    {
+        AdvancedDraw draw;
+        draw.vertex = vertex; draw.instances = instances; draw.layout = layout; draw.primitive = primitive;
+        draw.first = first; draw.count = count; draw.instance_count = instance_count;
+        return draw_advanced("igpu_draw_instanced", draw, blend, depth, raster, sampler);
+    }
+    bool gl_draw_indirect_record(std::uint64_t vertex, std::uint64_t instances, std::uint64_t layout,
+                                std::uint64_t index, bool indexed, std::int32_t primitive, std::uint64_t args,
+                                std::int64_t offset, std::int64_t blend, std::int64_t depth,
+                                std::int64_t raster, std::int64_t sampler)
+    {
+        AdvancedDraw draw;
+        draw.vertex = vertex; draw.instances = instances; draw.layout = layout; draw.index = index;
+        draw.args = args; draw.offset = offset; draw.primitive = primitive; draw.indirect = true; draw.indexed = indexed;
+        return draw_advanced(indexed ? "igpu_draw_indexed_indirect" : "igpu_draw_indirect", draw, blend, depth, raster, sampler);
+    }
+
     bool gl_draw_indexed(std::uint64_t vertex_buffer, std::uint64_t layout, std::uint64_t index_buffer,
                          std::int32_t primitive, std::int64_t first_index, std::int64_t index_count,
                          std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
@@ -1428,7 +1609,7 @@ namespace igpu
             return false;
         }
         const auto layout_it = g_layouts.find(layout);
-        if (layout_it == g_layouts.end() || layout_it->second != vertex->second.stride)
+        if (layout_it == g_layouts.end() || (layout_it->second.vertex_stride != vertex->second.stride || layout_it->second.instance_stride != 0))
         {
             set_last_error("igpu_draw_indexed: the vertex buffer stride does not match the input layout");
             return false;
@@ -1553,7 +1734,7 @@ namespace igpu
             return false;
         }
         const auto layout_it = g_layouts.find(layout);
-        if (layout_it == g_layouts.end() || layout_it->second != vertex->second.stride)
+        if (layout_it == g_layouts.end() || (layout_it->second.vertex_stride != vertex->second.stride || layout_it->second.instance_stride != 0))
         {
             set_last_error("igpu_draw_sampled: the vertex buffer stride does not match the input layout");
             return false;

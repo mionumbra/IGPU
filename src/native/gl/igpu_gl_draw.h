@@ -7,6 +7,16 @@
 namespace igpu
 {
     void gl_resources_release();
+    void gl_draw_capabilities_initialize();
+    bool gl_instancing_supported();
+    bool gl_indirect_draw_supported();
+    bool gl_draw_instanced(std::uint64_t vertex, std::uint64_t instances, std::uint64_t layout,
+                          std::int32_t primitive, std::int64_t first, std::int64_t count, std::int64_t instance_count,
+                          std::int64_t blend, std::int64_t depth, std::int64_t raster, std::int64_t sampler);
+    bool gl_draw_indirect_record(std::uint64_t vertex, std::uint64_t instances, std::uint64_t layout,
+                                std::uint64_t index, bool indexed, std::int32_t primitive, std::uint64_t args,
+                                std::int64_t offset, std::int64_t blend, std::int64_t depth,
+                                std::int64_t raster, std::int64_t sampler);
 
     std::int64_t gl_buffer_create(std::int64_t size, std::int32_t usage, std::int32_t bind, std::int32_t stride);
     bool gl_buffer_write(std::uint64_t buffer, std::int64_t offset, const gm::wire::GMBuffer& data);

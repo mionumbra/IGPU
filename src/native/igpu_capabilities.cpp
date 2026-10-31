@@ -297,8 +297,10 @@ namespace igpu
         case Capability::MultipleRenderTargets: return native;
 
         // ---- pipeline ----
-        case Capability::Instancing:     return native;
-        case Capability::IndirectDraw:   return device_at_least(D3D_FEATURE_LEVEL_11_0);
+        case Capability::Instancing:     return native ||
+                   (opengl_backend() && active_backend()->instancing_supported());
+        case Capability::IndirectDraw:   return device_at_least(D3D_FEATURE_LEVEL_11_0) ||
+                   (opengl_backend() && active_backend()->indirect_draw_supported());
         case Capability::Queries:        return active_backend() != nullptr &&
                    (active_backend()->occlusion() || active_backend()->timestamps());
         case Capability::Timestamps:     return active_backend() != nullptr && active_backend()->timestamps();

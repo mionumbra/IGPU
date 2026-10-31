@@ -3,6 +3,8 @@
 #include "igpu_error.h"
 #include "igpu_gl.h"
 
+#include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace
@@ -25,6 +27,34 @@ IgpuGlFns& igpu_gl_fns()
 
 namespace igpu
 {
+    bool gl_context_at_least(int required_major, int required_minor)
+    {
+        const auto version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+        int major = 0, minor = 0;
+        return version && std::sscanf(version, "%d.%d", &major, &minor) == 2 &&
+            (major > required_major || (major == required_major && minor >= required_minor));
+    }
+    bool gl_context_extension(const char* expected)
+    {
+        if (gl_context_at_least(3, 0))
+        {
+            using GetStringi = const GLubyte*(APIENTRY*)(GLenum, GLuint);
+            const auto entry = optional_proc("glGetStringi");
+            if (!entry) return false;
+            const auto get_string = reinterpret_cast<GetStringi>(entry);
+            GLint count = 0;
+            glGetIntegerv(0x821D /* NUM_EXTENSIONS */, &count);
+            for (GLint i = 0; i < count; ++i)
+            {
+                const auto name = reinterpret_cast<const char*>(get_string(GL_EXTENSIONS, i));
+                if (name && std::strcmp(name, expected) == 0) return true;
+            }
+            return false;
+        }
+        const auto list = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
+        return list && (std::string(" ") + list + " ").find(std::string(" ") + expected + " ") != std::string::npos;
+    }
+
     bool gl_load()
     {
         auto& fns = igpu_gl_fns();
@@ -83,6 +113,10 @@ namespace igpu
 #define LOAD_OPTIONAL(field, symbol) \
         fns.field = reinterpret_cast<decltype(fns.field)>(optional_proc(symbol));
         LOAD_OPTIONAL(CopyBufferSubData, "glCopyBufferSubData")
+        LOAD_OPTIONAL(DrawArraysInstanced, "glDrawArraysInstanced")
+        LOAD_OPTIONAL(VertexAttribDivisor, "glVertexAttribDivisor")
+        LOAD_OPTIONAL(DrawArraysIndirect, "glDrawArraysIndirect")
+        LOAD_OPTIONAL(DrawElementsIndirect, "glDrawElementsIndirect")
         LOAD_OPTIONAL(GenQueries, "glGenQueries")
         LOAD_OPTIONAL(DeleteQueries, "glDeleteQueries")
         LOAD_OPTIONAL(BeginQuery, "glBeginQuery")
