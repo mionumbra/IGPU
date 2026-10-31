@@ -585,6 +585,18 @@ namespace igpu
                     blend_state, depth_state, raster_state, sampler_state);
             }
 
+            const UniformLayout* shader_uniforms(std::uint64_t shader) override
+            {
+                const auto* found = find_shader(shader);
+                return found ? &found->uniforms : nullptr;
+            }
+            std::int64_t uniform_buffer_bytes(std::uint64_t buffer, const char* entry) override
+            {
+                const auto* found = find_buffer(buffer);
+                if (!found) { set_last_error(std::string(entry) + ": unknown buffer handle"); return 0; }
+                if (!(found->bind & 4)) { set_last_error(std::string(entry) + ": the buffer was not created with IgpuBufferBind.Uniform"); return 0; }
+                return found->size;
+            }
             bool reflect_uniforms(const void* bytecode, std::size_t size, UniformLayout& out) override
             {
                 return d3d11_impl::reflect_uniforms(bytecode, size, out);

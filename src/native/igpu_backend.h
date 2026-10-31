@@ -34,6 +34,10 @@ namespace igpu
         virtual bool timestamps() const = 0;
         virtual bool fences() const = 0;
         virtual bool buffer_resize_supported() const { return false; }
+        virtual bool uniform_buffer_supported() const { return false; }
+        virtual bool uniform_reflection_supported() const { return false; }
+        virtual const UniformLayout* shader_uniforms(std::uint64_t) { return nullptr; }
+        virtual std::int64_t uniform_buffer_bytes(std::uint64_t, const char*) { return 0; }
         virtual bool compute_supported() const { return false; }
         virtual bool structured_buffer_supported() const { return false; }
         virtual bool instancing_supported() const { return false; }

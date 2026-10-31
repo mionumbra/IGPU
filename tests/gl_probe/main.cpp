@@ -4,6 +4,7 @@
 #include "query_tests.h"
 #include "instanced_tests.h"
 #include "compute_tests.h"
+#include "uniform_tests.h"
 #include "query_shutdown_tests.h"
 
 #include "IGPU_native.h"
@@ -265,11 +266,11 @@ int main()
         {47, true, "InputLayout"},
         {48, true, "VertexBuffer"},
         {49, true, "IndexBuffer"},
-        {50, false, "UniformBuffer"},
+        {50, true, "UniformBuffer"},
         {53, true, "Draw"},
         {54, true, "DrawIndexed"},
         {55, true, "DrawStateRestore"},
-        {63, false, "UniformReflection"},
+        {63, true, "UniformReflection"},
     };
     for (const CapExpect& row : rows)
     {
@@ -5759,6 +5760,11 @@ int main()
         return fail("compute and storage suite failed");
     }
 
+    if (!run_gl_uniform_tests())
+    {
+        return fail("uniform reflection and buffer suite failed");
+    }
+
     if (!run_gl_instanced_tests())
     {
         return fail("instanced and indirect draw suite failed");
@@ -5777,6 +5783,11 @@ int main()
     if (!run_gl_compute_shutdown_tests())
     {
         return fail("compute and storage shutdown suite failed");
+    }
+
+    if (!run_gl_uniform_shutdown_tests())
+    {
+        return fail("uniform buffer shutdown suite failed");
     }
 
     void* context = gl_probe_context();

@@ -317,7 +317,8 @@ namespace igpu
         case Capability::InputLayout:   return native || opengl_backend();
         case Capability::VertexBuffer:  return native || opengl_backend();
         case Capability::IndexBuffer:   return native || opengl_backend();
-        case Capability::UniformBuffer: return native;
+        case Capability::UniformBuffer: return native ||
+                   (opengl_backend() && active_backend()->uniform_buffer_supported());
         case Capability::BufferResize:  return native ||
                    (opengl_backend() && active_backend()->buffer_resize_supported());
         case Capability::BufferReadback: return native || opengl_backend();
@@ -336,7 +337,8 @@ namespace igpu
         case Capability::DepthState:       return native || opengl_backend();
         case Capability::RasterState:      return native || opengl_backend();
         case Capability::SamplerState:     return native || opengl_backend();
-        case Capability::UniformReflection: return native;
+        case Capability::UniformReflection: return native ||
+                   (opengl_backend() && active_backend()->uniform_reflection_supported());
 
         case Capability::None:
         default:

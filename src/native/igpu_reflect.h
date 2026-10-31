@@ -47,6 +47,8 @@ namespace igpu
         std::int32_t rows = 0;
         std::int32_t columns = 0;
         std::int32_t elements = 0;
+        std::uint32_t array_stride = 0;
+        std::uint32_t matrix_stride = 0;
     };
 
     struct UniformBlock

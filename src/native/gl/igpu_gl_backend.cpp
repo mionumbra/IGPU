@@ -5,6 +5,7 @@
 #include "igpu_error.h"
 #include "igpu_gl_draw.h"
 #include "igpu_gl_compute.h"
+#include "igpu_gl_uniform.h"
 #include "igpu_gl_loader.h"
 #include "igpu_gl_query.h"
 
@@ -30,13 +31,31 @@ namespace igpu
         class GlBackend final : public Backend
         {
         public:
-            GlBackend() { gl_queries_initialize(); gl_draw_capabilities_initialize(); gl_compute_initialize(); }
+            GlBackend() { gl_queries_initialize(); gl_draw_capabilities_initialize(); gl_compute_initialize(); gl_uniform_initialize(); }
             const char* name() const override { return "opengl"; }
             bool occlusion() const override { return gl_occlusion_supported(); }
             bool timestamps() const override { return gl_timestamps_supported(); }
             bool fences() const override { return gl_fences_supported(); }
             bool instancing_supported() const override { return gl_instancing_supported(); }
             bool indirect_draw_supported() const override { return gl_indirect_draw_supported(); }
+            bool uniform_buffer_supported() const override { return gl_uniform_supported(); }
+            bool uniform_reflection_supported() const override { return gl_uniform_supported(); }
+            const UniformLayout* shader_uniforms(std::uint64_t shader) override
+            {
+                const auto it = shaders.find(shader);
+                if (it == shaders.end()) return nullptr;
+                if (!it->second.uniform_ready)
+                {
+                    if (!gl_uniform_reflect(it->second.shader, it->second.stage, it->second.uniforms)) return nullptr;
+                    it->second.uniform_ready = true;
+                }
+                return &it->second.uniforms;
+            }
+            std::int64_t uniform_buffer_bytes(std::uint64_t buffer, const char* entry) override
+            {
+                GlUniformBuffer resolved;
+                return gl_uniform_buffer(buffer, resolved, entry) ? resolved.bytes : 0;
+            }
             bool compute_supported() const override { return gl_compute_supported(); }
             bool structured_buffer_supported() const override { return gl_read_storage_supported(); }
             bool buffer_resize_supported() const override { return igpu_gl_fns().CopyBufferSubData != nullptr; }
@@ -324,10 +343,12 @@ namespace igpu
                 out = {};
                 return not_yet("igpu_shader_reflect");
             }
-            bool uniform_bind(std::uint64_t, std::int32_t, std::int32_t) override { return not_yet("igpu_uniform_bind"); }
+            bool uniform_bind(std::uint64_t buffer, std::int32_t stage, std::int32_t slot) override
+            { return gl_uniform_bind(buffer, stage, slot); }
 
             ~GlBackend() override
             {
+                gl_uniform_resources_release();
                 gl_compute_resources_release();
                 gl_queries_release();
                 const auto& fns = igpu_gl_fns();
@@ -526,10 +547,8 @@ namespace igpu
             bool buffer_release(std::uint64_t buffer) override { return gl_buffer_release(buffer); }
             bool storage_bind(std::uint64_t buffer, std::int32_t stage, std::int32_t slot) override
             { return gl_storage_bind(buffer, stage, slot); }
-            bool buffer_patch(std::uint64_t, std::int64_t, const void*, std::size_t, const char*) override
-            {
-                return not_yet("igpu_buffer_write");
-            }
+            bool buffer_patch(std::uint64_t buffer, std::int64_t offset, const void* data, std::size_t size, const char* entry) override
+            { return gl_uniform_patch(buffer, offset, data, size, entry); }
 
             std::int64_t input_layout_create(std::int64_t, const gm::wire::GMArrayView&, const gm::wire::GMArrayView&,
                                              std::int32_t, std::int32_t) override
@@ -551,6 +570,8 @@ namespace igpu
             {
                 GLuint shader = 0;
                 std::int32_t stage = -1;
+                UniformLayout uniforms;
+                bool uniform_ready = false;
             };
 
             std::unordered_map<std::uint64_t, ShaderObject> shaders;
