@@ -136,18 +136,33 @@ namespace igpu
                 not_yet("igpu_sampler_state_create");
                 return 0;
             }
-            std::int64_t sampler_state_create_axes_range(std::int32_t, std::int32_t, std::int32_t, std::int32_t,
-                                                         std::int32_t, float, float, float) override
+            std::int64_t sampler_state_create_axes_range(std::int32_t filter, std::int32_t address_u,
+                                                         std::int32_t address_v, std::int32_t address_w,
+                                                         std::int32_t anisotropy, float level_offset, float finest,
+                                                         float coarsest) override
             {
-                not_yet("igpu_sampler_state_create");
-                return 0;
+                if (filter != 2)
+                {
+                    not_yet("igpu_sampler_state_create");
+                    return 0;
+                }
+                return gl_sampler_state_create_filters_range(
+                    1, 1, 1, address_u, address_v, address_w, level_offset, finest, coarsest, anisotropy);
             }
-            std::int64_t sampler_state_create_axes_border_range(std::int32_t, std::int32_t, std::int32_t, std::int32_t,
-                                                                std::int32_t, float, float, float, float, float, float,
-                                                                float) override
+            std::int64_t sampler_state_create_axes_border_range(std::int32_t filter, std::int32_t address_u,
+                                                                std::int32_t address_v, std::int32_t address_w,
+                                                                std::int32_t anisotropy, float red, float green,
+                                                                float blue, float alpha, float level_offset,
+                                                                float finest, float coarsest) override
             {
-                not_yet("igpu_sampler_state_create");
-                return 0;
+                if (filter != 2)
+                {
+                    not_yet("igpu_sampler_state_create");
+                    return 0;
+                }
+                return gl_sampler_state_create_filters_border_range(
+                    1, 1, 1, address_u, address_v, address_w, red, green, blue, alpha,
+                    level_offset, finest, coarsest, anisotropy);
             }
             std::int64_t sampler_state_create_filters(std::int32_t, std::int32_t, std::int32_t, std::int32_t,
                                                       std::int32_t, std::int32_t) override
