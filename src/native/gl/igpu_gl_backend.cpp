@@ -4,6 +4,7 @@
 #include "igpu_device.h"
 #include "igpu_error.h"
 #include "igpu_gl_draw.h"
+#include "igpu_gl_compute.h"
 #include "igpu_gl_loader.h"
 #include "igpu_gl_query.h"
 
@@ -29,13 +30,15 @@ namespace igpu
         class GlBackend final : public Backend
         {
         public:
-            GlBackend() { gl_queries_initialize(); gl_draw_capabilities_initialize(); }
+            GlBackend() { gl_queries_initialize(); gl_draw_capabilities_initialize(); gl_compute_initialize(); }
             const char* name() const override { return "opengl"; }
             bool occlusion() const override { return gl_occlusion_supported(); }
             bool timestamps() const override { return gl_timestamps_supported(); }
             bool fences() const override { return gl_fences_supported(); }
             bool instancing_supported() const override { return gl_instancing_supported(); }
             bool indirect_draw_supported() const override { return gl_indirect_draw_supported(); }
+            bool compute_supported() const override { return gl_compute_supported(); }
+            bool structured_buffer_supported() const override { return gl_read_storage_supported(); }
             bool buffer_resize_supported() const override { return igpu_gl_fns().CopyBufferSubData != nullptr; }
             std::int64_t timestamp_frequency() const override { return gl_timestamp_frequency(); }
 
@@ -269,14 +272,24 @@ namespace igpu
             {
                 return not_yet("igpu_draw_to_render_targets");
             }
-            bool dispatch(std::int32_t, std::int32_t, std::int32_t, std::uint64_t) override { return not_yet("igpu_dispatch"); }
-            bool dispatch_level(std::int32_t, std::int32_t, std::int32_t, std::uint64_t, std::int32_t) override { return not_yet("igpu_dispatch"); }
-            bool dispatch_buffer(std::int32_t, std::int32_t, std::int32_t, std::uint64_t) override { return not_yet("igpu_dispatch"); }
-            bool dispatch_both(std::int32_t, std::int32_t, std::int32_t, std::uint64_t, std::uint64_t) override { return not_yet("igpu_dispatch"); }
-            bool dispatch_writes(std::int32_t, std::int32_t, std::int32_t, const gm::wire::GMArrayView&, const gm::wire::GMArrayView&) override
+            bool dispatch(std::int32_t x, std::int32_t y, std::int32_t z, std::uint64_t texture) override
+            { return gl_dispatch_single(compute_program, x, y, z, texture, 0, 0); }
+            bool dispatch_level(std::int32_t x, std::int32_t y, std::int32_t z, std::uint64_t texture, std::int32_t mip) override
+            { return gl_dispatch_single(compute_program, x, y, z, texture, mip, 0); }
+            bool dispatch_buffer(std::int32_t x, std::int32_t y, std::int32_t z, std::uint64_t buffer) override
+            { return gl_dispatch_single(compute_program, x, y, z, 0, 0, buffer); }
+            bool dispatch_both(std::int32_t x, std::int32_t y, std::int32_t z, std::uint64_t texture, std::uint64_t buffer) override
             {
-                return not_yet("igpu_dispatch");
+                if (!texture || !buffer)
+                {
+                    set_last_error("igpu_dispatch: pass both a storage texture and buffer");
+                    return false;
+                }
+                return gl_dispatch_single(compute_program, x, y, z, texture, 0, buffer);
             }
+            bool dispatch_writes(std::int32_t x, std::int32_t y, std::int32_t z,
+                                 const gm::wire::GMArrayView& kinds, const gm::wire::GMArrayView& targets) override
+            { return gl_dispatch_storage(compute_program, x, y, z, kinds, targets); }
             bool draw_to_render_targets(std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t, const gm::wire::GMArrayView&) override
             {
                 return not_yet("igpu_draw_to_render_targets");
@@ -315,11 +328,16 @@ namespace igpu
 
             ~GlBackend() override
             {
+                gl_compute_resources_release();
                 gl_queries_release();
                 const auto& fns = igpu_gl_fns();
                 if (program != 0 && fns.DeleteProgram != nullptr)
                 {
                     fns.DeleteProgram(program);
+                }
+                if (compute_program != 0 && fns.DeleteProgram != nullptr)
+                {
+                    fns.DeleteProgram(compute_program);
                 }
                 if (fns.DeleteShader != nullptr)
                 {
@@ -346,7 +364,7 @@ namespace igpu
                     set_last_error("igpu_shader_compile: unknown shader stage");
                     return 0;
                 }
-                if (stage != 0 && stage != 1)
+                if (stage != 0 && stage != 1 && (stage != 2 || !gl_compute_supported()))
                 {
                     std::string message = "igpu_shader_compile: stage '";
                     message += stage_name_of(stage);
@@ -376,7 +394,7 @@ namespace igpu
                 }
 
                 const auto& fns = igpu_gl_fns();
-                const GLenum type = stage == 0 ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER;
+                const GLenum type = stage == 0 ? GL_VERTEX_SHADER : stage == 1 ? GL_FRAGMENT_SHADER : 0x91B9 /* COMPUTE_SHADER */;
                 const GLuint shader = fns.CreateShader(type);
                 const std::string text(source);
                 const char* text_ptr = text.c_str();
@@ -417,22 +435,37 @@ namespace igpu
                         ++bound_it;
                     }
                 }
+                const auto stage = it->second.stage;
                 igpu_gl_fns().DeleteShader(it->second.shader);
                 shaders.erase(it);
-                relink();
+                if (stage == 2)
+                {
+                    if (bound.find(2) == bound.end() && compute_program)
+                    {
+                        igpu_gl_fns().DeleteProgram(compute_program);
+                        compute_program = 0;
+                    }
+                }
+                else relink();
                 return true;
             }
 
             bool shader_bind(std::int64_t shader, std::int32_t stage) override
             {
-                if (stage != 0 && stage != 1)
+                if (stage != 0 && stage != 1 && (stage != 2 || !gl_compute_supported()))
                 {
-                    set_last_error("igpu_shader_bind: unknown shader stage");
+                    set_last_error("igpu_shader_bind: unknown or unsupported shader stage");
                     return false;
                 }
                 if (shader == 0)
                 {
                     bound.erase(stage);
+                    if (stage == 2)
+                    {
+                        if (compute_program) igpu_gl_fns().DeleteProgram(compute_program);
+                        compute_program = 0;
+                        return true;
+                    }
                     return relink();
                 }
                 const auto it = shaders.find(static_cast<std::uint64_t>(shader));
@@ -446,6 +479,25 @@ namespace igpu
                     set_last_error(std::string("igpu_shader_bind: the handle was compiled for stage '") +
                                    stage_name_of(it->second.stage) + "' but was bound to '" + stage_name_of(stage) + "'");
                     return false;
+                }
+                if (stage == 2)
+                {
+                    const auto& fns = igpu_gl_fns();
+                    const GLuint replacement = fns.CreateProgram();
+                    fns.AttachShader(replacement, it->second.shader);
+                    fns.LinkProgram(replacement);
+                    GLint ok = 0;
+                    fns.GetProgramiv(replacement, GL_LINK_STATUS, &ok);
+                    if (!ok)
+                    {
+                        set_last_error("igpu_shader_bind: " + info_log(replacement, false));
+                        fns.DeleteProgram(replacement);
+                        return false;
+                    }
+                    if (compute_program) fns.DeleteProgram(compute_program);
+                    compute_program = replacement;
+                    bound[2] = static_cast<std::uint64_t>(shader);
+                    return true;
                 }
                 bound[stage] = static_cast<std::uint64_t>(shader);
                 return relink();
@@ -472,7 +524,8 @@ namespace igpu
             }
             std::int64_t buffer_size(std::uint64_t buffer) override { return gl_buffer_size(buffer); }
             bool buffer_release(std::uint64_t buffer) override { return gl_buffer_release(buffer); }
-            bool storage_bind(std::uint64_t, std::int32_t, std::int32_t) override { return not_yet("igpu_storage_bind"); }
+            bool storage_bind(std::uint64_t buffer, std::int32_t stage, std::int32_t slot) override
+            { return gl_storage_bind(buffer, stage, slot); }
             bool buffer_patch(std::uint64_t, std::int64_t, const void*, std::size_t, const char*) override
             {
                 return not_yet("igpu_buffer_write");
@@ -504,6 +557,7 @@ namespace igpu
             std::unordered_map<std::int32_t, std::uint64_t> bound;
             std::uint64_t next_shader = 1;
             GLuint program = 0;
+            GLuint compute_program = 0;
 
             static const char* stage_name_of(std::int32_t stage)
             {

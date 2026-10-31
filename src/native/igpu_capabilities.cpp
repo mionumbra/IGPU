@@ -270,7 +270,8 @@ namespace igpu
         case Capability::ShaderCompileRuntime: return native || opengl_backend();
         case Capability::ShaderStageVertex:    return native || opengl_backend();
         case Capability::ShaderStagePixel:     return native || opengl_backend();
-        case Capability::ShaderStageCompute:   return native;
+        case Capability::ShaderStageCompute:   return native ||
+                   (opengl_backend() && active_backend()->compute_supported());
 
         // Geometry and tessellation are core from D3D feature level 11_0.
         case Capability::ShaderStageGeometry:     return device_at_least(D3D_FEATURE_LEVEL_11_0);
@@ -291,9 +292,11 @@ namespace igpu
         case Capability::Texture3D:             return native;
         case Capability::TextureArray:          return native;
         case Capability::TextureCubemap:        return native;
-        case Capability::StructuredBuffer:      return device_at_least(D3D_FEATURE_LEVEL_11_0);
+        case Capability::StructuredBuffer:      return device_at_least(D3D_FEATURE_LEVEL_11_0) ||
+                   (opengl_backend() && active_backend()->structured_buffer_supported());
         // Writable images need a compute shader. Feature level 11.0 has them.
-        case Capability::UnorderedAccess:       return device_at_least(D3D_FEATURE_LEVEL_11_0);
+        case Capability::UnorderedAccess:       return device_at_least(D3D_FEATURE_LEVEL_11_0) ||
+                   (opengl_backend() && active_backend()->compute_supported());
         case Capability::MultipleRenderTargets: return native;
 
         // ---- pipeline ----

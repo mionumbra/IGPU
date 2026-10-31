@@ -3,6 +3,7 @@
 #include "buffer_tests.h"
 #include "query_tests.h"
 #include "instanced_tests.h"
+#include "compute_tests.h"
 #include "query_shutdown_tests.h"
 
 #include "IGPU_native.h"
@@ -223,7 +224,7 @@ int main()
     }
     if (igpu_shader_compile(vs, "main", 2, "") != 0)
     {
-        return fail("compute stage was accepted");
+        return fail("vertex source was accepted as a compute shader");
     }
     const auto vert = igpu_shader_compile(vs, "main", 0, "");
     const auto frag = igpu_shader_compile(ps, "main", 1, "glsl");
@@ -258,7 +259,7 @@ int main()
         {1, true, "ShaderCompileRuntime"},
         {2, true, "ShaderStageVertex"},
         {3, true, "ShaderStagePixel"},
-        {4, false, "ShaderStageCompute"},
+        {4, true, "ShaderStageCompute"},
         {20, false, "Texture3D"},
         {26, true, "Texture2D"},
         {47, true, "InputLayout"},
@@ -5753,6 +5754,11 @@ int main()
         return fail("buffer lifecycle suite failed");
     }
 
+    if (!run_gl_compute_tests())
+    {
+        return fail("compute and storage suite failed");
+    }
+
     if (!run_gl_instanced_tests())
     {
         return fail("instanced and indirect draw suite failed");
@@ -5766,6 +5772,11 @@ int main()
     if (!run_gl_query_shutdown_tests())
     {
         return fail("query and fence shutdown suite failed");
+    }
+
+    if (!run_gl_compute_shutdown_tests())
+    {
+        return fail("compute and storage shutdown suite failed");
     }
 
     void* context = gl_probe_context();

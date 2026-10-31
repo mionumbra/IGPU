@@ -1,3 +1,22 @@
+# 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 计算与存储资源完整批次
+
+> 先读本节，再读下方历史。PR #46 已合并，合并提交 `f32a907cdbfef0c2b4185709f6ae4fd5f63f7a60`，测试功能头 `74d470f0d8ad577dd385c30788e9f90a5806d659`。本批在 `gl-compute-storage` 补齐既有计算/存储 API；用户持续授权开发、推送、创建 PR 与合并，按整批实现、真实 GPU 验证和一次独立审查推进。
+
+- 计算阶段 2 使用独立、事务链接的程序；绑定、失败链接、解绑和释放均保留图形程序。分派临时切换并恢复调用方程序；预先拒绝已标记删除、切换后无法恢复的当前程序。
+- 接通缓冲、图像、混合与 1..8 写目标；位置 i 对应 image/SSBO 槽 i。支持单图像的非零 mip；保持既有层和混合 mip 边界。组数每轴受硬件与 1..65535 限制；分派后全屏障保证后续 GPU/CPU 消费可见。
+- 存储图像支持 RGBA8、R8、RG8、R16F、R32F、RGBA16F、RGBA32F；拒绝 RGBA4 存储。READ_WRITE 绑定支持实际 imageLoad/store 原位更新。缓冲仍使用单一 Storage 用途，不扩展与 Indirect 等组合。
+- 持久存储输入支持顶点/像素/计算阶段 0/1/2、槽 0..7。原始 GLSL 物理绑定必须为 `8 + stage*8 + slot`，即 8..15、16..23、24..31；写目标保留 0..7。无源码改写，完整说明见 `OPENGL_COMPUTE.md`。
+- 校验句柄、用途、重复、映射状态与计算读写别名；绑定后再被外部映射的输入在分派前重新校验。恢复图像六字段、SSBO 索引名称/偏移/大小、通用绑定和当前程序；解绑、释放缓冲及 shutdown 恢复持久占用的调用方范围。
+- 能力受真实上下文、可选入口和实际限制约束。StructuredBuffer 要求 32 个物理槽与三阶段各 8 个块；缺少七种必要入口的任一种即关闭相关能力并在修改状态前拒绝。UBO/反射保持 false，正式 Windows DLL 仍为 D3D11。
+
+验证：旧后端拒绝计算编译见 `out/compute-red-run.log`；晚映射输入被错误接受见 `out/compute-expanded-red-run.log`；图像访问权限 RED 见 `out/compute-image-access-red-run.log`，均已修复。完整探针 `out/compute-complete-build.log`、`out/compute-complete-run.log` 通过：含三维组数、GPU 字、七格式/mip、八缓冲/图像、混合与原位读改写、16 样本顶点/像素读取、立即采样、状态恢复、关闭删除/重绑定和所有旧回归。Windows DLL 构建 `out/compute-dll-build.log` 和交接校验 `out/compute-handover-verified.log` 均通过；独立整批审查在合并前完成。
+
+独立审查指出活动且未暂停的 Transform Feedback 会阻止 UseProgram，导致错误成功。已实际观察 RED（`out/compute-feedback-red-run.log`：accepted=1、GL=0x502），补充分派前检查；回归同时核对未改输出、暂停/结束后成功、恢复捕获得到 0.5/1.5 和图形程序保持。低版本扩展路径也要求可查询捕获状态。
+
+下一整批优先补 UBO 与反射；之后还有三维/数组/立方纹理、多渲染目标、几何/曲面细分等 GL 能力。公开 API、版本与 `.yy`/`.yyp` 不变。
+
+---
+
 # 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 实例化与间接绘制完整批次
 
 > 先读本节，再读下方历史。PR #44（`7a3de73`）和 #45（`909822b`）均已合并，分别补齐缓冲区生命周期/绘制状态恢复，以及查询/区间计时/栅栏。本批在 `gl-instanced-indirect` 继续补齐既有绘制 API，版本保持 0.5.0。用户已持续授权推送、创建 PR 与合并，无需逐项确认。

@@ -3,6 +3,7 @@
 #include "igpu_error.h"
 #include "igpu_gl_loader.h"
 #include "igpu_gl_shadow.h"
+#include "igpu_gl_compute.h"
 
 #include <Windows.h>
 #include <GL/gl.h>
@@ -122,6 +123,7 @@ namespace igpu
             std::int32_t format = 6;
             bool render_target = true;
             GlShadow shadow{};
+            bool storage = false;
         };
 
         struct TextureFormat { GLint internal; GLenum channels; GLenum type; };
@@ -894,6 +896,7 @@ namespace igpu
             set_last_error("igpu_buffer_release: unknown buffer handle");
             return false;
         }
+        gl_storage_release_buffer(buffer);
         igpu_gl_fns().DeleteBuffers(1, &it->second.id);
         g_buffers.erase(it);
         return true;
@@ -960,6 +963,34 @@ namespace igpu
         return g_layouts.erase(layout) != 0;
     }
 
+    bool gl_storage_buffer(std::uint64_t handle, GlStorageBuffer& out, const char* entry)
+    {
+        const auto found = g_buffers.find(handle);
+        if (found == g_buffers.end() || found->second.bind != 8)
+        {
+            set_last_error(std::string(entry) + ": the buffer needs IgpuBufferBind.Storage");
+            return false;
+        }
+        ArrayBufferBinding saved;
+        igpu_gl_fns().BindBuffer(GL_ARRAY_BUFFER, found->second.id);
+        if (!buffer_unmapped(GL_ARRAY_BUFFER, entry)) return false;
+        out = {found->second.id, found->second.size};
+        return true;
+    }
+    bool gl_storage_texture(std::uint64_t handle, std::int32_t mip, GlStorageTexture& out, const char* entry)
+    {
+        const auto found = g_textures.find(handle);
+        if (found == g_textures.end() || !found->second.storage || mip < 0 || mip >= found->second.mips)
+        {
+            set_last_error(std::string(entry) + ": unknown storage texture or mip level");
+            return false;
+        }
+        TextureFormat format{};
+        if (!texture_format(found->second.format, format) || found->second.format == 11) return false;
+        out = {found->second.texture, static_cast<std::uint32_t>(format.internal), mip};
+        return true;
+    }
+
     bool gl_texture_format_supported(std::int32_t format)
     {
         TextureFormat native{};
@@ -981,10 +1012,10 @@ namespace igpu
     {
         // Allocate and initialize every color level, preserving caller GL state.
         TextureFormat native{};
-        if (kind != 0 || depth != 1 || !texture_format(format, native) || storage || width <= 0 || height <= 0 || width > 16384 ||
+        if (kind != 0 || depth != 1 || !texture_format(format, native) || (storage && (!gl_compute_supported() || format == 11)) || width <= 0 || height <= 0 || width > 16384 ||
             height > 16384)
         {
-            set_last_error("igpu_texture_create_mips: the opengl backend requires a supported 2D color format, valid dimensions, and no storage flag");
+            set_last_error("igpu_texture_create_mips: the opengl backend requires a supported 2D color format, valid dimensions, and a supported storage format/context");
             return 0;
         }
         std::int32_t chain = 1;
@@ -1059,7 +1090,8 @@ namespace igpu
             return 0;
         }
         const std::uint64_t handle = g_next_texture++;
-        g_textures.emplace(handle, TextureObject{texture, framebuffer, 0, width, height, mips, format});
+        auto inserted = g_textures.emplace(handle, TextureObject{texture, framebuffer, 0, width, height, mips, format});
+        inserted.first->second.storage = storage;
         return static_cast<std::int64_t>(handle);
     }
 

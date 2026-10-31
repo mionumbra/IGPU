@@ -113,6 +113,13 @@ namespace igpu
 #define LOAD_OPTIONAL(field, symbol) \
         fns.field = reinterpret_cast<decltype(fns.field)>(optional_proc(symbol));
         LOAD_OPTIONAL(CopyBufferSubData, "glCopyBufferSubData")
+        LOAD_OPTIONAL(DispatchCompute, "glDispatchCompute")
+        LOAD_OPTIONAL(MemoryBarrier, "glMemoryBarrier")
+        LOAD_OPTIONAL(BindImageTexture, "glBindImageTexture")
+        LOAD_OPTIONAL(BindBufferBase, "glBindBufferBase")
+        LOAD_OPTIONAL(BindBufferRange, "glBindBufferRange")
+        LOAD_OPTIONAL(GetIntegeri, "glGetIntegeri_v")
+        LOAD_OPTIONAL(GetInteger64i, "glGetInteger64i_v")
         LOAD_OPTIONAL(DrawArraysInstanced, "glDrawArraysInstanced")
         LOAD_OPTIONAL(VertexAttribDivisor, "glVertexAttribDivisor")
         LOAD_OPTIONAL(DrawArraysIndirect, "glDrawArraysIndirect")
