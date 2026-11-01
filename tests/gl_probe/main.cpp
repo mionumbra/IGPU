@@ -5850,6 +5850,7 @@ int main()
     {
         return fail("draw diagnostics core-context suite failed");
     }
+    if (!run_gl_vertex_forward_tests()) return fail("forward-compatible vertex suite failed");
 
     void* context = gl_probe_context();
     igpu_shutdown();

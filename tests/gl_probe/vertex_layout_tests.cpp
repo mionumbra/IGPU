@@ -812,6 +812,20 @@ bool invalid(Fixture &x)
         ok = false;
     return ok;
 }
+decltype(&glGetString) forward_native_string = glGetString;
+decltype(&glGetIntegerv) forward_native_integer = glGetIntegerv;
+int forward_legacy_queries = 0;
+const GLubyte *APIENTRY forward_version30(GLenum token)
+{
+    return token == GL_VERSION ? reinterpret_cast<const GLubyte *>("3.0 strict forward metadata") :
+                                 forward_native_string(token);
+}
+void APIENTRY forward_integer(GLenum token, GLint *value)
+{
+    if (token == GL_ATTRIB_STACK_DEPTH || token == GL_MAX_ATTRIB_STACK_DEPTH)
+        ++forward_legacy_queries;
+    forward_native_integer(token, value);
+}
 } // namespace
 bool run_gl_vertex_layout_tests()
 {
@@ -832,4 +846,105 @@ bool run_gl_vertex_layout_tests()
         std::printf("vertex layouts: six formats, nine usages, repeated/reordered/padded fields, all draw routes, "
                     "integer/instance semantics and higher native attributes passed\n");
     return ok;
+}
+
+// GL3.0 forward-compatible contexts precede the core profile mask, but have
+// already removed deprecated state. A nonzero VAO separates that from VAO0 rules.
+bool run_gl_vertex_forward_tests()
+{
+    const auto dc = wglGetCurrentDC();
+    const auto previous = wglGetCurrentContext();
+    using Create = HGLRC(WINAPI *)(HDC, HGLRC, const int *);
+    const auto create = reinterpret_cast<Create>(wglGetProcAddress("wglCreateContextAttribsARB"));
+    if (!check(create != nullptr, "forward-compatible context factory"))
+        return false;
+    const int attributes[] = {0x2091, 3, 0x2092, 0, 0x2094, 2, 0};
+    const auto context = create(dc, nullptr, attributes);
+    if (!context)
+    {
+        std::printf("vertex forward: requested3.0 forward-compatible context unavailable; skipped\n");
+        return true;
+    }
+    igpu_shutdown();
+    forward_native_string = igpu_gl_fns().GetString;
+    forward_native_integer = igpu_gl_fns().GetIntegerv;
+    auto restore = [&]
+    {
+        igpu_gl_fns().GetString = forward_native_string;
+        igpu_gl_fns().GetIntegerv = forward_native_integer;
+        igpu_shutdown();
+        const bool current = wglMakeCurrent(dc, previous) != FALSE;
+        const bool deleted = wglDeleteContext(context) != FALSE;
+        return current && deleted && igpu_bind_current();
+    };
+    if (!wglMakeCurrent(dc, context) || !igpu_bind_current())
+    {
+        restore();
+        return check(false, "bind forward-compatible context");
+    }
+    GLint major = 0, minor = 0, flags = 0;
+    glGetIntegerv(0x821B, &major);
+    glGetIntegerv(0x821C, &minor);
+    glGetIntegerv(0x821E, &flags);
+    std::printf("vertex forward context: requested3.0 actual%d.%d flags0x%X\n", major, minor, flags);
+    if (!(flags & 1))
+    {
+        const bool restored = restore();
+        return check(false, "created context must carry the native forward-compatible flag") && restored;
+    }
+    auto &f = igpu_gl_fns();
+    if (major != 3 || minor != 0)
+    {
+        // WGL may return a newer context. Keep its real native removal of legacy
+        // commands, and model only the3.0 metadata to exercise the pre-profile gate.
+        f.GetString = forward_version30;
+        std::printf("vertex forward: strict3.0 metadata over actual%d.%d forward-compatible native commands\n", major, minor);
+    }
+    forward_legacy_queries = 0;
+    f.GetIntegerv = forward_integer;
+    GLuint caller = 0;
+    f.GenVertexArrays(1, &caller);
+    f.BindVertexArray(caller);
+    const auto vs = igpu_shader_compile("#version 130\nin vec2 in_pos;void main(){gl_Position=vec4(in_pos,0,1);}",
+                                        "main", 0, "glsl");
+    const auto ps = igpu_shader_compile("#version 130\nout vec4 c;void main(){c=vec4(0,1,0,1);}",
+                                        "main", 1, "glsl");
+    const auto vertex = igpu_buffer_create(24, 1, 1, 8);
+    Wire usage{1}, type{2}, step{0};
+    const auto layout = igpu_input_layout_create(vs, usage.view(), type.view(), step.view(), 1, 8, 0);
+    const auto target = igpu_texture_create(0, 4, 4, 1, 6, true, false, 1);
+    std::array<float, 6> positions{-1, -1, 3, -1, -1, 3};
+    bool ok = caller && vs && ps && vertex && layout && target &&
+        igpu_buffer_write(vertex, 0, gm::wire::GMBuffer(positions.data(), sizeof(positions))) &&
+        igpu_shader_bind(vs, 0) && igpu_shader_bind(ps, 1);
+    const auto setup_error = glGetError();
+    ok = check(ok && setup_error == GL_NO_ERROR, "forward3.0 fixture has no legacy state") && ok;
+    if (ok)
+    {
+        Wire targets{target}, zero{0};
+        const auto before = igpu::draw_count(), failures = igpu::draw_restore_failures();
+        const bool drawn = igpu_draw_to_render_targets(vertex, layout, 4, 0, 3, targets.view(), zero.view(),
+                                                        zero.view(), 0, 0, 0, 0);
+        const auto error = glGetError();
+        std::printf("vertex forward result: accepted%d legacy_queries%d GL0x%X\n", drawn, forward_legacy_queries, error);
+        GLint after = 0;
+        glGetIntegerv(0x85B5, &after);
+        if (!drawn || error != GL_NO_ERROR)
+            std::fprintf(stderr, "vertex forward draw: accepted%d GL0x%X error=%s\n", drawn, error,
+                         igpu_get_last_error().c_str());
+        ok = check(drawn && error == GL_NO_ERROR && after == static_cast<GLint>(caller) &&
+                       forward_legacy_queries == 0 && igpu::draw_count() == before + 1 &&
+                       igpu::draw_restore_failures() == failures,
+                   "forward3.0 nonzero VAO drawing avoids removed current-stack state") && ok;
+        if (drawn)
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 4; ++x)
+                    ok = check(igpu_texture_read(target, x, y, 0, 0) == 65280,
+                               "forward3.0 literal green pixels") && ok;
+    }
+    f.DeleteVertexArrays(1, &caller);
+    const bool restored = restore();
+    if (ok && restored)
+        std::printf("vertex forward:3.0 metadata/native flags1, zero legacy queries, GLSL130/nonzero VAO draw, sixteen pixels and rebind passed\n");
+    return ok && restored;
 }
