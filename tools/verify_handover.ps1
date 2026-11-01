@@ -1,4 +1,4 @@
-# 交接自检：核对文档声明与代码实际状态是否一致。
+﻿# 交接自检：核对文档声明与代码实际状态是否一致。
 #
 # 为什么要这个脚本：交接文档最容易失真的地方是"API 清单"和"能力位"——
 # 它们会被后续每一次改动悄悄改掉，而文档不会自己更新。
@@ -82,7 +82,7 @@ Check "上报键数量 <= 枚举能力数" ($reportedKeys.Count -le $enumNames.C
 # 这违反 spec 自己的核心约束"能力可查、降级优雅"——调用方看到 true 会去调
 # 一个不存在的函数。能力表是"承诺"，spec 是"实现"，两者必须对得上。
 #
-# 判据是保守的：只检查每个"恒 true"的能力是否有同名/近名函数，宁可漏报不误报，
+# 判据是保守的：只检查每个在 D3D11 native 分支恒 true 的能力是否有同名/近名函数，宁可漏报不误报，
 # 因为把已实现的能力误判为虚报会逼人写假注释。
 #
 # ⚠️ 必须 Get-Content 读**内容**：$capsCpp（L15）是**路径**，不是文本。
@@ -134,7 +134,7 @@ $checkedCaps = 0
 foreach ($cap in $capNeedsApi.Keys) {
     $expr = $nativeExprs[$cap]
     if ($null -eq $expr) { continue }
-    if ($expr -notmatch '^native$') { continue }   # 只查恒 true 的
+    if ($expr -notmatch '^native(?:$|\s*\|\|)') { continue }   # native 或 native || GL 条件：D3D11 分支承诺支持
     # 注意：变量名不能叫 $root —— $root 是本脚本的仓库根路径（L11），
     # 覆盖它会让后面所有 Join-Path $root 的检查静默失效（自己踩过，且当时
     # 脚本仍报"全部一致"，因为路径变成 'texture' 之类的相对名后 Select-String
@@ -146,12 +146,12 @@ foreach ($cap in $capNeedsApi.Keys) {
 }
 
 # 报的是"本组实际检查了几个"而不是映射表的大小。两者曾经不等（映射表 24 项，
-# 但其中 11 项已改为 false、会被上面的 continue 跳过），消息里的数字若用表大小
+# 但禁用或带硬件门控的项会被上面的 continue 跳过），消息里的数字若用表大小
 # 就会虚高，让接手者以为检查覆盖了 24 个能力。
-# 顺带一提：若 $checkedCaps 变成 0，说明所有能力都不再是 native，
+# 顺带一提：若 $checkedCaps 变成 0，说明所有能力都不再有恒真的 native 分支，
 # 这本身值得警惕，所以下面单独断言它非零。
-Check "本组确实检查到了能力（$checkedCaps 个恒 true）" `
-    ($checkedCaps -gt 0) "没有任何能力处于恒 true 状态——请确认能力表是否被整体改坏"
+Check "本组确实检查到了能力（$checkedCaps 个 D3D11 恒 true）" `
+    ($checkedCaps -gt 0) "没有任何能力在 D3D11 分支处于恒 true 状态——请确认能力表或解析规则"
 Check "报 true 的能力都有对应 API（已查 $checkedCaps 个）" `
     ($unbacked.Count -eq 0) `
     ("这些能力报 true 但 spec 里没有对应函数: " + ($unbacked -join ", "))

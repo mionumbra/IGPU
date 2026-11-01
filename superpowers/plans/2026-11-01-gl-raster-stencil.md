@@ -21,16 +21,16 @@
 - Every existingdraw family sharesnewstate semantics; latefailure mustnotleakstate, color-onlyFBOcontractunchanged.
 
 ### Task1: Raster coverage
-- [ ] Add realwireframe/depthclip state regressions andobserveRED.
-- [ ] Implement nativepolygon/depthclamp state/capability and exactrestoration; observeGREEN.
+- [x] Add realwireframe/depthclip state regressions andobserveRED.
+- [x] Implement nativepolygon/depthclamp state/capability and exactrestoration; observeGREEN.
 
 ### Task2: Stencil coverage
-- [ ] Add realpackedD24S8stencil operations/compare/masks/bothfaces regressions andobserveRED.
-- [ ] Implement core2separateface save/apply/restore; verify allsubmissionfamilies andinvalidcases.
-- [ ] CompletehistoricalGLprobe.
+- [x] Add realpackedD24S8stencil operations/compare/masks/bothfaces regressions andobserveRED.
+- [x] Implement core2separateface save/apply/restore; verify allsubmissionfamilies andinvalidcases.
+- [x] CompletehistoricalGLprobe.
 
 ### Task3: Integrate
-- [ ] DLL, docs/handovers/diffverification.
+- [x] DLL, docs/handovers/diffverification.
 - [ ] Onefreshwholebranchreview andregression-backed Importantfixes.
 - [ ] Push/PR/merge exactapprovedhead andverifymaintree.
 

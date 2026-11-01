@@ -1,3 +1,5 @@
+> 最新状态（2026-11-01）：PR #52 绘制诊断已合并 `c9301450103f4d8d808d8304df819a7295cb5d75`，批准头 `c467797a3b9acdad97d86e8f0f3194597ede489c`。`gl-raster-stencil` 已完成线框、实际上下文深度钳制、全部模板操作及双面状态恢复，完整 GPU 探针（含双目标与真实4.1core）和正式 D3D11 DLL 构建均退出0；正在整批独立审查/功能PR流程。详见 `SESSION_HANDOVER.md` 顶部与 `OPENGL_RASTER_STENCIL.md`。版本0.5.0，无yy/yyp或导出改动，沿用持续授权。
+
 > 2026-11-01 最新：PR #51 几何/曲面细分已合并（`a63a3ecddda2cf66ab4949b619e6054b13e026da`）。当前整批 `gl-draw-diagnostics` 接通native绘制计数、实际输入恢复诊断及VAO顶点来源查询，修复owned VAO shutdown泄漏和缓冲句柄重绑别名；覆盖全部绘制族、内部镜像/计算排除及实际native恢复故障。详见 `SESSION_HANDOVER.md` 顶部、`OPENGL_DRAW_DIAGNOSTICS.md`。API0.5.0/正式D3D11DLL保持；持续授权整批审查与功能PR合并。
 
 > 2026-11-01 最新：PR #50 分层纹理已合并（`832641a1b775af8e00a62a378a05108ad8fc8edc`）。当前 `gl-geometry-tessellation` 整批接通GL几何、Hull/TCS、Domain/TES、事务图形链接与patch绘制，增加GS/Hull/Domain UBO反射/绑定及晚映射校验；完整WGL探针PASS，含真实像素/16样本、TF/patch/回滚和shutdown原生删除/状态恢复。正式Windows DLL仍D3D11、API0.5.0。详见 `SESSION_HANDOVER.md` 顶部及 `OPENGL_GRAPHICS_STAGES.md`。持续授权覆盖一次整批独立审查、功能PR和合并；后续整批绘制诊断，不逐步询问。
