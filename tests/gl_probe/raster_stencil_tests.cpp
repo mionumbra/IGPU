@@ -213,6 +213,12 @@ namespace
         Array target{x.target};x.clear();const auto target_draw=x.measure([&]{return igpu_draw_to_render_targets(x.vertex,x.layout,4,0,3,target.view(),zero.view(),zero.view(),0,both,0,0);});
         if(!check(target_draw.accepted&&target_draw.restored&&!target_draw.error&&target_draw.pixel==65280&&target_draw.samples==256&&x.stencil()==91,"single target native stencil attachment retained"))return false;
 
+        const auto mrt_shader=x.shader("#version 430\nlayout(location=0)out vec4 c;layout(location=1)out vec4 d;void main(){c=vec4(0,1,0,1);d=vec4(0,0,1,1);}",1);
+        if(!check(mrt_shader&&igpu_shader_bind(mrt_shader,1),"MRT stencil state pipeline"))return false;
+        Array multiple{x.target,x.source},layers{0,0},mips{0,0};x.clear();
+        const auto colors=x.measure([&]{return igpu_draw_to_render_targets(x.vertex,x.layout,4,0,3,multiple.view(),layers.view(),mips.view(),0,disabled,0,0);});
+        if(!check(colors.accepted&&colors.restored&&!colors.error&&colors.pixel==65280&&colors.samples==256&&igpu_texture_read(x.source,8,8,0,0)==16711680,
+            "color-only MRT retains asymmetric caller stencil state and actual colors"))return false;
         const auto rejected_before=NativeState{};
         const bool invalid=igpu_draw(x.vertex,0,x.layout,4,0,3,1,-1,both,0,0);
         const bool error=!igpu_get_last_error().empty();const auto native_error=glGetError();
@@ -221,3 +227,41 @@ namespace
     }
 }
 bool run_gl_raster_stencil_tests(){bool ok=raster_test();ok=stencil_test()&&ok;return ok;}
+
+
+bool run_gl_raster_stencil_core_tests(std::uint64_t vertex,std::uint64_t layout,std::uint64_t target)
+{
+    auto&f=igpu_gl_fns();std::int32_t previous=0,viewport[4]{};GLint previous_rb=0;
+    glGetIntegerv(0x8CA7,&previous_rb);
+    if(!check(igpu::gl_color_target_begin(target,previous,viewport),"core state target"))return false;
+    GLuint storage=0;f.GenRenderbuffers(1,&storage);f.BindRenderbuffer(0x8D41,storage);
+    f.RenderbufferStorage(0x8D41,0x88F0,4,4);f.FramebufferRenderbuffer(0x8CA9,0x821A,0x8D41,storage);
+    bool ok=storage&&f.CheckFramebufferStatus(0x8CA9)==0x8CD5;
+    const auto solid=igpu_raster_state_create(0,0,false,true),wire=igpu_raster_state_create(0,1,false,true),clamp=igpu_raster_state_create(0,0,false,false);
+    const auto stencil=igpu_depth_state_create(false,false,8,true,8,1,1,3,91,255,255);
+    ok=solid&&wire&&clamp&&stencil&&ok;
+    f.StencilFuncSeparate(GL_FRONT,GL_NEVER,17,0x3F);f.StencilFuncSeparate(GL_BACK,GL_GREATER,29,0xF0);
+    f.StencilOpSeparate(GL_FRONT,GL_KEEP,GL_ZERO,GL_INCR);f.StencilOpSeparate(GL_BACK,GL_INVERT,GL_REPLACE,GL_DECR);
+    f.StencilMaskSeparate(GL_FRONT,0x5A);f.StencilMaskSeparate(GL_BACK,0xA5);glEnable(GL_STENCIL_TEST);
+    glPolygonMode(GL_FRONT_AND_BACK,GL_LINE);glEnable(0x864F);
+    for(auto raster:{solid,wire,clamp})
+    {
+        const NativeState before;
+        const bool drawn=igpu_draw(vertex,0,layout,4,0,3,1,0,stencil,raster,0);
+        const auto error=glGetError();
+        ok=check(drawn&&!error&&before==NativeState{},"actual4.1core polygon/clamp/stencil state restored without error")&&ok;
+    }
+    GLint read=0,pack=0;glGetIntegerv(0x8CAA,&read);glGetIntegerv(0x88ED,&pack);
+    const GLenum fields[]={GL_PACK_ALIGNMENT,0x0D02,0x0D03,0x0D04};GLint packing[4]{};
+    for(int i=0;i<4;++i){glGetIntegerv(fields[i],&packing[i]);glPixelStorei(fields[i],i?0:1);}
+    GLint draw=0;glGetIntegerv(0x8CA6,&draw);f.BindFramebuffer(0x8CA8,draw);f.BindBuffer(0x88EB,0);
+    unsigned char value=0;glReadPixels(1,1,1,1,GL_STENCIL_INDEX,GL_UNSIGNED_BYTE,&value);
+    f.BindFramebuffer(0x8CA8,read);f.BindBuffer(0x88EB,pack);for(int i=0;i<4;++i)glPixelStorei(fields[i],packing[i]);
+    ok=check(value==91,"actual4.1core stencil byte")&&ok;
+    for(auto state:{solid,wire,clamp,stencil})if(state)igpu_state_release(state);
+    f.FramebufferRenderbuffer(0x8CA9,0x821A,0x8D41,0);f.DeleteRenderbuffers(1,&storage);f.BindRenderbuffer(0x8D41,previous_rb);
+    igpu::gl_color_target_end(previous,viewport);
+    const auto error=glGetError();
+    if(!check(ok&&!error,"core raster stencil cleanup"))return false;
+    std::printf("raster stencil core: real4.1core polygon/depthclamp/asymmetric stencil restore and stencil byte91 passed\n");return true;
+}
