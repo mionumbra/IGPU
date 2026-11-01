@@ -622,7 +622,8 @@ namespace igpu
                     if(!ok){set_last_error("igpu_shader_bind: "+info_log(replacement,false));f.DeleteProgram(replacement);return false;}
                 }
                 if(!gl_graphics_switch_allowed("igpu_shader_bind")){if(replacement)f.DeleteProgram(replacement);return false;}
-                f.UseProgram(replacement);if(program)f.DeleteProgram(program);program=replacement;bound=candidate;return true;
+                f.UseProgram(replacement);if(program)f.DeleteProgram(program);program=replacement;bound=candidate;
+                gl_graphics_program_linked(program,candidate.count(3)!=0,candidate.count(4)&&candidate.count(5));return true;
             }
 
             bool not_yet(const char* entry) const

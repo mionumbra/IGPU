@@ -45,7 +45,7 @@ namespace
         }
         bool pixels(bool patch=false,int first=0,int count=3)
         {const State before;const auto q=igpu_query_create(0);bool ok=q&&igpu_query_begin(q);ok=(patch?igpu_draw_patch(vertex,layout,3,first,count,0,0,0,0):igpu_draw(vertex,0,layout,count==1?1:4,first,count,1,0,0,0,0))&&ok;if(!ok)std::fprintf(stderr,"stage draw: %s\n",igpu_get_last_error().c_str());if(q){ok=igpu_query_end(q)&&ok;ok=igpu_query_result(q)==16&&ok;igpu_query_release(q);}return check(ok&&before==State{}&&igpu_texture_read(target,1,1,0,0)==65280&&!glGetError(),"real sixteen samples, green pixel and caller state");}
-        template<class F>bool rejected(F action,const char*label){const State before;const bool accepted=action(),error=!igpu_get_last_error().empty();return check(!accepted&&error&&!glGetError()&&before==State{},label);}
+        template<class F>bool rejected(F action,const char*label){const State before;const bool accepted=action(),error=!igpu_get_last_error().empty();const auto native_error=glGetError();return check(!accepted&&error&&native_error==GL_NO_ERROR&&before==State{},label);}
     };
     bool geometry_test(){Fixture t;if(!t.initialize())return false;const auto shader=t.shader(gs,3);if(!check(shader&&igpu_shader_bind(shader,3),"geometry compile/bind"))return false;if(!t.pixels(false,0,1))return false;if(!check(igpu_shader_bind(0,3)&&t.pixels(),"ordinary pipeline after geometry unbind"))return false;std::printf("graphics stages: public geometry point expansion renders sixteen samples and ordinary drawing resumes\n");return true;}
     bool tessellation_test(){Fixture t;if(!t.initialize())return false;const auto hull=t.shader(tc,4),domain=t.shader(te,5);if(!check(hull&&domain,"tess compilation"))return false;if(!check(igpu_shader_bind(hull,4),"hull-first staging")||!t.pixels()||!t.rejected([&]{return igpu_draw_patch(t.vertex,t.layout,3,0,3,0,0,0,0);},"incomplete tess pair rejects patch"))return false;if(!check(igpu_shader_bind(domain,5),"domain completes pair")||!t.pixels(true))return false;if(!check(igpu_shader_bind(0,4),"unbind hull")||!t.pixels()||!t.rejected([&]{return igpu_draw_patch(t.vertex,t.layout,3,0,3,0,0,0,0);},"missing hull rejects patch"))return false;if(!check(igpu_shader_bind(hull,4),"hull completes domain-first pair")||!t.pixels(true,0,-1))return false;std::printf("graphics stages: tess pair staging in either order, native patches and incomplete-pair ordinary pipeline passed\n");return true;}
@@ -110,6 +110,61 @@ namespace
         if(!check(ok,"transaction preserves program lifetime, bindings and pixels"))return false;
         std::printf("graphics transaction: native interface/link and allocation failures preserve last valid bindings/program/pixels\n");return true;
     }
+    bool executable_stage_test()
+    {
+        Fixture t;if(!t.initialize())return false;auto&f=igpu_gl_fns();
+        const auto hull=t.shader(tc,4),domain=t.shader(te,5);
+        if(!check(hull&&domain&&igpu_shader_bind(hull,4)&&igpu_shader_bind(domain,5),"executable stage pair"))return false;
+        GLint owned=0,count=0;glGetIntegerv(0x8B8D,&owned);f.GetProgramiv(owned,0x8B85,&count);
+        std::vector<GLuint>attached(count);GLsizei returned=0;f.GetAttachedShaders(owned,count,&returned,attached.data());
+        using Detach=void(APIENTRY*)(GLuint,GLuint);const auto detach=reinterpret_cast<Detach>(wglGetProcAddress("glDetachShader"));
+        std::vector<GLuint>tess;
+        for(auto shader:attached){GLint type=0;f.GetShaderiv(shader,0x8B4F,&type);if(type==0x8E88||type==0x8E87)tess.push_back(shader);}
+        if(!check(detach&&tess.size()==2,"native tess attachments"))return false;
+        for(auto shader:tess)detach(owned,shader);
+        const bool retained=t.pixels(true);
+        for(auto shader:tess)f.AttachShader(owned,shader);
+        const auto external=f.CreateProgram();const char*sources[]={vs,ps};
+        for(int i=0;i<2;++i){const auto shader=f.CreateShader(i?0x8B30:0x8B31);f.ShaderSource(shader,1,&sources[i],nullptr);f.CompileShader(shader);f.AttachShader(external,shader);f.DeleteShader(shader);}
+        f.LinkProgram(external);for(auto shader:tess)f.AttachShader(external,shader);f.UseProgram(external);
+        const bool pending=t.rejected([&]{return igpu_draw_patch(t.vertex,t.layout,3,0,3,0,0,0,0);},"post-link tess attachments must not masquerade as executable stages");
+        f.LinkProgram(external);for(auto shader:tess)detach(external,shader);
+        const bool foreign=t.rejected([&]{return igpu_draw_patch(t.vertex,t.layout,3,0,3,0,0,0,0);},"external tess executable has explicit unsupported ownership policy");
+        f.UseProgram(owned);f.DeleteProgram(external);
+        if(!check(retained&&pending&&foreign&&t.pixels(true),"linked executable metadata survives detach and rejects external ownership"))return false;
+        std::printf("graphics executable stages: owned linked tess survives detach; external pending attachments and detached executable are rejected safely\n");return true;
+    }
+    bool primitive_stage_test()
+    {
+        bool all=true;
+        for(bool tessellation:{false,true})
+        {
+            Fixture t;if(!t.initialize())return false;
+            const auto geometry=tessellation?0:t.shader(gs,3),hull=tessellation?t.shader(tc,4):0,domain=tessellation?t.shader(te,5):0;
+            if(!check(tessellation?(hull&&domain&&igpu_shader_bind(hull,4)&&igpu_shader_bind(domain,5)):(geometry&&igpu_shader_bind(geometry,3)),"primitive stage fixture"))return false;
+            struct Buffers{Handle index=0,args=0;~Buffers(){if(index)igpu_buffer_release(index);if(args)igpu_buffer_release(args);}}buffers;
+            buffers.index=igpu_buffer_create(6,1,2,0);buffers.args=igpu_buffer_create(64,0,16,0);
+            std::array<std::uint16_t,3>indices{0,1,2};std::array<std::uint32_t,16>commands{3,1,0,0,0,0,0,0,3,1,0,0,0};
+            if(!check(buffers.index&&buffers.args&&igpu_buffer_write(buffers.index,0,gm::wire::GMBuffer(indices.data(),sizeof(indices)))&&igpu_buffer_write(buffers.args,0,gm::wire::GMBuffer(commands.data(),sizeof(commands))),"primitive range resources"))return false;
+            const char*expected=tessellation?"patch":"geometry";
+            auto rejected=[&](auto action,const char*label){const bool ok=t.rejected(action,label);return check(ok&&igpu_get_last_error().find(expected)!=std::string::npos,label);};
+            bool ok=rejected([&]{return igpu_draw(t.vertex,0,t.layout,4,0,3,1,0,0,0,0);},"ordinary incompatible stage primitive");
+            ok=rejected([&]{return igpu_draw_indexed(t.vertex,t.layout,buffers.index,4,0,3,0,0,0,0);},"indexed incompatible stage primitive")&&ok;
+            ok=rejected([&]{return igpu_draw(t.vertex,0,t.layout,4,0,3,2,0,0,0,0);},"instanced incompatible stage primitive")&&ok;
+            ok=rejected([&]{return igpu_draw_indirect(t.vertex,0,t.layout,4,buffers.args,0,0,0,0,0);},"indirect incompatible stage primitive")&&ok;
+            ok=rejected([&]{return igpu_draw_indexed_indirect(t.vertex,0,t.layout,buffers.index,4,buffers.args,32,0,0,0,0);},"indexed indirect incompatible stage primitive")&&ok;
+            Array targets({t.target}),layers({0}),mips({0});
+            ok=rejected([&]{return igpu_draw_to_render_targets(t.vertex,t.layout,4,0,3,targets.view(),layers.view(),mips.view(),0,0,0,0);},"target incompatible stage primitive")&&ok;
+            const auto sampled=t.shader("#version 430\nuniform sampler2D igpu_tex;out vec4 c;void main(){c=texture(igpu_tex,vec2(.5));}",1);
+            const auto source=igpu_texture_create(0,2,2,1,6,false,false,1);
+            ok=sampled&&source&&igpu_shader_bind(sampled,1)&&ok;
+            ok=rejected([&]{return igpu_draw_sampled(t.vertex,t.layout,4,0,3,source,0,0,0,0);},"sampled incompatible stage primitive")&&ok;
+            if(source)igpu_texture_release(source);ok=igpu_shader_bind(t.pshader,1)&&ok;
+            const bool valid=tessellation?t.pixels(true):t.pixels(false,0,1);all=check(ok&&valid,"all submission families reject incompatible stages, valid drawing resumes")&&all;
+        }
+        if(all)std::printf("graphics primitive stages: direct/indexed/instanced/indirect/targets/sampled reject tess ordinary modes and geometry input mismatches\n");return all;
+    }
+
     bool patch_guard_test()
     {
         Fixture t;if(!t.initialize())return false;auto&f=igpu_gl_fns();const auto hull=t.shader(tc,4),domain=t.shader(te,5);if(!check(hull&&domain&&igpu_shader_bind(hull,4)&&igpu_shader_bind(domain,5),"patch guard pair"))return false;
@@ -127,7 +182,7 @@ namespace
     }
 
 }
-bool run_gl_graphics_stage_tests(){bool ok=geometry_test();ok=tessellation_test()&&ok;ok=uniform_stage_test()&&ok;ok=tessellation_uniform_test()&&ok;ok=feedback_test()&&ok;ok=transaction_test()&&ok;ok=patch_guard_test()&&ok;return ok;}
+bool run_gl_graphics_stage_tests(){bool ok=geometry_test();ok=tessellation_test()&&ok;ok=uniform_stage_test()&&ok;ok=tessellation_uniform_test()&&ok;ok=feedback_test()&&ok;ok=transaction_test()&&ok;ok=patch_guard_test()&&ok;ok=executable_stage_test()&&ok;ok=primitive_stage_test()&&ok;return ok;}
 
 namespace
 {

@@ -3,12 +3,12 @@
 > 先读本节。PR #50 三维/数组/立方纹理已合并，合并提交 `832641a1b775af8e00a62a378a05108ad8fc8edc`，测试/批准头 `f2f48748047f0fa0036e4aaf9014397896ee9703`。当前分支 `gl-geometry-tessellation`；按持续授权整批开发、验证、一次独立审查及PR合并，不重复询问。
 
 - 接通原生GLSL几何(stage3)、Hull/TCS(stage4)、Domain/TES(stage5)及既有patch绘制。候选图形程序先链接、成功后再替换；接口/分配失败保留旧程序、请求绑定和实际像素。两个曲面阶段可任意顺序绑定，不完整时都不进入native程序，普通VS/PS(/GS)继续工作。
-- patch复用共享绘制校验与私有PATCHES模式；控制点1..32/硬件上限、整patch、负数计数推断、安全范围、映射/状态均校验，保存恢复PATCH_VERTICES。另检查当前native程序真正含已链接TCS+TES，拒绝外部换成普通程序后的伪成功。
+- patch复用共享绘制校验与私有PATCHES模式；控制点1..32/硬件上限、整patch、负数计数推断、安全范围、映射/状态均校验，保存恢复PATCH_VERTICES。新阶段/patch要求当前为IGPU拥有且成功链接的程序；成功link时记录GS输入/TES输出元数据，避免把attach/detach误当可执行阶段。所有绘制入口拒绝普通图元配完整tess及GS输入类型不匹配；外部程序不支持新阶段/patch，既有外部普通VS/PS保持。
 - UBO增加GS24..31、Hull32..39、Domain40..47，按各阶段硬件block/物理槽上限门控；反射缺少接口时使用临时native companion，不改调用方源码。所有图形绘制复查新阶段晚映射，shutdown恢复原indexed ranges/generic/caller bytes并删除五阶段shader和buffer。SSBO仍限既有0..2阶段。
 - 活动且未暂停的transform feedback拒绝图形程序切换；新阶段要求可查询TF2状态。GS另要求GL3.2，tess要求GL4/ARB、PatchParameteri及正patch上限。shutdown仅在当前为owned程序且允许切换时先解绑，避免删除后的attached shader延迟存活；外部程序保留。
 - 正式Windows DLL保持D3D11，公共API/版本0.5.0、无yy/yyp改动。指南 `OPENGL_GRAPHICS_STAGES.md`，UBO指南同步扩展。
 
-RED：`out/graphics-red-run.log`、`out/graphics-expanded-red-run.log`、`out/graphics-native-program-red-run.log`、`out/graphics-shutdown-red-run.log`。完整GREEN：`out/graphics-complete-build.log`、`out/graphics-complete-run.log`（PASS），包含几何quad/细分triangle真实像素和16样本、双顺序/解绑、三阶段UBO、事务失败、TF、patch参数/边界/可选门控、原生释放/关闭/重绑定以及全部历史回归。DLL构建 `out/graphics-dll-build.log` 及交接校验 `out/graphics-handover-verified.log` 均通过。接着一次独立整批审查并合并准确批准头。
+RED：`out/graphics-red-run.log`、`out/graphics-expanded-red-run.log`、`out/graphics-native-program-red-run.log`、`out/graphics-shutdown-red-run.log`。完整GREEN：`out/graphics-complete-build.log`、`out/graphics-complete-run.log`（PASS），包含几何quad/细分triangle真实像素和16样本、双顺序/解绑、三阶段UBO、事务失败、TF、patch参数/边界/可选门控、原生释放/关闭/重绑定以及全部历史回归。DLL构建 `out/graphics-dll-build.log` 及交接校验 `out/graphics-handover-verified.log` 均通过。PR #51独立审查确认两项Important（附件不等于执行阶段、图元阶段不兼容），新增实际RED `out/graphics-review-red-run.log` 并修复；完整复验见 `out/graphics-review-green-run.log`，接同一reviewer复核后合并准确批准头。
 
 下一整批：绘制诊断与实际顶点绑定查询；随后按真实未完成入口核对剩余能力，继续功能分支→PR→审查→合并。
 

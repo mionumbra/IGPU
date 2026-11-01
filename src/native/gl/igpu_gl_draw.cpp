@@ -521,13 +521,14 @@ namespace igpu
         bool gl_draw_accepted(const char* entry, std::int32_t primitive, std::int64_t blend_state,
                               std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state,
                               const BlendObject*& blend, const DepthObject*& depth, const RasterObject*& raster,
-                              GLenum& mode)
+                              GLenum& mode, bool patch = false)
         {
             if (!gl_uniform_validate_inputs(0, 1, entry) || !gl_uniform_validate_inputs(3, 5, entry)) return false;
             if (!gl_pipeline_accepted(entry, primitive, mode))
             {
                 return false;
             }
+            if (!gl_graphics_draw_allowed(patch ? 0x000E : mode, entry)) return false;
             if (!gl_resolve_blend(entry, blend_state, blend))
             {
                 return false;
@@ -986,7 +987,7 @@ namespace igpu
         const DepthObject* depth = nullptr;
         const RasterObject* raster = nullptr;
         if (!gl_draw_accepted("igpu_draw", primitive, blend_state, depth_state, raster_state, sampler_state, blend,
-                              depth, raster, mode))
+                              depth, raster, mode, patch))
         {
             return false;
         }
@@ -1376,6 +1377,7 @@ namespace igpu
         {
             return false;
         }
+        if (!gl_graphics_draw_allowed(mode, "igpu_draw_sampled")) return false;
         if (!gl_resolve_blend("igpu_draw_sampled", blend_state, blend) ||
             !gl_resolve_depth("igpu_draw_sampled", depth_state, depth) ||
             !gl_resolve_raster("igpu_draw_sampled", raster_state, raster))
