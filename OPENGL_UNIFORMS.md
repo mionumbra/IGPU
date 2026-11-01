@@ -4,7 +4,7 @@ The existing IGPU 0.5.0 shader reflection, uniform member write and uniform bind
 
 ## Native reflection
 
-Reflection queries use the backend's own shader metadata. GL links a temporary single-stage program on first query, reads native block/member offsets and strides, caches successful results and deletes the temporary program. It first tries separable linking, then ordinary single-stage linking for vertex shaders without a separable interface. The current graphics/compute program is preserved. Shader compilation does not require reflection linking to succeed, so compilation/linking remain separate operations. Legacy GLSL120 shaders with no uniform blocks reflect an empty list.
+Reflection queries use the backend's own shader metadata. GL links a temporary single-stage program on first query, reads native block/member offsets and strides, caches successful results and deletes the temporary program. It first tries separable linking, then ordinary single-stage linking for vertex shaders without a separable interface. Geometry, hull/TCS and domain/TES additionally fall back to a native companion-stage link when a standalone link cannot supply the required pipeline interface. The temporary companion stages do not rewrite caller source. The current graphics/compute program is preserved. Shader compilation does not require reflection linking to succeed, so compilation/linking remain separate operations. Legacy GLSL120 shaders with no uniform blocks reflect an empty list.
 
 Queries expose active native blocks and scalar, vector, matrix and array members, with actual byte offsets, spans, scalar kind, dimensions and array element counts. Struct members are exposed as native leaf paths such as `s[0].v`; a block-name prefix is removed. Scalar/vector arrays use the member name without a terminal `[0]`, including arrays of one element. Double scalar/vector/matrix metadata retains its native size and dimensions with Unknown scalar kind; writes to unsupported kinds are rejected.
 
@@ -19,6 +19,9 @@ UBOs use a namespace separate from storage SSBOs. Raw GLSL must specify physical
 | Vertex 0 | 0..7 | 0..7 |
 | Pixel 1 | 0..7 | 8..15 |
 | Compute 2 | 0..7 | 16..23 |
+| Geometry 3 | 0..7 | 24..31 |
+| Hull / TCS 4 | 0..7 | 32..39 |
+| Domain / TES 5 | 0..7 | 40..47 |
 
 For a compute UBO on public slot 0:
 
@@ -45,10 +48,12 @@ Uniform binding persists until replaced, unbound with buffer 0, released or shut
 
 Writes require a valid Uniform buffer large enough for the reflected block, a supported member kind and the exact number of components. Unknown/released/wrong-role buffers, missing blocks/members, unsupported stages/slots and externally mapped buffers fail before mutation. Draw and dispatch recheck claimed input mappings because an external caller may map a buffer after binding it. Raw shader access bounds remain the author's responsibility.
 
-UniformBuffer and UniformReflection capabilities require a suitable context, all eight optional reflection/binding/query entrypoints, at least 24 UBO bindings, at least eight UBO blocks in each supported stage and a positive native block limit. Binding an entire buffer larger than that block limit is rejected. The independent GL storage binding mapping is documented in `OPENGL_COMPUTE.md`.
+UniformBuffer and UniformReflection capabilities retain their existing vertex/pixel/compute gate: a suitable context, all eight optional reflection/binding/query entrypoints, at least 24 UBO bindings, at least eight UBO blocks in each supported original stage and a positive native block limit. Geometry/hull/domain binding additionally requires that stage to be supported, at least eight blocks for that stage, and the requested physical binding to fit the actual context limit. A new stage capability does not promise every UBO namespace is available. Graphics draws recheck claimed inputs in stages 0, 1, 3, 4 and 5; compute stage 2 remains independent. Binding an entire buffer larger than that block limit is rejected. The independent GL storage binding mapping is documented in `OPENGL_COMPUTE.md`.
 
 ## Verification
 
 The complete Release probe validates literal compute GPU words, std140 offsets/spans, both matrix orders, arrays and matrix arrays, packed native strides, struct-array leaves, double metadata/rejection, zero/partial uploads, grow/shrink/regrow, eight compute blocks summing to 36, public vertex/pixel reflection, Static/Dynamic writes and 16 samples with pixel128/64/32. It also checks all 24 indexed ranges, generic/current-program preservation, late mappings, missing entrypoints, legacy compatibility and shutdown cleanup/rebinding, along with every prior GL regression.
 
 Logs: `out/uniform-red-run.log`, `out/uniform-core-run.log`, `out/uniform-double-red-run.log`, `out/uniform-complete-build.log`, `out/uniform-complete-run.log`, `out/uniform-dll-build.log`.
+
+New graphics-stage verification: out/graphics-complete-run.log covers GS24/TCS32/TES40 reflection, writes, real pixels, late mappings and shutdown/rebind range restoration. See OPENGL_GRAPHICS_STAGES.md.

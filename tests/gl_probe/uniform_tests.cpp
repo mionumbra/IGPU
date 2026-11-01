@@ -339,7 +339,7 @@ namespace
             !t.rejected([&]{return igpu_uniform_write(a,shader,"Other","v",view(w));},"unknown block")||
             !t.rejected([&]{return igpu_uniform_write(a,shader,"Data","v",view(shorter));},"wrong value count")||
             !t.rejected([&]{return igpu_uniform_write(a,-1,"Data","v",view(w));},"unknown shader")||
-            !t.rejected([&]{return igpu_uniform_bind(a,3,0);},"unsupported stage")||!t.rejected([&]{return igpu_uniform_bind(a,2,8);},"slot upper limit")||
+            !t.rejected([&]{return igpu_uniform_bind(a,6,0);},"unsupported stage")||!t.rejected([&]{return igpu_uniform_bind(a,2,8);},"slot upper limit")||
             !t.rejected([&]{return igpu_uniform_bind(wrong,2,0);},"binding wrong role"))return false;
         const auto bad=t.shader("#version 430\nlayout(local_size_x=1)in;layout(std140,binding=0)uniform Bad{uint v;};layout(std430,binding=0)buffer O{uint r;};void main(){r=v;}");
         if(!t.rejected([&]{return !igpu_shader_reflect(bad).empty();},"block outside stage namespace"))return false;

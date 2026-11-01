@@ -70,6 +70,8 @@ namespace igpu
                  std::int64_t first_vertex, std::int64_t vertex_count, std::int64_t blend_state,
                  std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state);
 
+    bool gl_draw_patch(std::uint64_t vertex,std::uint64_t layout,std::int32_t points,std::int64_t first,std::int64_t count,
+                       std::int64_t blend,std::int64_t depth,std::int64_t raster,std::int64_t sampler);
     bool gl_draw_indexed(std::uint64_t vertex_buffer, std::uint64_t layout, std::uint64_t index_buffer,
                          std::int32_t primitive, std::int64_t first_index, std::int64_t index_count,
                          std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,

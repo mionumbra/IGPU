@@ -8,6 +8,7 @@
 #include "igpu_gl_targets.h"
 #include "igpu_gl_color_state.h"
 #include "igpu_gl_texture.h"
+#include "igpu_gl_graphics.h"
 
 #include <Windows.h>
 #include <GL/gl.h>
@@ -520,13 +521,14 @@ namespace igpu
         bool gl_draw_accepted(const char* entry, std::int32_t primitive, std::int64_t blend_state,
                               std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state,
                               const BlendObject*& blend, const DepthObject*& depth, const RasterObject*& raster,
-                              GLenum& mode)
+                              GLenum& mode, bool patch = false)
         {
-            if (!gl_uniform_validate_inputs(0, 1, entry)) return false;
+            if (!gl_uniform_validate_inputs(0, 1, entry) || !gl_uniform_validate_inputs(3, 5, entry)) return false;
             if (!gl_pipeline_accepted(entry, primitive, mode))
             {
                 return false;
             }
+            if (!gl_graphics_draw_allowed(patch ? 0x000E : mode, entry)) return false;
             if (!gl_resolve_blend(entry, blend_state, blend))
             {
                 return false;
@@ -976,19 +978,20 @@ namespace igpu
                                blend_state,depth_state,raster_state,sampler_state);
     }
 
-    bool gl_draw(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
+    static bool gl_draw_impl(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                  std::int64_t first_vertex, std::int64_t vertex_count, std::int64_t blend_state,
-                 std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state)
+                 std::int64_t depth_state, std::int64_t raster_state, std::int64_t sampler_state, bool patch)
     {
         GLenum mode = GL_TRIANGLES;
         const BlendObject* blend = nullptr;
         const DepthObject* depth = nullptr;
         const RasterObject* raster = nullptr;
         if (!gl_draw_accepted("igpu_draw", primitive, blend_state, depth_state, raster_state, sampler_state, blend,
-                              depth, raster, mode))
+                              depth, raster, mode, patch))
         {
             return false;
         }
+        if (patch) mode = 0x000E /* PATCHES */;
         const auto vertex = g_buffers.find(vertex_buffer);
         if (vertex == g_buffers.end())
         {
@@ -1076,6 +1079,19 @@ namespace igpu
         fns.BindBuffer(GL_ARRAY_BUFFER, static_cast<GLuint>(previous_array));
         fns.BindVertexArray(static_cast<GLuint>(previous_vertex_array));
         return true;
+    }
+
+    bool gl_draw(std::uint64_t vertex,std::uint64_t layout,std::int32_t primitive,std::int64_t first,std::int64_t count,
+                 std::int64_t blend,std::int64_t depth,std::int64_t raster,std::int64_t sampler)
+    {return gl_draw_impl(vertex,layout,primitive,first,count,blend,depth,raster,sampler,false);}
+    bool gl_draw_patch(std::uint64_t vertex,std::uint64_t layout,std::int32_t points,std::int64_t first,std::int64_t count,
+                       std::int64_t blend,std::int64_t depth,std::int64_t raster,std::int64_t sampler)
+    {
+        if(!gl_target_vertex_range(vertex,first,count))return false;
+        if(points<1||points>32||count%points){set_last_error("igpu_draw_patch: control points must be1..32 and vertex count must contain whole patches");return false;}
+        std::int32_t previous=0;if(!gl_patch_begin(points,previous))return false;
+        struct Patch{std::int32_t previous;~Patch(){gl_patch_end(previous);}}saved{previous};
+        return gl_draw_impl(vertex,layout,4,first,count,blend,depth,raster,sampler,true);
     }
 
     namespace
@@ -1356,11 +1372,12 @@ namespace igpu
         const BlendObject* blend = nullptr;
         const DepthObject* depth = nullptr;
         const RasterObject* raster = nullptr;
-        if (!gl_uniform_validate_inputs(0, 1, "igpu_draw_sampled")) return false;
+        if (!gl_uniform_validate_inputs(0, 1, "igpu_draw_sampled") || !gl_uniform_validate_inputs(3, 5, "igpu_draw_sampled")) return false;
         if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, mode))
         {
             return false;
         }
+        if (!gl_graphics_draw_allowed(mode, "igpu_draw_sampled")) return false;
         if (!gl_resolve_blend("igpu_draw_sampled", blend_state, blend) ||
             !gl_resolve_depth("igpu_draw_sampled", depth_state, depth) ||
             !gl_resolve_raster("igpu_draw_sampled", raster_state, raster))

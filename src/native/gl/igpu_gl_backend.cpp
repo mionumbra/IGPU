@@ -8,6 +8,7 @@
 #include "igpu_gl_uniform.h"
 #include "igpu_gl_targets.h"
 #include "igpu_gl_texture.h"
+#include "igpu_gl_graphics.h"
 #include "igpu_gl_loader.h"
 #include "igpu_gl_query.h"
 
@@ -33,13 +34,15 @@ namespace igpu
         class GlBackend final : public Backend
         {
         public:
-            GlBackend() { gl_queries_initialize(); gl_draw_capabilities_initialize(); gl_compute_initialize(); gl_uniform_initialize(); gl_targets_initialize(); gl_textures_initialize(); }
+            GlBackend() { gl_queries_initialize(); gl_draw_capabilities_initialize(); gl_compute_initialize(); gl_uniform_initialize(); gl_targets_initialize(); gl_textures_initialize(); gl_graphics_initialize(); }
             const char* name() const override { return "opengl"; }
             bool occlusion() const override { return gl_occlusion_supported(); }
             bool timestamps() const override { return gl_timestamps_supported(); }
             bool fences() const override { return gl_fences_supported(); }
             bool instancing_supported() const override { return gl_instancing_supported(); }
             bool indirect_draw_supported() const override { return gl_indirect_draw_supported(); }
+            bool geometry_supported() const override { return gl_geometry_supported(); }
+            bool tessellation_supported() const override { return gl_tessellation_supported(); }
             bool texture_kind_supported(std::int32_t kind) const override { return gl_texture_kind_supported(kind); }
             bool multiple_render_targets_supported() const override { return gl_multiple_targets_supported(); }
             bool uniform_buffer_supported() const override { return gl_uniform_supported(); }
@@ -102,10 +105,11 @@ namespace igpu
                 return gl_draw_indirect_record(vertex, instances, layout, 0, false, primitive, args, offset,
                                                blend, depth, raster, sampler);
             }
-            bool draw_patch(std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t, std::int64_t,
-                            std::int64_t, std::int64_t, std::int64_t) override
+            bool draw_patch(std::uint64_t vertex,std::uint64_t layout,std::int32_t points,std::int64_t first,std::int64_t count,
+                            std::int64_t blend,std::int64_t depth,std::int64_t raster,std::int64_t sampler) override
             {
-                return not_yet("igpu_draw_patch");
+                if(!bound.count(4)||!bound.count(5)){set_last_error("igpu_draw_patch: bind a hull and a domain shader first");return false;}
+                return gl_draw_patch(vertex,layout,points,first,count,blend,depth,raster,sampler);
             }
             bool draw_indexed_indirect(std::uint64_t vertex, std::uint64_t instances, std::uint64_t layout,
                                        std::uint64_t index, std::int32_t primitive, std::uint64_t args,
@@ -354,6 +358,8 @@ namespace igpu
                 const auto& fns = igpu_gl_fns();
                 if (program != 0 && fns.DeleteProgram != nullptr)
                 {
+                    GLint current=0;glGetIntegerv(0x8B8D,&current);
+                    if(static_cast<GLuint>(current)==program&&gl_graphics_switch_allowed("igpu_shutdown"))fns.UseProgram(0);
                     fns.DeleteProgram(program);
                 }
                 if (compute_program != 0 && fns.DeleteProgram != nullptr)
@@ -385,7 +391,7 @@ namespace igpu
                     set_last_error("igpu_shader_compile: unknown shader stage");
                     return 0;
                 }
-                if (stage != 0 && stage != 1 && (stage != 2 || !gl_compute_supported()))
+                if (!gl_graphics_stage_supported(stage))
                 {
                     std::string message = "igpu_shader_compile: stage '";
                     message += stage_name_of(stage);
@@ -415,7 +421,8 @@ namespace igpu
                 }
 
                 const auto& fns = igpu_gl_fns();
-                const GLenum type = stage == 0 ? GL_VERTEX_SHADER : stage == 1 ? GL_FRAGMENT_SHADER : 0x91B9 /* COMPUTE_SHADER */;
+                const GLenum types[] = {GL_VERTEX_SHADER, GL_FRAGMENT_SHADER, 0x91B9, 0x8DD9, 0x8E88, 0x8E87};
+                const GLenum type = types[stage];
                 const GLuint shader = fns.CreateShader(type);
                 const std::string text(source);
                 const char* text_ptr = text.c_str();
@@ -439,47 +446,24 @@ namespace igpu
 
             bool shader_release(std::uint64_t shader) override
             {
-                const auto it = shaders.find(shader);
-                if (it == shaders.end())
-                {
-                    set_last_error("igpu_shader_release: unknown shader handle");
-                    return false;
-                }
-                for (auto bound_it = bound.begin(); bound_it != bound.end();)
-                {
-                    if (bound_it->second == shader)
-                    {
-                        bound_it = bound.erase(bound_it);
-                    }
-                    else
-                    {
-                        ++bound_it;
-                    }
-                }
-                const auto stage = it->second.stage;
-                igpu_gl_fns().DeleteShader(it->second.shader);
-                shaders.erase(it);
-                if (stage == 2)
-                {
-                    if (bound.find(2) == bound.end() && compute_program)
-                    {
-                        igpu_gl_fns().DeleteProgram(compute_program);
-                        compute_program = 0;
-                    }
-                }
-                else relink();
-                return true;
+                const auto it=shaders.find(shader);if(it==shaders.end()){set_last_error("igpu_shader_release: unknown shader handle");return false;}
+                auto candidate=bound;for(auto i=candidate.begin();i!=candidate.end();)if(i->second==shader)i=candidate.erase(i);else ++i;
+                const auto stage=it->second.stage;
+                if(stage!=2&&!relink(candidate))return false;
+                if(stage==2){bound=std::move(candidate);if(bound.find(2)==bound.end()&&compute_program){igpu_gl_fns().DeleteProgram(compute_program);compute_program=0;}}
+                igpu_gl_fns().DeleteShader(it->second.shader);shaders.erase(it);return true;
             }
 
             bool shader_bind(std::int64_t shader, std::int32_t stage) override
             {
-                if (stage != 0 && stage != 1 && (stage != 2 || !gl_compute_supported()))
+                if (!gl_graphics_stage_supported(stage))
                 {
                     set_last_error("igpu_shader_bind: unknown or unsupported shader stage");
                     return false;
                 }
                 if (shader == 0)
                 {
+                    if (stage != 2){auto candidate=bound;candidate.erase(stage);return relink(candidate);}
                     bound.erase(stage);
                     if (stage == 2)
                     {
@@ -487,7 +471,7 @@ namespace igpu
                         compute_program = 0;
                         return true;
                     }
-                    return relink();
+                    return true;
                 }
                 const auto it = shaders.find(static_cast<std::uint64_t>(shader));
                 if (it == shaders.end())
@@ -520,8 +504,8 @@ namespace igpu
                     bound[2] = static_cast<std::uint64_t>(shader);
                     return true;
                 }
-                bound[stage] = static_cast<std::uint64_t>(shader);
-                return relink();
+                auto candidate=bound;candidate[stage]=static_cast<std::uint64_t>(shader);
+                return relink(candidate);
             }
 
             std::int64_t get_bound_shader(std::int32_t stage) override
@@ -624,41 +608,22 @@ namespace igpu
                 return std::string(text.data());
             }
 
-            bool relink()
+            bool relink(const std::unordered_map<std::int32_t,std::uint64_t>&candidate)
             {
-                const auto& fns = igpu_gl_fns();
-                if (program != 0)
+                const auto&f=igpu_gl_fns();GLuint replacement=0;
+                const auto vertex=candidate.find(0),pixel=candidate.find(1);
+                if(vertex!=candidate.end()&&pixel!=candidate.end())
                 {
-                    fns.DeleteProgram(program);
-                    program = 0;
+                    replacement=f.CreateProgram();if(!replacement){set_last_error("igpu_shader_bind: cannot create a graphics program");return false;}
+                    const bool paired=candidate.count(4)&&candidate.count(5);
+                    for(int stage:{0,1,3,4,5}){const auto i=candidate.find(stage);if(i!=candidate.end()&&(stage<4||paired))f.AttachShader(replacement,shaders.at(i->second).shader);}
+                    f.BindAttribLocation(replacement,0,"in_pos");f.BindAttribLocation(replacement,1,"in_colour");f.BindAttribLocation(replacement,1,"in_uv");f.LinkProgram(replacement);
+                    GLint ok=0;f.GetProgramiv(replacement,GL_LINK_STATUS,&ok);
+                    if(!ok){set_last_error("igpu_shader_bind: "+info_log(replacement,false));f.DeleteProgram(replacement);return false;}
                 }
-                const auto vertex = bound.find(0);
-                const auto pixel = bound.find(1);
-                if (vertex == bound.end() || pixel == bound.end())
-                {
-                    fns.UseProgram(0);
-                    return true;
-                }
-                program = fns.CreateProgram();
-                fns.AttachShader(program, shaders[vertex->second].shader);
-                fns.AttachShader(program, shaders[pixel->second].shader);
-                fns.BindAttribLocation(program, 0, "in_pos");
-                fns.BindAttribLocation(program, 1, "in_colour");
-                fns.BindAttribLocation(program, 1, "in_uv");
-                fns.LinkProgram(program);
-                GLint ok = 0;
-                fns.GetProgramiv(program, GL_LINK_STATUS, &ok);
-                if (ok == 0)
-                {
-                    std::string message = "igpu_shader_bind: ";
-                    message += info_log(program, false);
-                    fns.DeleteProgram(program);
-                    program = 0;
-                    set_last_error(std::move(message));
-                    return false;
-                }
-                fns.UseProgram(program);
-                return true;
+                if(!gl_graphics_switch_allowed("igpu_shader_bind")){if(replacement)f.DeleteProgram(replacement);return false;}
+                f.UseProgram(replacement);if(program)f.DeleteProgram(program);program=replacement;bound=candidate;
+                gl_graphics_program_linked(program,candidate.count(3)!=0,candidate.count(4)&&candidate.count(5));return true;
             }
 
             bool not_yet(const char* entry) const
