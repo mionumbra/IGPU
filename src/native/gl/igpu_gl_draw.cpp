@@ -570,6 +570,7 @@ namespace igpu
     void gl_resources_release()
     {
         const auto& fns = igpu_gl_fns();
+        if (g_vertex_array && fns.DeleteVertexArrays) fns.DeleteVertexArrays(1, &g_vertex_array);
         if (fns.DeleteBuffers != nullptr)
         {
             for (const auto& entry : g_buffers)
@@ -586,7 +587,6 @@ namespace igpu
         g_depths.clear();
         g_next_sampler = 1;
         g_vertex_array = 0;
-        g_next_buffer = 1;
         g_next_layout = 1;
     }
 
@@ -831,6 +831,17 @@ namespace igpu
         zero_buffer_range(copy_write_buffer, prefix, size - prefix);
         entry.size = size;
         return true;
+    }
+
+    bool gl_is_vertex_buffer_bound(std::uint64_t buffer)
+    {
+        const auto found = g_buffers.find(buffer);
+        if (found == g_buffers.end() || found->second.bind != 1) return false;
+        GLint vao = 0; glGetIntegerv(0x85B5 /* VERTEX_ARRAY_BINDING */, &vao);
+        if (!gl_vertex_array_has_attributes(static_cast<std::uint32_t>(vao))) return false;
+        GLint source = 0;
+        igpu_gl_fns().GetVertexAttribiv(0, 0x889F /* VERTEX_ATTRIB_ARRAY_BUFFER_BINDING */, &source);
+        return static_cast<GLuint>(source) == found->second.id;
     }
 
     bool gl_buffer_release(std::uint64_t buffer)

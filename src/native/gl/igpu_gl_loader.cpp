@@ -27,6 +27,17 @@ IgpuGlFns& igpu_gl_fns()
 
 namespace igpu
 {
+    bool gl_vertex_array_has_attributes(std::uint32_t name)
+    {
+        if (name || !gl_context_at_least(3, 1)) return true;
+        if (gl_context_at_least(3, 2))
+        {
+            GLint profile = 0; glGetIntegerv(0x9126 /* CONTEXT_PROFILE_MASK */, &profile);
+            return (profile & 1 /* CONTEXT_CORE_PROFILE_BIT */) == 0;
+        }
+        return gl_context_extension("GL_ARB_compatibility");
+    }
+
     bool gl_context_at_least(int required_major, int required_minor)
     {
         const auto version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
@@ -95,6 +106,8 @@ namespace igpu
         LOAD(CheckFramebufferStatus, "glCheckFramebufferStatus")
         LOAD(EnableVertexAttribArray, "glEnableVertexAttribArray")
         LOAD(DisableVertexAttribArray, "glDisableVertexAttribArray")
+        LOAD(GetVertexAttribiv, "glGetVertexAttribiv")
+        LOAD(GetVertexAttribPointerv, "glGetVertexAttribPointerv")
         LOAD(VertexAttribPointer, "glVertexAttribPointer")
         LOAD(GenVertexArrays, "glGenVertexArrays")
         LOAD(DeleteVertexArrays, "glDeleteVertexArrays")

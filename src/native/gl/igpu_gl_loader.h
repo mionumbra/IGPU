@@ -52,6 +52,8 @@ using IgpuGlDrawBuffers = void(APIENTRY*)(GLsizei, const GLenum*);
 using IgpuGlCheckFramebufferStatus = GLenum(APIENTRY*)(GLenum);
 using IgpuGlEnableVertexAttribArray = void(APIENTRY*)(GLuint);
 using IgpuGlDisableVertexAttribArray = void(APIENTRY*)(GLuint);
+using IgpuGlGetVertexAttribiv = void(APIENTRY*)(GLuint, GLenum, GLint*);
+using IgpuGlGetVertexAttribPointerv = void(APIENTRY*)(GLuint, GLenum, void**);
 using IgpuGlVertexAttribPointer = void(APIENTRY*)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
 using IgpuGlGenVertexArrays = void(APIENTRY*)(GLsizei, GLuint*);
 using IgpuGlDeleteVertexArrays = void(APIENTRY*)(GLsizei, const GLuint*);
@@ -171,6 +173,8 @@ struct IgpuGlFns
     IgpuGlCheckFramebufferStatus CheckFramebufferStatus = nullptr;
     IgpuGlEnableVertexAttribArray EnableVertexAttribArray = nullptr;
     IgpuGlDisableVertexAttribArray DisableVertexAttribArray = nullptr;
+    IgpuGlGetVertexAttribiv GetVertexAttribiv = nullptr;
+    IgpuGlGetVertexAttribPointerv GetVertexAttribPointerv = nullptr;
     IgpuGlVertexAttribPointer VertexAttribPointer = nullptr;
     IgpuGlGenVertexArrays GenVertexArrays = nullptr;
     IgpuGlDeleteVertexArrays DeleteVertexArrays = nullptr;
@@ -192,6 +196,7 @@ IgpuGlFns& igpu_gl_fns();
 
 namespace igpu
 {
+    bool gl_vertex_array_has_attributes(std::uint32_t name);
     bool gl_context_at_least(int major, int minor);
     bool gl_context_extension(const char* name);
 }
