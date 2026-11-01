@@ -1547,10 +1547,6 @@ namespace igpu
         float level_offset = 0.f;
         float finest = 0.f;
         float coarsest = 3.402823466e+38f;
-        bool adjust_min = false;
-        bool adjust_bias = false;
-        bool adjust_min_lod = false;
-        bool adjust_max_lod = false;
         std::int32_t anisotropy = 1;
         GLenum comparison = GL_NONE;
         GLfloat border_color[4] = {0.f, 0.f, 0.f, 1.f};
@@ -1639,9 +1635,10 @@ namespace igpu
         GLfloat previous_max_lod = 1000.f;
         GLfloat previous_aniso = 1.f;
         const bool border = address == 3;
-        const bool limit_coarsest = coarsest < 3.402823466e+38f;
-        const bool select_mip = comparing || level_offset != 0.f || finest != 0.f || limit_coarsest;
-        const bool adjust_aniso = anisotropy > 1;
+        const bool adjust_aniso = sampler_state != 0 &&
+            (anisotropy > 1 || gl_context_at_least(4, 6) ||
+             gl_context_extension("GL_ARB_texture_filter_anisotropic") ||
+             gl_context_extension("GL_EXT_texture_filter_anisotropic"));
         if (comparing)
         {
             glTexParameteri(source->target, 0x884C /* TEXTURE_COMPARE_MODE */, 0x884E /* COMPARE_REF_TO_TEXTURE */);
@@ -1663,53 +1660,21 @@ namespace igpu
                 glGetTexParameterfv(source->target, GL_TEXTURE_BORDER_COLOR, previous_border);
                 glTexParameterfv(source->target, GL_TEXTURE_BORDER_COLOR, border_color);
             }
-            if (linear)
-            {
-                glGetTexParameteriv(source->target, GL_TEXTURE_MAG_FILTER, &previous_mag);
-                glTexParameteri(source->target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            }
-            if (linear_min && !select_mip)
-            {
-                glGetTexParameteriv(source->target, GL_TEXTURE_MIN_FILTER, &previous_min);
-                glTexParameteri(source->target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-                adjust_min = true;
-            }
-            if (select_mip)
-            {
-                glGetTexParameteriv(source->target, GL_TEXTURE_MIN_FILTER, &previous_min);
-                glTexParameteri(source->target, GL_TEXTURE_MIN_FILTER,
-                                linear_min ? GL_LINEAR_MIPMAP_NEAREST : GL_NEAREST_MIPMAP_NEAREST);
-                adjust_min = true;
-            }
-            if (mip_linear)
-            {
-                if (!adjust_min)
-                {
-                    glGetTexParameteriv(source->target, GL_TEXTURE_MIN_FILTER, &previous_min);
-                }
-                glTexParameteri(source->target, GL_TEXTURE_MIN_FILTER,
-                                linear_min ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR);
-                adjust_min = true;
-            }
-            // An anisotropic state specifies every LOD field, including defaults.
-            if (comparing || adjust_aniso || level_offset != 0.f)
-            {
-                glGetTexParameterfv(source->target, GL_TEXTURE_LOD_BIAS, &previous_bias);
-                glTexParameterf(source->target, GL_TEXTURE_LOD_BIAS, level_offset);
-                adjust_bias = true;
-            }
-            if (comparing || adjust_aniso || finest != 0.f)
-            {
-                glGetTexParameterfv(source->target, GL_TEXTURE_MIN_LOD, &previous_min_lod);
-                glTexParameterf(source->target, GL_TEXTURE_MIN_LOD, finest);
-                adjust_min_lod = true;
-            }
-            if (comparing || adjust_aniso || limit_coarsest)
-            {
-                glGetTexParameterfv(source->target, GL_TEXTURE_MAX_LOD, &previous_max_lod);
-                glTexParameterf(source->target, GL_TEXTURE_MAX_LOD, coarsest);
-                adjust_max_lod = true;
-            }
+            // A nonzero sampler is a complete descriptor. Default values must
+            // override conflicting source parameters just like nondefault ones.
+            glGetTexParameteriv(source->target, GL_TEXTURE_MAG_FILTER, &previous_mag);
+            glTexParameteri(source->target, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
+            glGetTexParameteriv(source->target, GL_TEXTURE_MIN_FILTER, &previous_min);
+            const GLint min_filter = mip_linear ?
+                (linear_min ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_LINEAR) :
+                (linear_min ? GL_LINEAR_MIPMAP_NEAREST : GL_NEAREST_MIPMAP_NEAREST);
+            glTexParameteri(source->target, GL_TEXTURE_MIN_FILTER, min_filter);
+            glGetTexParameterfv(source->target, GL_TEXTURE_LOD_BIAS, &previous_bias);
+            glTexParameterf(source->target, GL_TEXTURE_LOD_BIAS, level_offset);
+            glGetTexParameterfv(source->target, GL_TEXTURE_MIN_LOD, &previous_min_lod);
+            glTexParameterf(source->target, GL_TEXTURE_MIN_LOD, finest);
+            glGetTexParameterfv(source->target, GL_TEXTURE_MAX_LOD, &previous_max_lod);
+            glTexParameterf(source->target, GL_TEXTURE_MAX_LOD, coarsest);
             if (adjust_aniso)
             {
                 glGetTexParameterfv(source->target, GL_TEXTURE_MAX_ANISOTROPY_EXT, &previous_aniso);
@@ -1763,26 +1728,11 @@ namespace igpu
             {
                 glTexParameterfv(source->target, GL_TEXTURE_BORDER_COLOR, previous_border);
             }
-            if (linear)
-            {
-                glTexParameteri(source->target, GL_TEXTURE_MAG_FILTER, previous_mag);
-            }
-            if (adjust_bias)
-            {
-                glTexParameterf(source->target, GL_TEXTURE_LOD_BIAS, previous_bias);
-            }
-            if (adjust_min_lod)
-            {
-                glTexParameterf(source->target, GL_TEXTURE_MIN_LOD, previous_min_lod);
-            }
-            if (adjust_max_lod)
-            {
-                glTexParameterf(source->target, GL_TEXTURE_MAX_LOD, previous_max_lod);
-            }
-            if (adjust_min)
-            {
-                glTexParameteri(source->target, GL_TEXTURE_MIN_FILTER, previous_min);
-            }
+            glTexParameteri(source->target, GL_TEXTURE_MAG_FILTER, previous_mag);
+            glTexParameteri(source->target, GL_TEXTURE_MIN_FILTER, previous_min);
+            glTexParameterf(source->target, GL_TEXTURE_LOD_BIAS, previous_bias);
+            glTexParameterf(source->target, GL_TEXTURE_MIN_LOD, previous_min_lod);
+            glTexParameterf(source->target, GL_TEXTURE_MAX_LOD, previous_max_lod);
             if (adjust_aniso)
             {
                 glTexParameterf(source->target, GL_TEXTURE_MAX_ANISOTROPY_EXT, previous_aniso);
