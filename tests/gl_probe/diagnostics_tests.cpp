@@ -1,5 +1,6 @@
 #include "diagnostics_tests.h"
 #include "raster_stencil_tests.h"
+#include "vertex_layout_tests.h"
 #include "IGPU_native.h"
 #include "native/igpu_draw.h"
 #include "native/gl/igpu_gl_loader.h"
@@ -409,6 +410,7 @@ bool run_gl_diagnostics_core_tests()
     ok = check(strict_drawn && unsupported_long_queries == 0 && strict_error == GL_NO_ERROR,
         "strict4.1 driver receives no4.3 LONG attribute token") && ok;
     ok = run_gl_raster_stencil_core_tests(vertex, layout, target) && ok;
+    ok = run_gl_vertex_layout_tests() && ok;
     f.DeleteVertexArrays(1, &caller);
     const bool restored = restore_context();
     if (!check(restored && ok, "core4.1 regressions and original borrowed compatibility context restored")) return false;

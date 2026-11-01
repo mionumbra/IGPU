@@ -11,6 +11,7 @@
 #include "diagnostics_tests.h"
 #include "raster_stencil_tests.h"
 #include "native_facade_tests.h"
+#include "vertex_layout_tests.h"
 #include "query_shutdown_tests.h"
 
 #include "IGPU_native.h"
@@ -5792,6 +5793,8 @@ int main()
     {
         return fail("raster and stencil state suite failed");
     }
+
+    if (!run_gl_vertex_layout_tests()) return fail("general vertex input suite failed");
 
     if (!run_gl_native_facade_tests())
     {
