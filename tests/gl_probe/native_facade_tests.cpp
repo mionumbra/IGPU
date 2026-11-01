@@ -26,10 +26,20 @@ namespace
     using VertexPointer = void(APIENTRY*)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void*);
     VertexPointer original_pointer = nullptr;
     GLfloat observed_anisotropy = -1.f;
+    bool observe_anisotropy = true;
+    std::array<GLfloat,3> observed_lod{};
+    std::array<GLint,2> observed_filters{};
     void APIENTRY observe_pointer(GLuint index, GLint size, GLenum type, GLboolean normalized,
                                   GLsizei stride, const void* pointer)
     {
-        if (index == 0) glGetTexParameterfv(GL_TEXTURE_2D, 0x84FE, &observed_anisotropy);
+        if (index == 0)
+        {
+            if(observe_anisotropy)glGetTexParameterfv(GL_TEXTURE_2D,0x84FE,&observed_anisotropy);
+            const GLenum lod[]={0x8501,0x813A,0x813B};
+            for(int i=0;i<3;++i)glGetTexParameterfv(GL_TEXTURE_2D,lod[i],&observed_lod[i]);
+            glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,&observed_filters[0]);
+            glGetTexParameteriv(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,&observed_filters[1]);
+        }
         original_pointer(index, size, type, normalized, stride, pointer);
     }
     struct Array
@@ -222,6 +232,68 @@ namespace
             ok = check(create() == 0 && !igpu_get_last_error().empty() && before == NativeState{} && !glGetError(), "invalid native sampler is quiet and rejects") && ok;
         return ok;
     }
+    bool descriptor_defaults(Fixture&x)
+    {
+        const auto texture=igpu::gl_find_texture(x.source)->texture;
+        const Parameters original(texture);auto&f=igpu_gl_fns();
+        const bool has_anisotropy=igpu::gl_context_at_least(4,6)||
+            igpu::gl_context_extension("GL_ARB_texture_filter_anisotropic")||igpu::gl_context_extension("GL_EXT_texture_filter_anisotropic");
+        GLfloat maximum=1.f,original_anisotropy=1.f;if(has_anisotropy)glGetFloatv(0x84FF,&maximum);
+        const auto with_source=[&](auto action)
+        {
+            GLint active=0,bound=0;glGetIntegerv(0x84E0,&active);f.ActiveTexture(0x84C0);
+            glGetIntegerv(GL_TEXTURE_BINDING_2D,&bound);glBindTexture(GL_TEXTURE_2D,texture);
+            action();glBindTexture(GL_TEXTURE_2D,bound);f.ActiveTexture(active);
+        };
+        with_source([&]{if(has_anisotropy)glGetTexParameterfv(GL_TEXTURE_2D,0x84FE,&original_anisotropy);});
+        struct Case{float min_lod,max_lod,bias;GLenum mag,min;bool point;float u,v,lod;int pixel;const char*label;};
+        const Case cases[]={
+            {1,1000,0,GL_NEAREST,GL_NEAREST_MIPMAP_NEAREST,false,.5f,.5f,0,8421504,"default minLOD overrides caller1"},
+            {0,0,0,GL_NEAREST,GL_NEAREST_MIPMAP_NEAREST,true,.25f,.25f,1,65535,"default maxLOD overrides caller0"},
+            {0,1000,1,GL_NEAREST,GL_NEAREST_MIPMAP_NEAREST,false,.5f,.5f,0,8421504,"default bias overrides caller1"},
+            {0,1000,0,GL_LINEAR,GL_LINEAR,true,.4f,.5f,0,16711680,"point filters override caller linear"}
+        };
+        bool ok=true;
+        for(const auto&c:cases)for(bool native:{true,false})
+        {
+            with_source([&]{
+                glTexParameterf(GL_TEXTURE_2D,0x813A,c.min_lod);glTexParameterf(GL_TEXTURE_2D,0x813B,c.max_lod);
+                glTexParameterf(GL_TEXTURE_2D,0x8501,c.bias);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,c.mag);
+                glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,c.min);
+                if(has_anisotropy)glTexParameterf(GL_TEXTURE_2D,0x84FE,maximum>=2.f?2.f:1.f);
+            });
+            const int filter=c.point?0:1;
+            const auto state=native?igpu::sampler_state_create(filter,false,1):
+                igpu_sampler_state_create(filter,filter,filter,0,0,0,1,0,0,0,0,-1);
+            if(!check(state>0,"conflicting-source descriptor")){ok=false;continue;}
+            observe_anisotropy=has_anisotropy;observed_anisotropy=-1;original_pointer=f.VertexAttribPointer;f.VertexAttribPointer=observe_pointer;
+            const bool sampled=x.sample(state,c.pixel,c.u,c.v,c.lod);f.VertexAttribPointer=original_pointer;observe_anisotropy=true;
+            GLfloat restored_anisotropy=1.f;
+            with_source([&]{if(has_anisotropy)glGetTexParameterfv(GL_TEXTURE_2D,0x84FE,&restored_anisotropy);});
+            ok=check(sampled&&(!has_anisotropy||restored_anisotropy==(maximum>=2.f?2.f:1.f))&&observed_lod[0]==0.f&&observed_lod[1]==0.f&&
+                observed_lod[2]==(std::numeric_limits<float>::max)()&&
+                observed_filters[0]==(c.point?GL_NEAREST:GL_LINEAR)&&
+                observed_filters[1]==(c.point?GL_NEAREST_MIPMAP_NEAREST:GL_LINEAR_MIPMAP_LINEAR)&&
+                (!has_anisotropy||observed_anisotropy==1.f),c.label)&&ok;
+            igpu_state_release(state);
+        }
+        with_source([&]{
+            glTexParameterf(GL_TEXTURE_2D,0x813A,1.f);glTexParameterf(GL_TEXTURE_2D,0x813B,1.f);
+            glTexParameterf(GL_TEXTURE_2D,0x8501,0.f);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR_MIPMAP_LINEAR);
+        });
+        ok=check(x.sample(0,65535,.5f,.5f,0),"sampler0 retains caller LOD instead of explicit defaults")&&ok;
+        with_source([&]{
+            const GLenum names[]={GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T,0x8072,GL_TEXTURE_MIN_FILTER,GL_TEXTURE_MAG_FILTER};
+            for(int i=0;i<5;++i)glTexParameteri(GL_TEXTURE_2D,names[i],original.integers[i]);
+            glTexParameterf(GL_TEXTURE_2D,0x8501,original.floats[0]);glTexParameterf(GL_TEXTURE_2D,0x813A,original.floats[1]);
+            glTexParameterf(GL_TEXTURE_2D,0x813B,original.floats[2]);glTexParameterfv(GL_TEXTURE_2D,GL_TEXTURE_BORDER_COLOR,original.floats.data()+3);
+            if(has_anisotropy)glTexParameterf(GL_TEXTURE_2D,0x84FE,original_anisotropy);
+        });
+        ok=check(original==Parameters(texture)&&!glGetError(),"conflicting-source defaults cleanup")&&ok;
+        if(ok)std::printf("sampler defaults: native/public conflicting caller LOD/bias/filters/anisotropy overridden during real draw and restored afterward passed\n");
+        return ok;
+    }
     bool mixed_border_samplers(Fixture& x)
     {
         constexpr int magenta=16711935;
@@ -362,6 +434,7 @@ bool run_gl_native_facade_tests()
     if (!check(canonical > 0 && x.sample(canonical,255,.25f,.25f,0), "canonical sampler fixture control")) return false;
     igpu_state_release(canonical);
     bool ok = samplers(x);
+    ok = descriptor_defaults(x) && ok;
     ok = mixed_border_samplers(x) && ok;
     ok = resources(x) && ok;
     if (ok) std::printf("native facade: sampler defaults/literal pixels/actual anisotropy, simple2D/read/layout, layer/mip isolation, exact diagnostics and caller state passed\n");

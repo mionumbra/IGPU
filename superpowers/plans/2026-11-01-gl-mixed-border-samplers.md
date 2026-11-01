@@ -12,5 +12,5 @@ Use executing-plans inline, TDD, one independent whole-branch review. Spec: supe
 ## Tasks
 - [x] Add mixed 2D/3D regressions and observe actual RED before changing behavior.
 - [x] Relax border-aware axis validation/store actual modes and use any-axis border color; observe GREEN.
-- [ ] Full probe/DLL/handover/diff verification, guide updates, commit and featurePR.
+- [x] Full probe/DLL/handover/diff verification, guide updates, commit and featurePR.
 - [ ] Independent review, actual regression-backed Important fixes, exact approved-head merge and main-tree verification.

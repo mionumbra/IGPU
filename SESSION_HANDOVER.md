@@ -1,10 +1,12 @@
 # 会话交接 — 2026-11-01 — 版本0.5.0 — OpenGL 混合边框采样器完整批次
 
-> PR #53光栅/模板已合并 `4c197ff810c18c70c8528ec5806033be908b18fc`，批准头 `b618f979ec7206fd48d70197c54077b8d2d00a26`，树一致。本批 `gl-mixed-border-samplers` 基于native包装PR #54头 `eb484fbda8ad84ba189f294be15de703a0ca9b6d`；准备时该PR在独立审查中。复用e412构建缓存，按持续授权整批实现、验证、一次独立审查、功能PR及准确头合并。
+> PR #53光栅/模板已合并 `4c197ff810c18c70c8528ec5806033be908b18fc`，批准头 `b618f979ec7206fd48d70197c54077b8d2d00a26`，树一致。本批 `gl-mixed-border-samplers` 已集成native包装PR #54修复头 `551b87049b93dac33e91f94f48fa1eff73110b30`；该头由原审查者复核中。复用e412构建缓存，按持续授权整批实现、验证、一次独立审查、功能PR及准确头合并。
 
 - 既有全采样器描述符/native边框便利入口支持U/V/W各自 Clamp/Repeat/Mirror/Border；规范构造器逐轴验证0..3并保存实际模式，绘制以任一轴Border决定边框色应用和恢复。无颜色入口仍拒绝Border，比较采样器仍拒绝Border，不增加API/导出/能力键。
 - 实际3D RED `out/mixed-border-red-run.log`，为到达后续2D套件临时绕过已验证3D失败后的独立2D RED `out/mixed-border-2d-red-run.log`，然后恢复完整源码。旧main中两个“混用不支持”负例改为真正非法mode4，保留不消耗句柄的检查。
 - 首次完整GREEN `out/mixed-border-green-run.log`（退出0/PASS）：公开/native三条构造路径、U/V/W组合、clamp/repeat/mirror保持、线性边缘混色、mip/range，真实3D W正负越界/内部切片/线性边缘16样本，以及原生参数与调用方状态恢复。补齐可用硬件各向异性V-only Border及每轴-1/4校验后的最终完整 `out/mixed-border-complete-build.log` / `out/mixed-border-complete-run.log` 均退出0，最终PASS；全部历史与真实4.1core套件保留。
+
+完整采样器默认参数修复已集成，保留任一轴Border与两套独立回归。组合验证 `out/mixed-integrated-build.log` / `out/mixed-integrated-run.log` 退出0/PASS；正式D3D11 DLL `out/mixed-integrated-dll-build.log` 与交接检查 `out/mixed-integrated-handover.log` 退出0。
 
 指南 `OPENGL_SAMPLER_AXES.md`，native指南同步现状。正式D3D11 DLL `out/mixed-border-dll-build.log` 和交接检查 `out/mixed-border-handover.log` 均退出0。API/版本0.5.0，无生成资源或yy/yyp改动。更通用顶点布局与更多图形输入仍需后续批次；其他语言/ES/mesh仍单独设计。
 
@@ -18,6 +20,8 @@
 - 默认值对照D3D：point/linear/anisotropic、repeat布尔到全部轴、bias0/finest0/maxfloat、2D/depth1/storagefalse。非各向异性过滤仍验证1..16因子但不应用；filter2才使用实际因子。既有GL边框全轴限制和受支持布局格式不扩大。指南 `OPENGL_NATIVE_FACADES.md`。
 - 三个旧目标入口只进入一次诊断边界；共用层/mip/角色/句柄验证、FBO/viewport恢复。普通默认层/mip0，其他入口保留指定子资源。native字节码反射虚函数属于D3D路径，GL没有调用方；GL的shader-handle反射早已接通，不误算为缺失公开能力。
 - RED `out/native-red-run.log`（退出1）：高级采样器对照先通过，旧采样器、布局、分配、绘制及读取入口实际失败。GREEN `out/native-green-run.log`，最终完整 `out/native-complete-build.log`、`out/native-complete-run.log`（退出0/PASS）：真实像素、默认值、驱动实际各向异性因子、纹理参数/调用方状态、未选层/mip保持、错误角色/失效句柄/范围及准确计数；全部历史套件及真实4.1core均保留。
+
+PR #54独立审查确认默认LOD未覆盖调用方源参数的Important；实际 `out/native-review-red-run.log` 退出1，native/public八个MIN_LOD1、MAX_LOD0、bias1和linear源过滤冲突均复现。修复使非零采样器完整应用MAG/MIN/mip、全部LOD字段（含默认）及支持时factor1，随后全部恢复；句柄0保留原生参数。最终完整 `out/native-review-green-run.log` 退出0/PASS，实际driver参数和像素同时验证，包含恢复调用方各向异性及sampler0对照。最新DLL/交接证据 `out/native-review-dll-build.log`、`out/native-review-handover.log`，原审查者复核准确修复头后合并。
 
 正式D3D11 DLL构建 `out/native-dll-build.log` 与交接检查 `out/native-handover-verified.log` 均退出0。PR #53两个模板状态可移植性修复已集成；本批最终组合证据为 `out/native-integrated-build.log`、`out/native-integrated-run.log`、`out/native-integrated-dll-build.log` 与 `out/native-integrated-handover.log`。API/版本0.5.0，无生成资源或yy/yyp改动。剩余实质能力边界包括更通用顶点布局、混合边框轴、更多图形输入绑定、其他着色器语言/ES上下文及保留mesh阶段，需要独立批次设计。
 
