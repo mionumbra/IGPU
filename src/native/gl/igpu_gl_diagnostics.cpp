@@ -27,7 +27,9 @@ namespace igpu
         features_ |= 16u;
         constexpr GLenum fields[] = {0x8622, 0x8623, 0x8624, 0x8625, 0x886A, 0x889F};
         auto& f = igpu_gl_fns();
-        for (GLuint attribute = 0; attribute < 2; ++attribute)
+        GLint count = 0; glGetIntegerv(0x8869 /* MAX_VERTEX_ATTRIBS */, &count);
+        attributes_.resize(static_cast<std::size_t>(count)); pointers_.resize(static_cast<std::size_t>(count));
+        for (GLuint attribute = 0; attribute < static_cast<GLuint>(count); ++attribute)
         {
             for (int i = 0; i < 6; ++i) f.GetVertexAttribiv(attribute, fields[i], &attributes_[attribute][i]);
             if (integer) f.GetVertexAttribiv(attribute, 0x88FD, &attributes_[attribute][6]);

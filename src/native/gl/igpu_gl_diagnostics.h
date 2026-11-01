@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <cstdint>
+#include <vector>
 
 namespace igpu
 {
@@ -12,8 +13,8 @@ namespace igpu
         bool matches_current() const;
     private:
         std::array<std::int32_t, 4> bindings_{};
-        std::array<std::array<std::int32_t, 9>, 2> attributes_{};
-        std::array<void*, 2> pointers_{};
+        std::vector<std::array<std::int32_t, 9>> attributes_;
+        std::vector<void*> pointers_;
         std::uint32_t features_ = 0;
     };
     std::int32_t gl_diagnostic_draw_count();

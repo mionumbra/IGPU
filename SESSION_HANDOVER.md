@@ -11,6 +11,23 @@
 
 ---
 
+# 会话交接 — 2026-11-01 — 版本0.5.0 — OpenGL 通用顶点输入完整批次
+
+> PR #54已合并 `3ed96b618f98ba28af542ae349bc85bb1726d3c2`，批准头 `551b87049b93dac33e91f94f48fa1eff73110b30`；PR #55已合并 `c1eb525adee433925a80ffc2897ceffdc6aff623`，批准头 `b382e546c7ef7945d22a54db489ceccda4c6b538`，两者批准树与合并树均一致。本批 `gl-general-vertex-input` 基于后者测试头，复用e412缓存，沿用持续授权整批实现、真实RED/GREEN、一次独立整批审查及准确批准头合并。
+
+- 以 `igpu_gl_vertex.cpp/.h` 独立描述符解析/语义解析/绑定模块替换从8/12/16字节stride猜测属性。覆盖既有float1/2/3/4、normalized Colour、raw integer UByte4；九种usage及重复语义索引，独立顶点/实例偏移、0/负数紧凑步长、最大2048字节显式padding。布局要求有效vertex shader；无效数组/非整数/越界/非法step、无整数或实例入口均在分配前拒绝。
+- 采用实际链接GLSL输入位置，规范名字见 `OPENGL_VERTEX_INPUTS.md`，同时保留自定义名字的元素序号位置回退。取消强制colour/UV共用location1；允许重排、同时colour+UV及重复UV。单一浮点/整数输入类型在绘制前验证，多位置matrix/array不隐式拆分；旧原生buffer查询仍观察attribute0。
+- 普通/索引/采样/目标/实例/间接/索引间接/patch共用绑定器，私有VAO上逐元素恢复禁用与divisor0，调用方VAO/高编号属性及原生buffer保持。绘制诊断扩至全部实际属性，保留core VAO0及严格4.1 LONG-token门控。
+- 实际RED `out/vertex-red-run.log`（旧实现退出1，float2对照先通过）；完整GREEN `out/vertex-green-run.log` 和补齐边界后的 `out/vertex-complete-run.log` 包含所有历史套件，以及兼容和真实4.1core两次通用输入suite。GPU16样本位置读取、literal颜色/原始整型、规范语义、重排/重复/填充、双流、每条相关路径、原生属性5/6和foreign byte91逐一验证。对旧“重排/stride4/20非法”的历史负例改用真正非法type7、stride-1/2049；新接受输入用实际像素补充。
+
+最终完整probe `out/vertex-final-build.log` / `out/vertex-final-run.log` 均退出0/PASS；包含兼容/真实4.1core、双实例逐字段推进、两个负数紧凑步长、native四元素step0、非有限/非整数wire、无句柄消耗、缺失入口及整数/matrix输入不匹配拒绝。旧两属性诊断的独立实际RED `out/vertex-diagnostics-red-run.log` 退出1（slot5 divisor损坏未被发现），恢复全属性观察后的最终完整probe验证slot5 divisor/format损坏均被准确计数。正式D3D11 DLL `out/vertex-final-dll-build.log`、交接检查 `out/vertex-final-handover.log` 与diff检查均通过；准备一次独立整批审查。API/版本0.5.0，无yy/yyp或生成资源/导出修改。原main的PR54/55正式DLL已构建复制并核对SHA256一致（`out/main-native-mixed-dll-build.log`）。其他语言/ES上下文、保留mesh阶段及更多图形资源输入仍需按实际能力边界继续设计。
+
+
+审查修复：共享顶点绑定作用域为compatibility预检并保留一个CURRENT_BIT状态栈项，退出/后续校验失败均自动恢复，不按数组格式猜current常量类型。严格旧规范clobber的实际RED `out/vertex-current-red-run.log`暴露float/int/uint/double丢失、遗漏输入红色像素和满栈错误接受；GREEN `out/vertex-current-green-run.log`退出0/PASS，同时覆盖实际4.1core遗漏常量及显式重设。旧core无法可移植地查询未知current类型，沿用native规范边界：用数组提供过的位置，之后作为常量输入前显式重设。原审查者已接受此范围；准确修复头仍需复核批准。
+
+
+---
+
 # 会话交接 — 2026-11-01 — 版本0.5.0 — OpenGL 混合边框采样器完整批次
 
 > PR #53光栅/模板已合并 `4c197ff810c18c70c8528ec5806033be908b18fc`，批准头 `b618f979ec7206fd48d70197c54077b8d2d00a26`，树一致。本批 `gl-mixed-border-samplers` 已集成native包装PR #54修复头 `551b87049b93dac33e91f94f48fa1eff73110b30`；该头由原审查者复核中。复用e412构建缓存，按持续授权整批实现、验证、一次独立审查、功能PR及准确头合并。

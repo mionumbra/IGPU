@@ -40,7 +40,9 @@ namespace igpu
         struct WireIntegers
         {
             std::vector<std::byte> bytes;
-            explicit WireIntegers(std::initializer_list<std::uint64_t> values) : bytes(2 + 9 * values.size())
+            explicit WireIntegers(std::initializer_list<std::uint64_t> values) : WireIntegers(std::vector<std::uint64_t>(values)) {}
+            explicit WireIntegers(std::size_t count) : WireIntegers(std::vector<std::uint64_t>(count, 0)) {}
+            explicit WireIntegers(const std::vector<std::uint64_t>& values) : bytes(2 + 9 * values.size())
             {
                 gm::byteio::writeLe(bytes.data(), static_cast<std::uint16_t>(values.size()));
                 std::size_t offset = 2;
@@ -550,7 +552,10 @@ namespace igpu
             std::int64_t input_layout_create(std::int64_t shader, const gm::wire::GMArrayView& usage,
                                              const gm::wire::GMArrayView& type, std::int32_t count, std::int32_t stride) override
             {
-                const WireIntegers step{0, 0};
+                if (!layout_shader_valid(shader)) return 0;
+                GLint maximum = 0; glGetIntegerv(0x8869, &maximum);
+                if (count <= 0 || count > maximum) { set_last_error("igpu_input_layout_create: invalid element_count"); return 0; }
+                const WireIntegers step(static_cast<std::size_t>(count));
                 return gl_input_layout_create(shader, usage, type, step.view(), count, stride, 0);
             }
             std::int64_t input_layout_create_step(std::int64_t shader, const gm::wire::GMArrayView& usage,
@@ -558,6 +563,7 @@ namespace igpu
                                                   std::int32_t element_count, std::int32_t vertex_stride,
                                                   std::int32_t instance_stride) override
             {
+                if (!layout_shader_valid(shader)) return 0;
                 return gl_input_layout_create(shader, usage, type, step, element_count, vertex_stride, instance_stride);
             }
             bool input_layout_release(std::uint64_t layout) override { return gl_input_layout_release(layout); }
@@ -576,6 +582,14 @@ namespace igpu
             std::uint64_t next_shader = 1;
             GLuint program = 0;
             GLuint compute_program = 0;
+
+            bool layout_shader_valid(std::int64_t shader) const
+            {
+                const auto found = shaders.find(static_cast<std::uint64_t>(shader));
+                if (shader <= 0 || found == shaders.end() || found->second.stage != 0)
+                { set_last_error("igpu_input_layout_create: a live vertex shader is required"); return false; }
+                return true;
+            }
 
             static const char* stage_name_of(std::int32_t stage)
             {
@@ -630,7 +644,7 @@ namespace igpu
                     replacement=f.CreateProgram();if(!replacement){set_last_error("igpu_shader_bind: cannot create a graphics program");return false;}
                     const bool paired=candidate.count(4)&&candidate.count(5);
                     for(int stage:{0,1,3,4,5}){const auto i=candidate.find(stage);if(i!=candidate.end()&&(stage<4||paired))f.AttachShader(replacement,shaders.at(i->second).shader);}
-                    f.BindAttribLocation(replacement,0,"in_pos");f.BindAttribLocation(replacement,1,"in_colour");f.BindAttribLocation(replacement,1,"in_uv");f.LinkProgram(replacement);
+                    f.BindAttribLocation(replacement,0,"in_pos");f.LinkProgram(replacement);
                     GLint ok=0;f.GetProgramiv(replacement,GL_LINK_STATUS,&ok);
                     if(!ok){set_last_error("igpu_shader_bind: "+info_log(replacement,false));f.DeleteProgram(replacement);return false;}
                 }

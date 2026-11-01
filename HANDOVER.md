@@ -2,6 +2,8 @@
 
 > 最新开发批次（2026-11-01）：PR #53已合并 `4c197ff`；`gl-mixed-border-samplers` 接通既有描述符U/V/W混合边框模式，真实2D/3D完整探针（含硬件各向异性/逐轴非法值、全部历史/core）最终PASS，正式DLL与交接检查均退出0。最终GPU/DLL/交接证据见 `SESSION_HANDOVER.md` 顶部；独立批准头后再合并。API0.5.0与正式D3D11 DLL保持，无yy/yyp或导出改动，持续授权整批推进。
 
+> 最新开发阶段（2026-11-01）：PR #54/native默认参数与 #55/混合轴边框均已独立批准并合并主线 `c1eb525`。`gl-general-vertex-input` 已接通既有六种格式/九种语义、重排/重复输入及顶点/实例独立记录，见 `OPENGL_VERTEX_INPUTS.md` 与 `SESSION_HANDOVER.md`；兼容及真实4.1core完整GPU回归通过，提交整批独立审查后按准确头合并。API0.5.0、正式D3D11 DLL保留，无yy/yyp或导出修改。
+
 > 最新开发批次（2026-11-01）：`gl-native-compatibility` 接通既有 native 采样器/纹理读取/目标绘制/默认顶点布局包装，完整真实GPU探针（含实际各向异性、层/mip隔离及准确计数）退出0/PASS；独立审查发现源LOD默认值继承问题，已用真实冲突源回归修复为非零采样器完整参数覆盖并恢复；已集成PR #53的模板存储/EXT状态修复头 `b618f97`，本批准备时原审查者正在复核。正式D3D11 DLL及交接验证见 `SESSION_HANDOVER.md` 顶部证据，合并以独立批准头为准。API/版本0.5.0，无yy/yyp和导出改动，持续授权整批推进。
 
 > 最新状态（2026-11-01）：PR #52 绘制诊断已合并 `c9301450103f4d8d808d8304df819a7295cb5d75`，批准头 `c467797a3b9acdad97d86e8f0f3194597ede489c`。`gl-raster-stencil` 已完成线框、实际上下文深度钳制、全部模板操作及双面状态恢复，完整 GPU 探针（含双目标与真实4.1core）和正式 D3D11 DLL 构建均退出0；正在整批独立审查/功能PR流程。详见 `SESSION_HANDOVER.md` 顶部与 `OPENGL_RASTER_STENCIL.md`。版本0.5.0，无yy/yyp或导出改动，沿用持续授权。
