@@ -7,6 +7,8 @@
 - 三个旧目标入口只进入一次诊断边界；共用层/mip/角色/句柄验证、FBO/viewport恢复。普通默认层/mip0，其他入口保留指定子资源。native字节码反射虚函数属于D3D路径，GL没有调用方；GL的shader-handle反射早已接通，不误算为缺失公开能力。
 - RED `out/native-red-run.log`（退出1）：高级采样器对照先通过，旧采样器、布局、分配、绘制及读取入口实际失败。GREEN `out/native-green-run.log`，最终完整 `out/native-complete-build.log`、`out/native-complete-run.log`（退出0/PASS）：真实像素、默认值、驱动实际各向异性因子、纹理参数/调用方状态、未选层/mip保持、错误角色/失效句柄/范围及准确计数；全部历史套件及真实4.1core均保留。
 
+PR #54独立审查确认默认LOD未覆盖调用方源参数的Important；实际 `out/native-review-red-run.log` 退出1，native/public八个MIN_LOD1、MAX_LOD0、bias1和linear源过滤冲突均复现。修复使非零采样器完整应用MAG/MIN/mip、全部LOD字段（含默认）及支持时factor1，随后全部恢复；句柄0保留原生参数。最终完整 `out/native-review-green-run.log` 退出0/PASS，实际driver参数和像素同时验证，包含恢复调用方各向异性及sampler0对照。最新DLL/交接证据 `out/native-review-dll-build.log`、`out/native-review-handover.log`，原审查者复核准确修复头后合并。
+
 正式D3D11 DLL构建 `out/native-dll-build.log` 与交接检查 `out/native-handover-verified.log` 均退出0。PR #53两个模板状态可移植性修复已集成；本批最终组合证据为 `out/native-integrated-build.log`、`out/native-integrated-run.log`、`out/native-integrated-dll-build.log` 与 `out/native-integrated-handover.log`。API/版本0.5.0，无生成资源或yy/yyp改动。剩余实质能力边界包括更通用顶点布局、混合边框轴、更多图形输入绑定、其他着色器语言/ES上下文及保留mesh阶段，需要独立批次设计。
 
 ---
