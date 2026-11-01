@@ -7,6 +7,8 @@
 - 顶点绑定查询读取当前VAO属性0来源，不能猜generic ARRAY_BUFFER；未知/释放/错误角色静默false。shutdown删除owned private drawVAO，缓冲句柄不再重置以防旧句柄误认新对象；保持foreign VAO/buffer/bytes及借用上下文。
 - 真实RED依次为 `out/diagnostics-red-run.log`（旧查询stub）、`out/diagnostics-lifetime-red-run.log`（VAO泄漏）、`out/diagnostics-identity-red-run.log`（重绑句柄别名）。扩展GREEN覆盖真实像素/16样本、两实例32样本、全部提交族、镜像/计算排除、VAO/divisor/format/indirect实际破坏、已有GLerror及生命周期；最终完整记录 `out/diagnostics-complete-run.log`。指南 `OPENGL_DRAW_DIAGNOSTICS.md`。
 
+PR #52独立审查确认core VAO0及LONG token两个Important，实际4.1core和严格驱动模拟RED `out/diagnostics-review-red-run.log`；修复后完整 `out/diagnostics-review-green-run.log` PASS，兼容默认VAO0保持有效。原reviewer复核后合并准确批准头。
+
 正式Windows DLL保持D3D11、API/版本0.5.0，无yy/yyp改动。下一批优先线框/深度夹取光栅与stencil等实际缺口；旧包装中已有高级路径的入口单独核对，避免误报为缺功能。
 
 ---

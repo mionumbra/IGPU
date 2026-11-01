@@ -179,6 +179,14 @@ bool run_gl_diagnostics_tests()
     auto& f = igpu_gl_fns();
     const Bindings before;
     if (!check(igpu::is_vertex_buffer_bound(x.vertex) && Bindings() == before, "attribute0 source is bound despite another generic ARRAY_BUFFER")) return false;
+    f.BindVertexArray(0); glPushClientAttrib(GL_CLIENT_VERTEX_ARRAY_BIT);
+    f.BindBuffer(array_buffer, x.native_vertex); f.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, nullptr);
+    f.BindBuffer(array_buffer, x.foreign);
+    const bool compatibility_default = igpu::is_vertex_buffer_bound(x.vertex);
+    const auto compatibility_error = glGetError();
+    glPopClientAttrib(); f.BindVertexArray(x.vao); f.BindBuffer(array_buffer, x.foreign);
+    if (!check(compatibility_default && compatibility_error == GL_NO_ERROR && Bindings() == before,
+        "compatibility default VAO0 keeps its real source query")) return false;
     f.BindBuffer(array_buffer, x.foreign); f.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, nullptr);
     f.BindBuffer(array_buffer, x.native_vertex);
     if (!check(!igpu::is_vertex_buffer_bound(x.vertex), "generic binding alone is not a vertex source")) return false;
@@ -324,5 +332,84 @@ bool run_gl_diagnostics_shutdown_tests()
         if (!x.accepted([&]{ return x.direct(); }, "post-rebind draw") || !check(igpu::draw_count() == count + 1, "cumulative count advanced")) return false;
     }
     std::printf("draw diagnostics shutdown: inactive zero facade, cumulative GL totals, owned VAO deletion/foreign bytes, stale handles and fresh actual drawing passed\n");
+    return true;
+}
+
+
+namespace
+{
+    IgpuGlGetVertexAttribiv core_forward_attrib = nullptr;
+    int unsupported_long_queries = 0;
+    void APIENTRY strict_core41_attrib(GLuint index, GLenum pname, GLint* value)
+    {
+        if (pname == 0x874E)
+        {
+            ++unsupported_long_queries;
+            *value = 0; glEnable(0xFFFF); // Model the 4.1 contract: this token is unsupported.
+        }
+        else core_forward_attrib(index, pname, value);
+    }
+}
+
+bool run_gl_diagnostics_core_tests()
+{
+    const auto dc = wglGetCurrentDC();
+    const auto compatibility = wglGetCurrentContext();
+    using CreateContext = HGLRC(WINAPI*)(HDC, HGLRC, const int*);
+    const auto create_context = reinterpret_cast<CreateContext>(wglGetProcAddress("wglCreateContextAttribsARB"));
+    if (!check(create_context != nullptr, "core regression context factory")) return false;
+    igpu_shutdown();
+    const int attributes[] = {0x2091, 4, 0x2092, 1, 0x9126, 1, 0};
+    const auto core = create_context(dc, nullptr, attributes);
+    auto restore_context = [&]
+    {
+        igpu_shutdown();
+        const bool restored = wglMakeCurrent(dc, compatibility) != FALSE;
+        const bool deleted = !core || wglDeleteContext(core) != FALSE;
+        return restored && deleted && igpu_bind_current();
+    };
+    if (!core || !wglMakeCurrent(dc, core) || !igpu_bind_current())
+    { restore_context(); return check(false, "create and bind actual4.1 core context"); }
+    auto& f = igpu_gl_fns();
+    const auto vertex_shader = igpu_shader_compile("#version 410\nlayout(location=0)in vec2 p;void main(){gl_Position=vec4(p,0,1);}", "main", 0, "glsl");
+    const auto pixel_shader = igpu_shader_compile("#version 410\nout vec4 c;void main(){c=vec4(0,1,0,1);}", "main", 1, "glsl");
+    const auto vertex = igpu_buffer_create(24, 1, 1, 8);
+    Array usage{1}, type{2}, step{0};
+    const auto layout = igpu_input_layout_create(vertex_shader, usage.view(), type.view(), step.view(), 1, 8, 0);
+    const auto target = igpu_texture_create(0, 4, 4, 1, 6, true, false, 1);
+    std::array<float, 6> positions{-1, -1, 3, -1, -1, 3};
+    bool ok = vertex_shader && pixel_shader && vertex && layout && target &&
+        igpu_buffer_write(vertex, 0, gm::wire::GMBuffer(positions.data(), sizeof(positions))) &&
+        igpu_shader_bind(vertex_shader, 0) && igpu_shader_bind(pixel_shader, 1);
+    const auto setup_error = glGetError();
+    if (!check(ok && setup_error == GL_NO_ERROR, "core fixture without compatibility state"))
+    { restore_context(); return false; }
+    f.BindVertexArray(0);
+    const bool reported = igpu::is_vertex_buffer_bound(vertex);
+    const auto query_error = glGetError();
+    ok = check(!reported && query_error == GL_NO_ERROR, "core VAO0 vertex-source query is quiet false") && ok;
+    Array targets{static_cast<Handle>(target)}, zero{0};
+    auto submit = [&](std::int64_t count)
+    { return igpu_draw_to_render_targets(vertex, layout, 4, 0, count, targets.view(), zero.view(), zero.view(), 0, 0, 0, 0); };
+    const auto before = igpu::draw_count(), failures = igpu::draw_restore_failures();
+    const bool drawn = submit(3);const auto draw_error = glGetError();
+    GLint vao = -1;glGetIntegerv(0x85B5, &vao);
+    ok = check(drawn && draw_error == GL_NO_ERROR && vao == 0 && igpu::draw_count() == before + 1 &&
+        igpu::draw_restore_failures() == failures && igpu_texture_read(target, 1, 1, 0, 0) == 65280,
+        "core VAO0 accepted drawing restores0 without creating GLerror") && ok;
+    const bool rejected = !submit(0);const auto reject_text = igpu_get_last_error();const auto rejected_error = glGetError();
+    ok = check(rejected && !reject_text.empty() && rejected_error == GL_NO_ERROR &&
+        igpu::draw_count() == before + 1 && igpu::draw_restore_failures() == failures,
+        "core VAO0 rejected submission adds neither query error nor counts") && ok;
+    GLuint caller = 0;f.GenVertexArrays(1, &caller);f.BindVertexArray(caller);
+    core_forward_attrib = f.GetVertexAttribiv;unsupported_long_queries = 0;f.GetVertexAttribiv = strict_core41_attrib;
+    const bool strict_drawn = submit(3);f.GetVertexAttribiv = core_forward_attrib;
+    const auto strict_error = glGetError();
+    ok = check(strict_drawn && unsupported_long_queries == 0 && strict_error == GL_NO_ERROR,
+        "strict4.1 driver receives no4.3 LONG attribute token") && ok;
+    f.DeleteVertexArrays(1, &caller);
+    const bool restored = restore_context();
+    if (!check(restored && ok, "core4.1 regressions and original borrowed compatibility context restored")) return false;
+    std::printf("draw diagnostics core: actual4.1 core VAO0 quiet binding/accepted/rejected paths, strict LONG-token guard and borrowed compatibility rebind passed\n");
     return true;
 }

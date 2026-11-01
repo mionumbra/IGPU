@@ -196,6 +196,7 @@ IgpuGlFns& igpu_gl_fns();
 
 namespace igpu
 {
+    bool gl_vertex_array_has_attributes(std::uint32_t name);
     bool gl_context_at_least(int major, int minor);
     bool gl_context_extension(const char* name);
 }

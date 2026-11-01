@@ -15,10 +15,16 @@ namespace igpu
         const bool indirect = gl_context_at_least(4, 0) || gl_context_extension("GL_ARB_draw_indirect");
         const bool integer = gl_context_at_least(3, 0) || gl_context_extension("GL_EXT_gpu_shader4");
         const bool divisor = gl_context_at_least(3, 3) || gl_context_extension("GL_ARB_instanced_arrays");
-        const bool wide = gl_context_at_least(4, 1) || gl_context_extension("GL_ARB_vertex_attrib_64bit");
+        const bool wide = gl_context_at_least(4, 3); // LONG is a 4.3 query token, independent of LPointer.
         features_ = (indirect ? 1u : 0u) | (integer ? 2u : 0u) | (divisor ? 4u : 0u) | (wide ? 8u : 0u);
         constexpr GLenum bindings[] = {0x85B5, 0x8894, 0x8895, 0x8F43};
-        for (int i = 0; i < (indirect ? 4 : 3); ++i) glGetIntegerv(bindings[i], &bindings_[i]);
+        glGetIntegerv(bindings[0], &bindings_[0]);
+        const bool attributes = gl_vertex_array_has_attributes(static_cast<std::uint32_t>(bindings_[0]));
+        glGetIntegerv(bindings[1], &bindings_[1]);
+        if (attributes) glGetIntegerv(bindings[2], &bindings_[2]);
+        if (indirect) glGetIntegerv(bindings[3], &bindings_[3]);
+        if (!attributes) return; // Core VAO0 is no object; querying its attributes is invalid.
+        features_ |= 16u;
         constexpr GLenum fields[] = {0x8622, 0x8623, 0x8624, 0x8625, 0x886A, 0x889F};
         auto& f = igpu_gl_fns();
         for (GLuint attribute = 0; attribute < 2; ++attribute)
