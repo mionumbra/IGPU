@@ -107,6 +107,12 @@ using IgpuGlDeleteSync = void(APIENTRY*)(IgpuGlSync);
 
 struct IgpuGlFns
 {
+    decltype(&glGetIntegerv) GetIntegerv = glGetIntegerv;
+    decltype(&glIsEnabled) IsEnabled = glIsEnabled;
+    decltype(&glEnable) Enable = glEnable;
+    decltype(&glDisable) Disable = glDisable;
+    void(APIENTRY* ActiveStencilFaceEXT)(GLenum) = nullptr;
+    void(APIENTRY* GetFramebufferAttachmentParameteriv)(GLenum, GLenum, GLenum, GLint*) = nullptr;
     IgpuGlGetBooleani GetBooleani = nullptr;
     IgpuGlIsEnabledi IsEnabledi = nullptr;
     IgpuGlEnablei Enablei = nullptr;

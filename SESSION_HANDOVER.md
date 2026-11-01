@@ -23,6 +23,8 @@
 
 交接检查原先只识别裸 `return native`；最后一个此类分支 Wireframe 接通 GL 后会误报0项。现同时识别 `native || GL` 的 D3D11 无条件承诺，实际检查21项；缺失 Wireframe API 金丝雀确实失败，恢复后完整检查通过（`out/raster-handover-canary.log`、`out/raster-handover-verified.log`）。
 
+PR #53独立审查确认两个Important：无模板存储时参考值查询可能夹成0，EXT_stencil_two_side活动BACK面会重定向旧式正面查询。严格驱动回归实际RED `out/raster-review-red-run.log`（六个单目标/MRT/分层参考值场景及EXT）；EXT修复还单独撤销复放RED `out/raster-ext-red-run.log`。修复通过core合法的FBO附件OBJECT_TYPE判断存储，无存储不读写模板参数；扩展按实际advertisement加载，保存/规范活动面，绘制时关闭再恢复扩展使能，保留独立EXT背面状态。完整最终证据 `out/raster-review-green-run.log`。本机AMD掩盖夹取且未声明该扩展，严格模拟覆盖驱动差异，真实GPU仍验证像素/样本/byte91；不声称运行过Mesa或原生EXT环境。
+
 API/版本保持0.5.0，无新增导出和 yy/yyp 修改。下一步核对 legacy native 包装的真实调用可达性后按整批接通；高级 GML 路径已有能力不误报为缺失。其他着色器语言、ES上下文和保留 mesh/amplification 仍需单独设计。
 
 ---
