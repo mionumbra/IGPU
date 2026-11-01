@@ -110,6 +110,7 @@ using IgpuGlDeleteSync = void(APIENTRY*)(IgpuGlSync);
 
 struct IgpuGlFns
 {
+    decltype(&glGetString) GetString = glGetString;
     decltype(&glGetIntegerv) GetIntegerv = glGetIntegerv;
     decltype(&glIsEnabled) IsEnabled = glIsEnabled;
     decltype(&glEnable) Enable = glEnable;

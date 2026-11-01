@@ -40,7 +40,7 @@ namespace igpu
 
     bool gl_context_at_least(int required_major, int required_minor)
     {
-        const auto version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+        const auto version = reinterpret_cast<const char*>(igpu_gl_fns().GetString(GL_VERSION));
         int major = 0, minor = 0;
         return version && std::sscanf(version, "%d.%d", &major, &minor) == 2 &&
             (major > required_major || (major == required_major && minor >= required_minor));

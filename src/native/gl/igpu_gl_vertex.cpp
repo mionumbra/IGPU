@@ -174,18 +174,21 @@ bool gl_vertex_layout_resolve(const GlVertexLayout &layout, GLuint program, GlVe
         }
         candidate.push_back({static_cast<GLuint>(location), i});
     }
-    if (gl_vertex_array_has_attributes(0))
+    GLint flags = 0;
+    if (gl_context_at_least(3, 0))
+        f.GetIntegerv(0x821E /* CONTEXT_FLAGS */, &flags);
+    if (!(flags & 1 /* CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT */) && gl_vertex_array_has_attributes(0))
     {
         GLint depth = 0, maximum = 0;
-        glGetIntegerv(GL_ATTRIB_STACK_DEPTH, &depth);
-        glGetIntegerv(GL_MAX_ATTRIB_STACK_DEPTH, &maximum);
+        f.GetIntegerv(GL_ATTRIB_STACK_DEPTH, &depth);
+        f.GetIntegerv(GL_MAX_ATTRIB_STACK_DEPTH, &maximum);
         if (depth >= maximum)
         {
             set_last_error("igpu_draw: the caller attribute stack has no room to preserve current values");
             return false;
         }
         // Current kinds cannot be queried. Preserve them opaquely in compatibility;
-        // old core follows its native unspecified-current rule (see the guide).
+        // core/forward contexts follow native current-value rules (see the guide).
         glPushAttrib(GL_CURRENT_BIT);
         out.current_saved = true;
     }

@@ -13,6 +13,10 @@
 审查修复：共享顶点绑定作用域为compatibility预检并保留一个CURRENT_BIT状态栈项，退出/后续校验失败均自动恢复，不按数组格式猜current常量类型。严格旧规范clobber的实际RED `out/vertex-current-red-run.log`暴露float/int/uint/double丢失、遗漏输入红色像素和满栈错误接受；GREEN `out/vertex-current-green-run.log`退出0/PASS，同时覆盖实际4.1core遗漏常量及显式重设。旧core无法可移植地查询未知current类型，沿用native规范边界：用数组提供过的位置，之后作为常量输入前显式重设。原审查者已接受此范围；准确修复头仍需复核批准。
 
 
+
+Forward-compatible复核修复：GL>=3.0先检查原生CONTEXT_FLAGS，forward bit排除deprecated CURRENT栈；GL<3.0不查询新token，VAO0观察规则单独保留。请求3.0/FC实际驱动返回4.6 flags1，focused probe因此明确使用strict3.0版本信息模型，原生flags保持真实；不是原生3.0驱动验证。旧gate实际RED `out/vertex-forward-observed-red-run.log`准确观测2次deprecated stack queries；新gate GREEN `out/vertex-forward-green-run.log`为0次、GL0、GLSL130/非零VAO/16绿色像素/借用上下文恢复，结束PASS。正式DLL `out/vertex-forward-dll-build.log`、交接 `out/vertex-forward-handover.log`和diff检查均通过。
+
+
 ---
 
 # 会话交接 — 2026-11-01 — 版本0.5.0 — OpenGL 混合边框采样器完整批次
