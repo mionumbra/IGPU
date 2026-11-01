@@ -7,7 +7,11 @@
 - 新增真实GS/TCS/TES slot0/7读取与16样本像素、原生绑定与替换、late-map、unbind/release、借用range/name/start/size/generic/byte91，以及shutdown原生删除和重新绑定。
 - 实际RED `out/storage-complete-red-run.log`同时观测高阶段被旧实现拒绝、既有Vertex七条路径及Pixel错误接受late-map。完整GREEN `out/storage-green-final-run.log`退出0/PASS。整缓冲区base binding的索引size按GL4.6 core6.7.1为0；实际buffer为16bytes，像素和借用range恢复均独立验证。
 
-指南 `OPENGL_COMPUTE.md` / `OPENGL_GRAPHICS_STAGES.md`。API/版本0.5.0、正式D3D11 DLL保持；无yy/yyp和精简GML导出改动。整批独立审查及准确批准头合并仍待执行。
+指南 `OPENGL_COMPUTE.md` / `OPENGL_GRAPHICS_STAGES.md`。API/版本0.5.0、正式D3D11 DLL保持；无yy/yyp和精简GML导出改动。整批初审无Critical/Important；两个Minor测试证据改进均已落实，最终准确头的合并状态以Git为准。
+
+
+组合验证：通用顶点候选头dd7c3a9已整合，完整probe/DLL/交接 `out/storage-vertex-integrated-{build,run,dll-build,handover}.log` 均退出0。初审两项Minor已补齐：逐case打印原生限制与实际rendered/unsupported，拒绝调用前后即时比较有效SSBO索引name/start/size。最新完整 `out/storage-reviewed-run.log` 明确Geometry/Hull/Domain slot0/7共6/6 rendered、0 unsupported，结束PASS；实际4.1core与全部历史suite保持。
+
 
 ---
 
