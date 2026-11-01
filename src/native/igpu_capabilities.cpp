@@ -289,9 +289,12 @@ namespace igpu
         // UTF-8 byte of 0x5C in a comment escapes the newline and deletes the
         // next line. That is how Texture2D was compiled out.
         case Capability::Texture2D:             return native || opengl_backend();
-        case Capability::Texture3D:             return native;
-        case Capability::TextureArray:          return native;
-        case Capability::TextureCubemap:        return native;
+        case Capability::Texture3D:             return native ||
+                   (opengl_backend() && active_backend()->texture_kind_supported(1));
+        case Capability::TextureArray:          return native ||
+                   (opengl_backend() && active_backend()->texture_kind_supported(2));
+        case Capability::TextureCubemap:        return native ||
+                   (opengl_backend() && active_backend()->texture_kind_supported(3));
         case Capability::StructuredBuffer:      return device_at_least(D3D_FEATURE_LEVEL_11_0) ||
                    (opengl_backend() && active_backend()->structured_buffer_supported());
         // Writable images need a compute shader. Feature level 11.0 has them.

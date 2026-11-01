@@ -65,6 +65,7 @@ namespace igpu
             set_last_error(std::string("igpu_bind_current: this OpenGL context is missing ") + symbol); \
             return false;                                                                   \
         }
+        LOAD(ActiveTexture, "glActiveTexture")
         LOAD(CreateShader, "glCreateShader")
         LOAD(ShaderSource, "glShaderSource")
         LOAD(CompileShader, "glCompileShader")
@@ -119,6 +120,8 @@ namespace igpu
         LOAD_OPTIONAL(ColorMaski, "glColorMaski")
         LOAD_OPTIONAL(BlendFuncSeparatei, "glBlendFuncSeparatei")
         LOAD_OPTIONAL(BlendEquationSeparatei, "glBlendEquationSeparatei")
+        LOAD_OPTIONAL(TexImage3D, "glTexImage3D")
+        LOAD_OPTIONAL(FramebufferTextureLayer, "glFramebufferTextureLayer")
         LOAD_OPTIONAL(DrawBuffers, "glDrawBuffers")
         LOAD_OPTIONAL(CopyBufferSubData, "glCopyBufferSubData")
         LOAD_OPTIONAL(ProgramParameteri, "glProgramParameteri")

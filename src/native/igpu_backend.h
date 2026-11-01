@@ -34,6 +34,7 @@ namespace igpu
         virtual bool timestamps() const = 0;
         virtual bool fences() const = 0;
         virtual bool buffer_resize_supported() const { return false; }
+        virtual bool texture_kind_supported(std::int32_t) const { return false; }
         virtual bool multiple_render_targets_supported() const { return false; }
         virtual bool uniform_buffer_supported() const { return false; }
         virtual bool uniform_reflection_supported() const { return false; }

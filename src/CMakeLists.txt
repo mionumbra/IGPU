@@ -110,6 +110,7 @@ if(WIN32)
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/compute_tests.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/uniform_tests.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/target_tests.cpp"
+      "${CMAKE_SOURCE_DIR}/tests/gl_probe/layered_texture_tests.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/instanced_tests.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/query_tests.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/query_shutdown_tests.cpp"
@@ -126,6 +127,11 @@ if(WIN32)
       IGPU_HAS_OPENGL=1 OS_WINDOWS EXTGEN_HAS_JNI=0
       _CRT_SECURE_NO_WARNINGS WIN32_LEAN_AND_MEAN NOMINMAX)
   target_compile_options(igpu_gl_probe PRIVATE /W4 /permissive-)
+  if(MSVC)
+    # MSBuild --parallel schedules projects; /MP also compiles source files concurrently.
+    target_compile_options(igpu_gl_probe PRIVATE /MP8)
+    target_compile_options(${PROJECT_NAME} PRIVATE /MP8)
+  endif()
   target_link_libraries(igpu_gl_probe PRIVATE
       opengl32
       d3d11 dxgi d3dcompiler dxguid

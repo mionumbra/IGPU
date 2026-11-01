@@ -6,6 +6,7 @@
 #include "compute_tests.h"
 #include "uniform_tests.h"
 #include "target_tests.h"
+#include "layered_texture_tests.h"
 #include "query_shutdown_tests.h"
 
 #include "IGPU_native.h"
@@ -262,7 +263,9 @@ int main()
         {2, true, "ShaderStageVertex"},
         {3, true, "ShaderStagePixel"},
         {4, true, "ShaderStageCompute"},
-        {20, false, "Texture3D"},
+        {20, true, "Texture3D"},
+        {21, true, "TextureArray"},
+        {22, true, "TextureCubemap"},
         {26, true, "Texture2D"},
         {47, true, "InputLayout"},
         {48, true, "VertexBuffer"},
@@ -5771,6 +5774,11 @@ int main()
         return fail("multiple render-target suite failed");
     }
 
+    if (!run_gl_layered_texture_tests())
+    {
+        return fail("layered texture suite failed");
+    }
+
     if (!run_gl_instanced_tests())
     {
         return fail("instanced and indirect draw suite failed");
@@ -5794,6 +5802,11 @@ int main()
     if (!run_gl_uniform_shutdown_tests())
     {
         return fail("uniform buffer shutdown suite failed");
+    }
+
+    if (!run_gl_layered_texture_shutdown_tests())
+    {
+        return fail("layered texture shutdown suite failed");
     }
 
     void* context = gl_probe_context();

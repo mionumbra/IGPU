@@ -1,3 +1,19 @@
+# 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 三维/数组/立方纹理完整批次
+
+> 先读本节。PR #49 MRT批次已合并，合并提交 `9324138e3149b7acd746626c83f1e29d6dc4b7a1`，测试/批准头 `3fa03c6be0727879c73e353ff958b231a67b5bbe`。当前分支 `gl-layered-textures`；按用户持续授权整批实现、验证、一次独立审查及PR合并，不逐步询问。
+
+- 从绘制文件提取 `igpu_gl_texture.cpp/.h`，完成2D/3D/数组/立方纹理创建、逐子资源初始颜色、实际尺寸上限校验、RGBA8按层读回、生成mip和原生释放。3D深度随mip缩小且参与完整链长度；数组层数及立方体六面固定，面序+X/-X/+Y/-Y/+Z/-Z。
+- MRT支持选定切片/层/面与mip，允许同纹理不同层及跨类型混合；重复身份为(handle,layer,mip)。分层目标使用临时纯颜色FBO；既有2D单目标深度/裁剪兼容保持。读回使用私有READ FBO，保留PACK参数/PBO和独立读写绑定。
+- 普通采样按资源匹配sampler3D/sampler2DArray/samplerCube，所有参数/绑定按原生target操作，保留活动纹理单元并临时使用unit0。保存应用/恢复W寻址；比较采样仍限既有2D R16F/R32F镜像。
+- 计算图像按非2D整层绑定，着色器坐标选择切片/面；既有public dispatch layer=0和单纹理非零mip边界保持。能力由真实上下文、尺寸上限及可选TexImage3D/FramebufferTextureLayer门控。正式Windows DLL仍D3D11；API/版本0.5.0、无yy/yyp改动。
+- 编译加速：MSVC探针/DLL启用 `/MP8`，补上仅CMake项目并行无法覆盖的源文件级并行。
+
+RED证据：`out/layered-red-run.log`、`out/layered-expanded-red-run.log`、`out/layered-w-red-run.log`。完整GREEN：`out/layered-complete-build.log`、`out/layered-complete-run.log`以PASS结束；实际验证全切片/六面像素、同纹理/跨类型MRT、16样本、基础/非基础mip计算写入及六字段图像恢复、正负W寻址、生成mip、unit3、PACK/PBO、非法尺寸/层/mip/类型、可选门控和shutdown/rebind原生清理，并保持所有历史回归。指南 `OPENGL_TEXTURE_KINDS.md`。 Windows DLL `out/layered-dll-build.log` 与交接校验 `out/layered-handover-verified.log` 均通过，准备一次独立整批审查。
+
+后续整批优先几何/曲面细分阶段与诊断绘制计数，然后根据真实未完成入口收尾；继续功能分支→PR→审查→合并，不直接推main。
+
+---
+
 # 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL MRT 完整批次
 
 > 先读本节，再读下方历史。PR #48 UBO/反射已合并，合并提交 `48f3ecba68a6c6ecfb636a46676e12f58c0aa6fd`；测试/批准头 `550f7b65a6ca28cacccb89e8bf094bf6a3245d59`。当前分支 `gl-multiple-render-targets` 按用户持续授权整批开发，不重复询问；维持功能分支→PR→独立审查→合并，不直接推 main。

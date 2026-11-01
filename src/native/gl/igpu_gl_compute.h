@@ -5,7 +5,7 @@
 namespace igpu
 {
     struct GlStorageBuffer { std::uint32_t name = 0; std::int64_t bytes = 0; };
-    struct GlStorageTexture { std::uint32_t name = 0, format = 0; std::int32_t level = 0; };
+    struct GlStorageTexture { std::uint32_t name = 0, format = 0; std::int32_t level = 0; bool layered = false; };
     bool gl_storage_buffer(std::uint64_t handle, GlStorageBuffer& out, const char* entry);
     bool gl_storage_texture(std::uint64_t handle, std::int32_t mip, GlStorageTexture& out, const char* entry);
 
