@@ -1,3 +1,5 @@
+> 最新开发批次（2026-11-01）：`gl-graphics-storage-inputs` 已接通Geometry/Hull/Domain既有storage输入；每条graphics路径重验late-mapped输入，保留Compute-only claim隔离与借用SSBO恢复。真实GPU完整probe已PASS，整批审查/合并按准确批准头执行。基线PR #54/#55已合并；版本0.5.0/正式D3D11 DLL保持，无yy/yyp或导出改动。详见 `SESSION_HANDOVER.md` 顶部。
+
 > 最新开发批次（2026-11-01）：PR #53已合并 `4c197ff`；`gl-mixed-border-samplers` 接通既有描述符U/V/W混合边框模式，真实2D/3D完整探针（含硬件各向异性/逐轴非法值、全部历史/core）最终PASS，正式DLL与交接检查均退出0。最终GPU/DLL/交接证据见 `SESSION_HANDOVER.md` 顶部；独立批准头后再合并。API0.5.0与正式D3D11 DLL保持，无yy/yyp或导出改动，持续授权整批推进。
 
 > 最新开发批次（2026-11-01）：`gl-native-compatibility` 接通既有 native 采样器/纹理读取/目标绘制/默认顶点布局包装，完整真实GPU探针（含实际各向异性、层/mip隔离及准确计数）退出0/PASS；独立审查发现源LOD默认值继承问题，已用真实冲突源回归修复为非零采样器完整参数覆盖并恢复；已集成PR #53的模板存储/EXT状态修复头 `b618f97`，本批准备时原审查者正在复核。正式D3D11 DLL及交接验证见 `SESSION_HANDOVER.md` 顶部证据，合并以独立批准头为准。API/版本0.5.0，无yy/yyp和导出改动，持续授权整批推进。

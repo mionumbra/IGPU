@@ -22,7 +22,7 @@ Program changes are rejected while transform feedback is active and unpaused, be
 
 Use the existing patch draw API after binding both hull and domain shaders. The current native program must be the IGPU-owned program successfully linked with the TCS/TES pair. The backend records executable stage metadata immediately after its own successful links; later attach/detach operations do not replace an installed executable. Owned tessellation continues to draw after detaching shader objects. External programs are rejected for patch/new-stage drawing even if their current attachments contain TCS/TES. Existing caller-owned ordinary VS/PS programs remain supported; external advanced-stage programs and externally relinking an IGPU-owned program are outside this contract.
 
-Control points must be 1..32 and fit the native maximum. Vertex counts must contain complete patches. A negative count infers the remaining vertex range. Buffer/layout roles, safe first/count bounds, mapped inputs, state handles and late UBO mappings follow the shared draw validation. The private patch submission mode preserves the public ordinary primitive enum.
+Control points must be 1..32 and fit the native maximum. Vertex counts must contain complete patches. A negative count infers the remaining vertex range. Buffer/layout roles, safe first/count bounds, mapped inputs, state handles and late UBO/SSBO mappings follow the shared draw validation. The private patch submission mode preserves the public ordinary primitive enum.
 
 Every submission family rejects ordinary primitives while the owned tessellation pair is executable, and rejects geometry input mismatches before native drawing. Geometry checks group points, lines/line strips and triangles/strips/fans; for patches the input family follows native TES mode and point mode. This validation covers direct, indexed, instanced, indirect, MRT and sampled draws.
 
@@ -34,7 +34,7 @@ The physical binding formula remains stage * 8 + public slot. Each new stage req
 
 Reflection first tries native separable and single-stage linking. For geometry/TCS/TES that require another native stage for linking, a temporary companion vertex shader (and a TES for TCS) supplies the link context. Caller source is unchanged, successful metadata is cached, and temporary native objects are deleted. Writes, claim restoration and mapped-input guards reuse the existing UBO path. See OPENGL_UNIFORMS.md for the full contract.
 
-Storage SSBO bindings retain their existing stages 0..2 contract; additional graphics-stage SSBO namespaces are not exposed by this batch.
+Storage inputs use the existing igpu_storage_bind API with physical binding8 + stage*8 + slot: Geometry32..39, Hull40..47, Domain48..55. Each request checks actual graphics-stage support, at least eight storage blocks for that stage, and the requested physical binding against the global native limit. Existing StructuredBuffer/stages0..2 support stays unchanged. All graphics submissions revalidate graphics storage claims for late external mapping; Compute-only claims do not block graphics. Replacement/unbind/release/shutdown restore borrowed indexed names/ranges and generic SSBO state. See OPENGL_COMPUTE.md for the shared contract and evidence.
 
 ## Actual capability and lifetime
 

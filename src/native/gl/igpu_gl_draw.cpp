@@ -606,6 +606,7 @@ namespace igpu
                               const BlendObject*& blend, const DepthObject*& depth, const RasterObject*& raster,
                               GLenum& mode, bool patch = false)
         {
+            if (!gl_storage_validate_inputs(0, 1, entry) || !gl_storage_validate_inputs(3, 5, entry)) return false;
             if (!gl_uniform_validate_inputs(0, 1, entry) || !gl_uniform_validate_inputs(3, 5, entry)) return false;
             if (!gl_pipeline_accepted(entry, primitive, mode))
             {
@@ -1467,6 +1468,7 @@ namespace igpu
         const BlendObject* blend = nullptr;
         const DepthObject* depth = nullptr;
         const RasterObject* raster = nullptr;
+        if (!gl_storage_validate_inputs(0, 1, "igpu_draw_sampled") || !gl_storage_validate_inputs(3, 5, "igpu_draw_sampled")) return false;
         if (!gl_uniform_validate_inputs(0, 1, "igpu_draw_sampled") || !gl_uniform_validate_inputs(3, 5, "igpu_draw_sampled")) return false;
         if (!gl_pipeline_accepted("igpu_draw_sampled", primitive, mode))
         {

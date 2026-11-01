@@ -13,6 +13,7 @@ namespace igpu
     bool gl_compute_supported();
     bool gl_read_storage_supported();
     bool gl_storage_bind(std::uint64_t buffer, std::int32_t stage, std::int32_t slot);
+    bool gl_storage_validate_inputs(int first_stage, int last_stage, const char* entry);
     void gl_storage_release_buffer(std::uint64_t buffer);
     void gl_compute_resources_release();
     bool gl_dispatch_storage(std::uint32_t program, std::int32_t x, std::int32_t y, std::int32_t z,

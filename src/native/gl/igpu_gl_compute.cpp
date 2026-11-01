@@ -1,5 +1,6 @@
 #include "igpu_gl_compute.h"
 #include "igpu_gl_uniform.h"
+#include "igpu_gl_graphics.h"
 #include "igpu_gl_loader.h"
 #include "igpu_error.h"
 #include <array>
@@ -17,7 +18,7 @@ namespace igpu
         constexpr GLenum image_fields[] = {0x8F3A,0x8F3B,0x8F3C,0x8F3D,0x8F3E,0x906E};
         bool context_compute = false;
         GLint group_limits[3]{}, binding_count = 0, block_limit = 0, image_count = 0, compute_images = 0;
-        GLint stage_blocks[3]{};
+        GLint stage_blocks[6]{};
         bool fail(const char* entry, const char* message)
         { set_last_error(std::string(entry) + ": " + message); return false; }
         struct GenericBinding
@@ -174,15 +175,18 @@ namespace igpu
             (gl_context_extension("GL_ARB_compute_shader") && gl_context_extension("GL_ARB_shader_storage_buffer_object") &&
              gl_context_extension("GL_ARB_shader_image_load_store")));
         binding_count = block_limit = image_count = compute_images = 0;
-        for (int i = 0; i < 3; ++i) group_limits[i] = stage_blocks[i] = 0;
+        for (auto& value : group_limits) value = 0;
+        for (auto& value : stage_blocks) value = 0;
         if (!context_compute || !igpu_gl_fns().GetIntegeri) return;
         auto& f = igpu_gl_fns();
-        const GLenum block_fields[] = {0x90D6,0x90DA,0x90DB};
         for (int i = 0; i < 3; ++i)
-        {
             f.GetIntegeri(0x91BE /* MAX_COMPUTE_WORK_GROUP_COUNT */, i, &group_limits[i]);
-            glGetIntegerv(block_fields[i], &stage_blocks[i]);
-        }
+        const bool geometry = gl_context_at_least(3, 2);
+        const bool tessellation = gl_context_at_least(4, 0) || gl_context_extension("GL_ARB_tessellation_shader");
+        const GLenum block_fields[] = {0x90D6,0x90DA,0x90DB,0x90D7,0x90D8,0x90D9};
+        const bool stages[] = {true,true,true,geometry,tessellation,tessellation};
+        for (int i = 0; i < 6; ++i)
+            if (stages[i]) glGetIntegerv(block_fields[i], &stage_blocks[i]);
         glGetIntegerv(0x90DD /* MAX_SHADER_STORAGE_BUFFER_BINDINGS */, &binding_count);
         glGetIntegerv(0x90DE /* MAX_SHADER_STORAGE_BLOCK_SIZE */, &block_limit);
         glGetIntegerv(0x8F38 /* MAX_IMAGE_UNITS */, &image_count);
@@ -203,7 +207,9 @@ namespace igpu
     {
         const char* entry = "igpu_storage_bind";
         if (!gl_read_storage_supported()) return fail(entry, "this OpenGL context does not support storage input bindings");
-        if (stage < 0 || stage > 2 || slot < 0 || slot >= 8) return fail(entry, "use vertex/pixel/compute stages and slots 0..7");
+        if (stage < 0 || stage > 5 || slot < 0 || slot >= 8) return fail(entry, "use stages0..5 and slots0..7");
+        if (stage >= 3 && (!gl_graphics_stage_supported(stage) || stage_blocks[stage] < 8 || 8 + stage * 8 + slot >= binding_count))
+            return fail(entry, "the requested graphics stage/slot exceeds this context's storage input support");
         const int key = stage * 8 + slot;
         const auto existing = claims.find(key);
         if (!buffer)
@@ -229,6 +235,18 @@ namespace igpu
         }
         else existing->second.buffer = buffer;
         igpu_gl_fns().BindBufferBase(ssbo, static_cast<GLuint>(8 + key), resolved.name);
+        return true;
+    }
+    bool gl_storage_validate_inputs(int first_stage, int last_stage, const char* entry)
+    {
+        for (const auto& claim : claims)
+        {
+            const int stage = claim.first / 8;
+            if (stage < first_stage || stage > last_stage) continue;
+            GlStorageBuffer input;
+            if (!gl_storage_buffer(claim.second.buffer, input, entry)) return false;
+            if (input.bytes > block_limit) return fail(entry, "the storage input exceeds the context block size limit");
+        }
         return true;
     }
     void gl_storage_release_buffer(std::uint64_t buffer)
