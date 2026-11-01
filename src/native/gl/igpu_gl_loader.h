@@ -62,6 +62,9 @@ using IgpuGlGetUniformLocation = GLint(APIENTRY*)(GLuint, const char*);
 using IgpuGlGetActiveUniform = void(APIENTRY*)(GLuint, GLuint, GLsizei, GLsizei*, GLint*, GLenum*, char*);
 using IgpuGlGenerateMipmap = void(APIENTRY*)(GLenum);
 using IgpuGlUniform1i = void(APIENTRY*)(GLint, GLint);
+using IgpuGlStencilFuncSeparate = void(APIENTRY*)(GLenum, GLenum, GLint, GLuint);
+using IgpuGlStencilOpSeparate = void(APIENTRY*)(GLenum, GLenum, GLenum, GLenum);
+using IgpuGlStencilMaskSeparate = void(APIENTRY*)(GLenum, GLuint);
 using IgpuGlBlendFuncSeparate = void(APIENTRY*)(GLenum, GLenum, GLenum, GLenum);
 using IgpuGlBlendEquationSeparate = void(APIENTRY*)(GLenum, GLenum);
 using IgpuGlGenRenderbuffers = void(APIENTRY*)(GLsizei, GLuint*);
@@ -104,6 +107,12 @@ using IgpuGlDeleteSync = void(APIENTRY*)(IgpuGlSync);
 
 struct IgpuGlFns
 {
+    decltype(&glGetIntegerv) GetIntegerv = glGetIntegerv;
+    decltype(&glIsEnabled) IsEnabled = glIsEnabled;
+    decltype(&glEnable) Enable = glEnable;
+    decltype(&glDisable) Disable = glDisable;
+    void(APIENTRY* ActiveStencilFaceEXT)(GLenum) = nullptr;
+    void(APIENTRY* GetFramebufferAttachmentParameteriv)(GLenum, GLenum, GLenum, GLint*) = nullptr;
     IgpuGlGetBooleani GetBooleani = nullptr;
     IgpuGlIsEnabledi IsEnabledi = nullptr;
     IgpuGlEnablei Enablei = nullptr;
@@ -183,6 +192,9 @@ struct IgpuGlFns
     IgpuGlUniform1i Uniform1i = nullptr;
     IgpuGlGetActiveUniform GetActiveUniform = nullptr;
     IgpuGlGenerateMipmap GenerateMipmap = nullptr;
+    IgpuGlStencilFuncSeparate StencilFuncSeparate = nullptr;
+    IgpuGlStencilOpSeparate StencilOpSeparate = nullptr;
+    IgpuGlStencilMaskSeparate StencilMaskSeparate = nullptr;
     IgpuGlBlendFuncSeparate BlendFuncSeparate = nullptr;
     IgpuGlBlendEquationSeparate BlendEquationSeparate = nullptr;
     IgpuGlGenRenderbuffers GenRenderbuffers = nullptr;

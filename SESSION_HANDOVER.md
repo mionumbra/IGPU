@@ -1,3 +1,21 @@
+# 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 光栅与模板状态完整批次
+
+> PR #52 绘制诊断已合并，merge `c9301450103f4d8d808d8304df819a7295cb5d75`，独立复核批准头 `c467797a3b9acdad97d86e8f0f3194597ede489c`；合并树与批准树一致。本批 `gl-raster-stencil` 已集成该 main，按持续授权完成整批实现、真实 GPU 验证、一次独立审查及功能 PR 合并。
+
+- 既有 raster 描述符支持 solid/wireframe；Wireframe 能力随实际绑定的桌面 GL 启用。显式 depth_clip 通过实际 GL3.2/ARB_depth_clamp 控制深度钳制；缺支持时创建 false 描述符即拒绝，不查询不支持的枚举。句柄0保持调用方状态。
+- 完整保存/恢复 polygon mode、cull/front、scissor 及支持的 depth clamp。相同两面模式通过 FRONT_AND_BACK 恢复，兼容 core；仅兼容上下文实际两面不同时逐面恢复。
+- 既有 depth 描述符接通 stencil：8种比较、参考值、读写掩码及8种 fail/depth-fail/pass 操作；显式配置对两面相同应用，但逐面恢复调用方非对称状态。覆盖饱和/绕回、深度关闭、失败分支、显式禁用及句柄0。
+- 复用所有绘制路径的共享状态助手；不自动增加深度/模板存储。单个2D目标保留宿主已提供的 D24S8；多目标/分层目标继续遵守 color-only 合同。指南 `OPENGL_RASTER_STENCIL.md`。
+- 实际 RED `out/raster-red-run.log`；完整最终 GREEN `out/raster-complete-build.log`、`out/raster-complete-run.log`（退出0/PASS），包含所有历史套件、实际填充/线框像素与样本、超范围Z、全部模板操作/比较/掩码、双面、采样/单目标/双目标，以及真实 GL4.1 core 状态恢复和 stencil byte91。正式 D3D11 DLL 构建 `out/raster-dll-build.log` 退出0。
+
+交接检查原先只识别裸 `return native`；最后一个此类分支 Wireframe 接通 GL 后会误报0项。现同时识别 `native || GL` 的 D3D11 无条件承诺，实际检查21项；缺失 Wireframe API 金丝雀确实失败，恢复后完整检查通过（`out/raster-handover-canary.log`、`out/raster-handover-verified.log`）。
+
+PR #53独立审查确认两个Important：无模板存储时参考值查询可能夹成0，EXT_stencil_two_side活动BACK面会重定向旧式正面查询。严格驱动回归实际RED `out/raster-review-red-run.log`（六个单目标/MRT/分层参考值场景及EXT）；EXT修复还单独撤销复放RED `out/raster-ext-red-run.log`。修复通过core合法的FBO附件OBJECT_TYPE判断存储，无存储不读写模板参数；扩展按实际advertisement加载，保存/规范活动面，绘制时关闭再恢复扩展使能，保留独立EXT背面状态。完整最终证据 `out/raster-review-green-run.log`。本机AMD掩盖夹取且未声明该扩展，严格模拟覆盖驱动差异，真实GPU仍验证像素/样本/byte91；不声称运行过Mesa或原生EXT环境。
+
+API/版本保持0.5.0，无新增导出和 yy/yyp 修改。下一步核对 legacy native 包装的真实调用可达性后按整批接通；高级 GML 路径已有能力不误报为缺失。其他着色器语言、ES上下文和保留 mesh/amplification 仍需单独设计。
+
+---
+
 # 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 绘制诊断与输入生命周期完整批次
 
 > PR #51 几何/曲面细分已合并，merge `a63a3ecddda2cf66ab4949b619e6054b13e026da`，测试/批准头 `a684c8eaeeda2ccca6152982a75809fc666373af`。当前 `gl-draw-diagnostics`，持续授权整批开发/一次独立审查/功能PR合并；复用缓存与/MP8。

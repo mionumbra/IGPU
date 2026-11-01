@@ -315,7 +315,7 @@ namespace igpu
         case Capability::Timestamps:     return active_backend() != nullptr && active_backend()->timestamps();
         case Capability::OcclusionQuery: return active_backend() != nullptr && active_backend()->occlusion();
         case Capability::Fence:          return active_backend() != nullptr && active_backend()->fences();
-        case Capability::Wireframe:      return native;  // IgpuFill.Wireframe on igpu_raster_state_create
+        case Capability::Wireframe:      return native || opengl_backend();  // IgpuFill.Wireframe on igpu_raster_state_create
 
         // ---- geometry submission ----
         // The input layout and buffer APIs are implemented, so these report
