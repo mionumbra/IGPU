@@ -1,3 +1,20 @@
+# 会话交接 — 2026-11-01 — 版本0.5.0 — OpenGL 图形阶段存储输入整批
+
+> 基于已合并PR #54 `3ed96b618f98ba28af542ae349bc85bb1726d3c2` 和PR #55 `c1eb525adee433925a80ffc2897ceffdc6aff623`。本批 `gl-graphics-storage-inputs` 复用72f6缓存，顶点输入PR #56仍独立审查；持续授权覆盖整批实现、验证、独立审查及准确头合并。
+
+- 既有 igpu_storage_bind 扩至Geometry3/Hull4/Domain5，slot0..7映射SSBO32..39/40..47/48..55。保留StructuredBuffer及阶段0..2要求；高阶段逐次检查真实阶段能力、该阶段至少8个storage blocks和具体物理绑定上限。
+- 全部graphics提交路径重验Vertex/Pixel/Geometry/Hull/Domain持久storage claims；绑定后被外部映射的buffer在绘制前拒绝，计数和调用方状态保持。Compute-only claim不阻断graphics，dispatch alias规则不改。
+- 新增真实GS/TCS/TES slot0/7读取与16样本像素、原生绑定与替换、late-map、unbind/release、借用range/name/start/size/generic/byte91，以及shutdown原生删除和重新绑定。
+- 实际RED `out/storage-complete-red-run.log`同时观测高阶段被旧实现拒绝、既有Vertex七条路径及Pixel错误接受late-map。完整GREEN `out/storage-green-final-run.log`退出0/PASS。整缓冲区base binding的索引size按GL4.6 core6.7.1为0；实际buffer为16bytes，像素和借用range恢复均独立验证。
+
+指南 `OPENGL_COMPUTE.md` / `OPENGL_GRAPHICS_STAGES.md`。API/版本0.5.0、正式D3D11 DLL保持；无yy/yyp和精简GML导出改动。整批初审无Critical/Important；两个Minor测试证据改进均已落实，最终准确头的合并状态以Git为准。
+
+
+组合验证：通用顶点候选头dd7c3a9已整合，完整probe/DLL/交接 `out/storage-vertex-integrated-{build,run,dll-build,handover}.log` 均退出0。初审两项Minor已补齐：逐case打印原生限制与实际rendered/unsupported，拒绝调用前后即时比较有效SSBO索引name/start/size。最新完整 `out/storage-reviewed-run.log` 明确Geometry/Hull/Domain slot0/7共6/6 rendered、0 unsupported，结束PASS；实际4.1core与全部历史suite保持。
+
+
+---
+
 # 会话交接 — 2026-11-01 — 版本0.5.0 — OpenGL 通用顶点输入完整批次
 
 > PR #54已合并 `3ed96b618f98ba28af542ae349bc85bb1726d3c2`，批准头 `551b87049b93dac33e91f94f48fa1eff73110b30`；PR #55已合并 `c1eb525adee433925a80ffc2897ceffdc6aff623`，批准头 `b382e546c7ef7945d22a54db489ceccda4c6b538`，两者批准树与合并树均一致。本批 `gl-general-vertex-input` 基于后者测试头，复用e412缓存，沿用持续授权整批实现、真实RED/GREEN、一次独立整批审查及准确批准头合并。

@@ -1,3 +1,5 @@
+> 最新开发批次（2026-11-01）：`gl-graphics-storage-inputs` 已接通Geometry/Hull/Domain既有storage输入；每条graphics路径重验late-mapped输入，保留Compute-only claim隔离与借用SSBO恢复。真实GPU完整probe已PASS，整批审查/合并按准确批准头执行。基线PR #54/#55已合并；版本0.5.0/正式D3D11 DLL保持，无yy/yyp或导出改动。详见 `SESSION_HANDOVER.md` 顶部。
+
 > 最新开发批次（2026-11-01）：PR #53已合并 `4c197ff`；`gl-mixed-border-samplers` 接通既有描述符U/V/W混合边框模式，真实2D/3D完整探针（含硬件各向异性/逐轴非法值、全部历史/core）最终PASS，正式DLL与交接检查均退出0。最终GPU/DLL/交接证据见 `SESSION_HANDOVER.md` 顶部；独立批准头后再合并。API0.5.0与正式D3D11 DLL保持，无yy/yyp或导出改动，持续授权整批推进。
 
 > 最新开发阶段（2026-11-01）：PR #54/native默认参数与 #55/混合轴边框均已独立批准并合并主线 `c1eb525`。`gl-general-vertex-input` 已接通既有六种格式/九种语义、重排/重复输入及顶点/实例独立记录，见 `OPENGL_VERTEX_INPUTS.md` 与 `SESSION_HANDOVER.md`；兼容及真实4.1core完整GPU回归通过，提交整批独立审查后按准确头合并。API0.5.0、正式D3D11 DLL保留，无yy/yyp或导出修改。

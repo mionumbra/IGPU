@@ -357,7 +357,7 @@ namespace
             !t.rejected([&]{return dispatch(buffer,2);},"unknown write kind")||!t.rejected([&]{return dispatch(0);},"null write")||
             !t.rejected([&]{return igpu::dispatch_both(1,1,1,image,0);},"missing both buffer")||
             !t.rejected([&]{return igpu::dispatch_both(1,1,1,0,buffer);},"missing both image")||
-            !t.rejected([&]{return igpu_storage_bind(buffer,3,0);},"unsupported storage stage")||
+            !t.rejected([&]{return igpu_storage_bind(buffer,6,0);},"unsupported storage stage")||
             !t.rejected([&]{return igpu_storage_bind(buffer,2,8);},"storage slot limit")||
             !t.rejected([&]{return igpu_storage_bind(ordinary,2,0);},"non-storage input"))return false;
         if(!check(t.release_buffer(ordinary),"release guard buffer")||!t.rejected([&]{return dispatch(ordinary);},"released target"))return false;

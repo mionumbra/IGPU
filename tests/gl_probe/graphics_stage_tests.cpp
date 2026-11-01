@@ -3,6 +3,8 @@
 #include "native/gl/igpu_gl_loader.h"
 #include "native/gl/igpu_gl_draw.h"
 #include "native/gl/igpu_gl_uniform.h"
+#include "native/gl/igpu_gl_compute.h"
+#include "native/igpu_draw.h"
 #include "native/gl/igpu_gl_graphics.h"
 #include "native/igpu_capabilities.h"
 #include <array>
@@ -181,8 +183,437 @@ namespace
         std::printf("graphics patches: callerPATCH_VERTICES7, invalid counts/ranges/states, optional capability and reserved/mismatched stage guards passed\n");return true;
     }
 
+    struct StorageRange {
+        GLint name = 0;
+        std::int64_t offset = 0, size = 0;
+        void capture(GLuint slot)
+        {
+            auto& f = igpu_gl_fns();
+            f.GetIntegeri(0x90D3, slot, &name);
+            f.GetInteger64i(0x90D4, slot, &offset);
+            f.GetInteger64i(0x90D5, slot, &size);
+        }
+        void restore(GLuint slot) const
+        {
+            auto& f = igpu_gl_fns();
+            if (name && size > 0)
+                f.BindBufferRange(0x90D2, slot, name, offset, size);
+            else
+                f.BindBufferBase(0x90D2, slot, name);
+        }
+        bool operator==(const StorageRange& b) const { return name == b.name && offset == b.offset && size == b.size; }
+    };
+    struct StorageCaller {
+        GLint generic = 0, alignment = 0;
+        GLuint foreign = 0;
+        std::vector<GLuint> slots;
+        std::vector<StorageRange> original, seeded;
+        std::vector<unsigned char> sentinel;
+        explicit StorageCaller(const std::vector<GLuint>& indices) : slots(indices)
+        {
+            auto& f = igpu_gl_fns();
+            glGetIntegerv(0x90D3, &generic);
+            glGetIntegerv(0x90DF, &alignment);
+            for (auto slot : slots) {
+                StorageRange range;
+                range.capture(slot);
+                original.push_back(range);
+            }
+            f.GenBuffers(1, &foreign);
+            f.BindBuffer(0x90D2, foreign);
+            sentinel.assign(3 * alignment + 128, 91);
+            f.BufferData(0x90D2, sentinel.size(), sentinel.data(), 0x88E4);
+            for (std::size_t i = 0; i < slots.size(); ++i) {
+                f.BindBufferRange(0x90D2, slots[i], foreign, (i % 3) * alignment, 16 + (i % 2) * 16);
+                StorageRange range;
+                range.capture(slots[i]);
+                seeded.push_back(range);
+            }
+            f.BindBuffer(0x90D2, foreign);
+        }
+        ~StorageCaller()
+        {
+            auto& f = igpu_gl_fns();
+            for (std::size_t i = 0; i < slots.size(); ++i) {
+                igpu_storage_bind(0, (slots[i] - 8) / 8, (slots[i] - 8) % 8);
+                original[i].restore(slots[i]);
+            }
+            f.BindBuffer(0x90D2, generic);
+            if (foreign)
+                f.DeleteBuffers(1, &foreign);
+        }
+        bool unchanged() const
+        {
+            GLint actual = 0;
+            glGetIntegerv(0x90D3, &actual);
+            bool ok = actual == static_cast<GLint>(foreign);
+            for (std::size_t i = 0; i < slots.size(); ++i) {
+                StorageRange range;
+                range.capture(slots[i]);
+                ok = range == seeded[i] && ok;
+            }
+            return ok;
+        }
+        bool bytes() const
+        {
+            auto& f = igpu_gl_fns();
+            GLint previous = 0;
+            glGetIntegerv(0x90D3, &previous);
+            f.BindBuffer(0x90D2, foreign);
+            std::vector<unsigned char> actual(sentinel.size());
+            f.GetBufferSubData(0x90D2, 0, actual.size(), actual.data());
+            f.BindBuffer(0x90D2, previous);
+            return actual == sentinel;
+        }
+    };
+    struct StorageBuffers {
+        std::vector<Handle> handles;
+        ~StorageBuffers()
+        {
+            for (auto h : handles)
+                igpu_buffer_release(h);
+        }
+        Handle create(std::uint32_t value = 7)
+        {
+            auto h = igpu_buffer_create(16, 1, 8, 4);
+            if (h)
+                handles.push_back(h);
+            std::array<std::uint32_t, 4> values {value, value, value, value};
+            return h && igpu_buffer_write(h, 0, gm::wire::GMBuffer(values.data(), sizeof(values))) ? h : 0;
+        }
+    };
+    template<class Submit>
+    bool storage_rejected(Fixture& t, Submit submit, const char* label)
+    {
+        const auto count = igpu::draw_count(), failures = igpu::draw_restore_failures();
+        GLint generic = 0;
+        glGetIntegerv(0x90D3, &generic);
+        GLint maximum = 0;
+        glGetIntegerv(0x90DD, &maximum);
+        const auto observed = static_cast<std::size_t>(maximum < 56 ? maximum : 56);
+        std::vector<StorageRange> indexed_before(observed), indexed_after(observed);
+        for (GLuint i = 0; i < observed; ++i)
+            indexed_before[i].capture(i);
+        const bool rejected = t.rejected(submit, label);
+        GLint after = 0;
+        glGetIntegerv(0x90D3, &after);
+        for (GLuint i = 0; i < observed; ++i)
+            indexed_after[i].capture(i);
+        return check(
+            rejected && count == igpu::draw_count() && failures == igpu::draw_restore_failures() && generic == after &&
+                indexed_before == indexed_after,
+            label
+        );
+    }
+    bool storage_stage_test()
+    {
+        if (!igpu::gl_read_storage_supported())
+            return true;
+        Fixture t;
+        if (!t.initialize())
+            return false;
+        auto& f = igpu_gl_fns();
+        GLint maximum = 0;
+        glGetIntegerv(0x90DD, &maximum);
+        const GLenum fields[] = {0x90D7, 0x90D8, 0x90D9};
+        GLint limits[3] {};
+        for (int i = 0; i < 3; ++i)
+            glGetIntegerv(fields[i], &limits[i]);
+        std::vector<GLuint> slots;
+        for (int stage = 3; stage <= 5; ++stage)
+            for (int slot : {0, 7})
+                if (8 + stage * 8 + slot < maximum)
+                    slots.push_back(8 + stage * 8 + slot);
+        StorageCaller caller(slots);
+        StorageBuffers buffers;
+        const auto data = buffers.create(), replacement = buffers.create();
+        if (!check(data && replacement, "graphics storage fixtures"))
+            return false;
+        bool ok = storage_rejected(t, [&] { return igpu_storage_bind(data, -1, 0); }, "negative storage stage rejects");
+        ok = storage_rejected(
+                 t, [&] { return igpu_storage_bind(data, 3, -1); }, "negative graphics storage slot rejects"
+             )
+            && ok;
+        ok = storage_rejected(
+                 t, [&] { return igpu_storage_bind(data, 5, 8); }, "high graphics storage slot rejects"
+             )
+            && ok;
+        const auto patch = f.PatchParameteri;
+        f.PatchParameteri = nullptr;
+        for (int stage : {4, 5})
+            ok = storage_rejected(
+                     t,
+                     [&] { return igpu_storage_bind(data, stage, 0); },
+                     "missing patch support rejects tessellation storage claim"
+                 )
+                && ok;
+        ok = check(
+                 igpu::gl_read_storage_supported() && caller.unchanged(),
+                 "optional stage failure retains existing storage capability and caller ranges"
+             )
+            && ok;
+        f.PatchParameteri = patch;
+        int rendered = 0, unsupported = 0;
+        for (int stage = 3; stage <= 5; ++stage)
+            for (int slot : {0, 7}) {
+                const GLuint physical = 8 + stage * 8 + slot;
+                const bool available = igpu::gl_graphics_stage_supported(stage) && limits[stage - 3] >= 8 &&
+                    physical < static_cast<GLuint>(maximum);
+                if (!available) {
+                    ++unsupported;
+                    std::printf("graphics storage case: stage%d slot%d binding%u blocks%d global%d unsupported\n",
+                                stage, slot, physical, limits[stage - 3], maximum);
+                    ok = storage_rejected(t, [&] { return igpu_storage_bind(data, stage, slot); },
+                                          "unsupported higher storage slot rejects quietly") && ok;
+                    continue;
+                }
+                if (!check(igpu_storage_bind(data, stage, slot), "geometry/hull/domain storage input bind")) {
+                    ok = false;
+                    continue;
+                }
+                igpu::GlStorageBuffer native;
+                ok = igpu::gl_storage_buffer(data, native, "test") && ok;
+                StorageRange actual;
+                actual.capture(physical);
+                // GL4.6 core 6.7.1: base bindings report zero range size; the full buffer is used.
+                ok = check(
+                         actual.name == static_cast<GLint>(native.name) && actual.offset == 0 && actual.size == 0,
+                         "new stage physical storage binding"
+                     )
+                    && ok;
+                std::string source = stage == 3 ? gs : stage == 4 ? tc : te;
+                const std::string declaration = "layout(std430,binding=" + std::to_string(physical)
+                    + ")readonly buffer StorageData{uint storage_values[];};";
+                source.insert(source.find("void main()"), declaration);
+                if (stage == 3) {
+                    std::size_t pos = 0;
+                    while ((pos = source.find("EmitVertex();", pos)) != std::string::npos) {
+                        const std::string shift = "gl_Position.x+=float(storage_values[0])-7.0;";
+                        source.insert(pos, shift);
+                        pos += shift.size() + 12;
+                    }
+                } else if (stage == 4) {
+                    source.replace(
+                        source.find("gl_TessLevelOuter[0]=1"),
+                        std::strlen("gl_TessLevelOuter[0]=1"),
+                        "gl_TessLevelOuter[0]=float(storage_values[0])/7.0"
+                    );
+                    source.insert(
+                        source.find("if(gl_InvocationID==0)"),
+                        "gl_out[gl_InvocationID].gl_Position.x+=float(storage_values[0])-7.0;"
+                    );
+                } else
+                    source.insert(source.rfind('}'), "gl_Position.x+=float(storage_values[0])-7.0;");
+                const auto custom = t.shader(source.c_str(), stage);
+                bool pipeline = custom && igpu_shader_bind(custom, stage);
+                if (stage != 3) {
+                    const auto other = t.shader(stage == 4 ? te : tc, stage == 4 ? 5 : 4);
+                    pipeline = other && igpu_shader_bind(other, stage == 4 ? 5 : 4) && pipeline;
+                }
+                const bool pixels = pipeline && t.pixels(stage != 3, 0, stage == 3 ? 1 : 3);
+                rendered += pixels ? 1 : 0;
+                std::printf("graphics storage case: stage%d slot%d binding%u blocks%d global%d %s\n",
+                            stage, slot, physical, limits[stage - 3], maximum, pixels ? "rendered" : "failed");
+                ok = check(pixels, "higher storage shader pipeline and pixels") && ok;
+                using Map = void*(APIENTRY*)(GLenum, GLenum);
+                using Unmap = GLboolean(APIENTRY*)(GLenum);
+                const auto map = reinterpret_cast<Map>(wglGetProcAddress("glMapBuffer"));
+                const auto unmap = reinterpret_cast<Unmap>(wglGetProcAddress("glUnmapBuffer"));
+                GLint array = 0;
+                glGetIntegerv(0x8894, &array);
+                f.BindBuffer(0x8892, native.name);
+                auto pointer = map(0x8892, 0x88B8);
+                if (pointer)
+                    ok = storage_rejected(
+                             t,
+                             [&] {
+                                 return stage == 3 ? igpu_draw(t.vertex, 0, t.layout, 1, 0, 1, 1, 0, 0, 0, 0)
+                                                   : igpu_draw_patch(t.vertex, t.layout, 3, 0, 3, 0, 0, 0, 0);
+                             },
+                             "late mapped higher-stage storage input"
+                         )
+                        && ok;
+                else
+                    ok = check(false, "map higher storage") && ok;
+                if (pointer)
+                    unmap(0x8892);
+                f.BindBuffer(0x8892, array);
+                ok = check(igpu_storage_bind(replacement, stage, slot), "replace higher storage claim") && ok;
+                igpu::GlStorageBuffer replaced;
+                StorageRange replaced_range;
+                replaced_range.capture(physical);
+                ok = check(
+                         igpu::gl_storage_buffer(replacement, replaced, "test")
+                             && replaced_range.name == static_cast<GLint>(replaced.name) && replaced_range.offset == 0
+                             && replaced_range.size == 0,
+                         "replacement installs the new native storage buffer"
+                     )
+                    && ok;
+                for (int s : {3, 4, 5})
+                    igpu_shader_bind(0, s);
+                ok = check(
+                         igpu_storage_bind(0, stage, slot) && caller.unchanged() && caller.bytes() && !glGetError(),
+                         "all borrowed higher SSBO name/start/size/generic/byte91 restored"
+                     )
+                    && ok;
+            }
+        // Release the last owner while several higher-stage slots are claimed.
+        const auto released = buffers.create();
+        if (released) {
+            for (int stage = 3; stage <= 5; ++stage)
+                if (igpu::gl_graphics_stage_supported(stage) && limits[stage - 3] >= 8 && 8 + stage * 8 < maximum)
+                    ok = igpu_storage_bind(released, stage, 0) && ok;
+            ok = igpu_buffer_release(released) && caller.unchanged() && caller.bytes() && ok;
+            buffers.handles.pop_back();
+        }
+        if (ok)
+            std::printf(
+                "graphics storage: rendered=%d/6 unsupported=%d, real pixels16samples, physical bindings, late mapping, "
+                "replacement/unbind/release and borrowed ranges/byte91 passed\n", rendered, unsupported
+            );
+        return ok;
+    }
+    bool storage_late_map_test()
+    {
+        if (!igpu::gl_read_storage_supported())
+            return true;
+        Fixture t;
+        if (!t.initialize())
+            return false;
+        StorageBuffers buffers;
+        const auto storage = buffers.create();
+        if (!storage)
+            return false;
+        StorageCaller caller({8, 16, 24});
+        if (!check(igpu_storage_bind(storage, 0, 0), "vertex storage late-map fixture"))
+            return false;
+        auto& f = igpu_gl_fns();
+        igpu::GlStorageBuffer native;
+        if (!igpu::gl_storage_buffer(storage, native, "test"))
+            return false;
+        const auto index = igpu_buffer_create(6, 1, 2, 0), args = igpu_buffer_create(16, 0, 16, 0),
+                   source = igpu_texture_create(0, 1, 1, 1, 6, true, false, 1);
+        std::array<std::uint16_t, 3> indices {0, 1, 2};
+        std::array<std::uint32_t, 4> commands {3, 1, 0, 0};
+        bool ok = index && args && source
+            && igpu_buffer_write(index, 0, gm::wire::GMBuffer(indices.data(), sizeof(indices)))
+            && igpu_buffer_write(args, 0, gm::wire::GMBuffer(commands.data(), sizeof(commands)));
+        using Map = void*(APIENTRY*)(GLenum, GLenum);
+        using Unmap = GLboolean(APIENTRY*)(GLenum);
+        const auto map = reinterpret_cast<Map>(wglGetProcAddress("glMapBuffer"));
+        const auto unmap = reinterpret_cast<Unmap>(wglGetProcAddress("glUnmapBuffer"));
+        GLint array = 0;
+        glGetIntegerv(0x8894, &array);
+        f.BindBuffer(0x8892, native.name);
+        auto pointer = map(0x8892, 0x88B8);
+        if (pointer) {
+            Array target({t.target}), zero({0});
+            ok = storage_rejected(
+                     t,
+                     [&] { return igpu_draw(t.vertex, 0, t.layout, 4, 0, 3, 1, 0, 0, 0, 0); },
+                     "late mapped vertex SSBO ordinary reject"
+                 )
+                && ok;
+            ok = storage_rejected(
+                     t,
+                     [&] { return igpu_draw(t.vertex, 0, t.layout, 4, 0, 3, 2, 0, 0, 0, 0); },
+                     "late mapped vertex SSBO instanced reject"
+                 )
+                && ok;
+            ok = storage_rejected(
+                     t,
+                     [&] { return igpu_draw_indexed(t.vertex, t.layout, index, 4, 0, 3, 0, 0, 0, 0); },
+                     "late mapped vertex SSBO indexed reject"
+                 )
+                && ok;
+            ok = storage_rejected(
+                     t,
+                     [&] { return igpu_draw_indirect(t.vertex, 0, t.layout, 4, args, 0, 0, 0, 0, 0); },
+                     "late mapped vertex SSBO indirect reject"
+                 )
+                && ok;
+            ok = storage_rejected(
+                     t,
+                     [&] {
+                         return igpu_draw_to_render_targets(
+                             t.vertex, t.layout, 4, 0, 3, target.view(), zero.view(), zero.view(), 0, 0, 0, 0
+                         );
+                     },
+                     "late mapped vertex SSBO target reject"
+                 )
+                && ok;
+            const auto sampled = t.shader(
+                "#version 430\nuniform sampler2D igpu_tex;out vec4 c;void main(){c=texture(igpu_tex,vec2(.5));}", 1
+            );
+            ok = sampled && igpu_shader_bind(sampled, 1) && ok;
+            ok = storage_rejected(
+                     t,
+                     [&] { return igpu_draw_sampled(t.vertex, t.layout, 4, 0, 3, source, 0, 0, 0, 0); },
+                     "late mapped vertex SSBO sampled reject"
+                 )
+                && ok;
+            unmap(0x8892);
+        } else
+            ok = check(false, "map vertex storage") && ok;
+        f.BindBuffer(0x8892, array);
+        igpu_shader_bind(t.pshader, 1);
+        const auto hull = t.shader(tc, 4), domain = t.shader(te, 5);
+        ok = hull && domain && igpu_shader_bind(hull, 4) && igpu_shader_bind(domain, 5) && ok;
+        f.BindBuffer(0x8892, native.name);
+        pointer = map(0x8892, 0x88B8);
+        if (pointer) {
+            ok = storage_rejected(
+                     t,
+                     [&] { return igpu_draw_patch(t.vertex, t.layout, 3, 0, 3, 0, 0, 0, 0); },
+                     "late mapped vertex SSBO patch reject"
+                 )
+                && ok;
+            unmap(0x8892);
+        } else
+            ok = false;
+        f.BindBuffer(0x8892, array);
+        igpu_shader_bind(0, 4);
+        igpu_shader_bind(0, 5);
+        ok = igpu_storage_bind(0, 0, 0) && igpu_storage_bind(storage, 1, 0) && ok;
+        f.BindBuffer(0x8892, native.name);
+        pointer = map(0x8892, 0x88B8);
+        if (pointer) {
+            ok = storage_rejected(
+                     t,
+                     [&] { return igpu_draw(t.vertex, 0, t.layout, 4, 0, 3, 1, 0, 0, 0, 0); },
+                     "late mapped Pixel SSBO ordinary reject"
+                 )
+                && ok;
+            unmap(0x8892);
+        } else
+            ok = false;
+        f.BindBuffer(0x8892, array);
+        ok = igpu_storage_bind(0, 1, 0) && igpu_storage_bind(storage, 2, 0) && ok;
+        f.BindBuffer(0x8892, native.name);
+        pointer = map(0x8892, 0x88B8);
+        if (pointer) {
+            ok = t.pixels() && ok;
+            unmap(0x8892);
+        } else
+            ok = false;
+        f.BindBuffer(0x8892, array);
+        ok = igpu_storage_bind(0, 2, 0) && caller.unchanged() && caller.bytes() && ok;
+        if (index)
+            igpu_buffer_release(index);
+        if (args)
+            igpu_buffer_release(args);
+        if (source)
+            igpu_texture_release(source);
+        if (ok)
+            std::printf(
+                "graphics storage validation: late mapped Vertex input rejects "
+                "ordinary/indexed/instance/indirect/target/sample/patch without counters; mapped Compute-only input "
+                "does not block graphics\n"
+            );
+        return ok;
+    }
 }
-bool run_gl_graphics_stage_tests(){bool ok=geometry_test();ok=tessellation_test()&&ok;ok=uniform_stage_test()&&ok;ok=tessellation_uniform_test()&&ok;ok=feedback_test()&&ok;ok=transaction_test()&&ok;ok=patch_guard_test()&&ok;ok=executable_stage_test()&&ok;ok=primitive_stage_test()&&ok;return ok;}
+bool run_gl_graphics_stage_tests(){bool ok=geometry_test();ok=tessellation_test()&&ok;ok=uniform_stage_test()&&ok;ok=tessellation_uniform_test()&&ok;ok=feedback_test()&&ok;ok=transaction_test()&&ok;ok=patch_guard_test()&&ok;ok=executable_stage_test()&&ok;ok=primitive_stage_test()&&ok;ok=storage_stage_test()&&ok;ok=storage_late_map_test()&&ok;return ok;}
 
 namespace
 {
@@ -201,14 +632,37 @@ bool run_gl_graphics_stage_shutdown_tests()
     GLuint foreign=0;f.GenBuffers(1,&foreign);f.BindBuffer(0x8A11,foreign);GLint alignment=0;glGetIntegerv(0x8A34,&alignment);std::vector<unsigned char>sentinel(alignment+128,0xA6);f.BufferData(0x8A11,sentinel.size(),sentinel.data(),0x88E4);
     GLint bindings=0;glGetIntegerv(0x8A2F,&bindings);std::vector<GLuint>slots;
     for(int stage=3;stage<6;++stage)if(stage*8<bindings){const GLuint slot=stage*8;slots.push_back(slot);f.BindBufferRange(0x8A11,slot,foreign,alignment,64);ok=igpu_uniform_bind(uniform,stage,0)&&ok;}
+    GLint original_ssbo=0,storage_alignment=0,storage_maximum=0;GLuint storage_foreign=0;Handle storage=0;igpu::GlStorageBuffer storage_native;
+    std::vector<GLuint>storage_slots;std::vector<StorageRange>storage_previous;std::vector<unsigned char>storage_sentinel;
+    if(igpu::gl_read_storage_supported())
+    {
+        glGetIntegerv(0x90D3,&original_ssbo);glGetIntegerv(0x90DF,&storage_alignment);glGetIntegerv(0x90DD,&storage_maximum);
+        storage=igpu_buffer_create(16,1,8,4);ok=storage&&igpu::gl_storage_buffer(storage,storage_native,"shutdown storage")&&ok;
+        f.GenBuffers(1,&storage_foreign);f.BindBuffer(0x90D2,storage_foreign);storage_sentinel.assign(storage_alignment+128,91);f.BufferData(0x90D2,storage_sentinel.size(),storage_sentinel.data(),0x88E4);
+        const GLenum stage_fields[]={0x90D7,0x90D8,0x90D9};for(int stage=3;stage<=5;++stage)
+        {
+            GLint count=0;glGetIntegerv(stage_fields[stage-3],&count);const GLuint slot=8+stage*8;
+            if(count<8||slot>=static_cast<GLuint>(storage_maximum))continue;
+            StorageRange previous;previous.capture(slot);storage_previous.push_back(previous);storage_slots.push_back(slot);
+            f.BindBufferRange(0x90D2,slot,storage_foreign,storage_alignment,64);ok=igpu_storage_bind(storage,stage,0)&&ok;
+        }
+        f.BindBuffer(0x90D2,storage_foreign);
+    }
     if(!check(ok,"graphics shutdown fixtures"))return false;
     igpu_shutdown();ok=!igpu_is_available()&&wglGetCurrentContext()==context;
     using IsShader=GLboolean(APIENTRY*)(GLuint);using IsBuffer=GLboolean(APIENTRY*)(GLuint);const auto is_shader=reinterpret_cast<IsShader>(wglGetProcAddress("glIsShader"));const auto is_buffer=reinterpret_cast<IsBuffer>(wglGetProcAddress("glIsBuffer"));
     for(auto shader:native)ok=!is_shader(shader)&&ok;ok=!is_buffer(buffer.name)&&ok;GLint generic=0;glGetIntegerv(0x8A28,&generic);ok=generic==static_cast<GLint>(foreign)&&ok;
     for(auto slot:slots){GLint name=0;std::int64_t offset=0,size=0;f.GetIntegeri(0x8A28,slot,&name);f.GetInteger64i(0x8A29,slot,&offset);f.GetInteger64i(0x8A2A,slot,&size);ok=name==static_cast<GLint>(foreign)&&offset==alignment&&size==64&&ok;f.BindBufferBase(0x8A11,slot,0);}
+    if(storage_foreign)
+    {
+        GLint ssbo=0;glGetIntegerv(0x90D3,&ssbo);ok=ssbo==static_cast<GLint>(storage_foreign)&&!is_buffer(storage_native.name)&&ok;
+        for(std::size_t i=0;i<storage_slots.size();++i){StorageRange restored;restored.capture(storage_slots[i]);ok=restored.name==static_cast<GLint>(storage_foreign)&&restored.offset==storage_alignment&&restored.size==64&&ok;storage_previous[i].restore(storage_slots[i]);}
+        f.BindBuffer(0x90D2,storage_foreign);std::vector<unsigned char>actual(storage_sentinel.size());f.GetBufferSubData(0x90D2,0,actual.size(),actual.data());ok=actual==storage_sentinel&&ok;
+        f.BindBuffer(0x90D2,original_ssbo);f.DeleteBuffers(1,&storage_foreign);
+    }
     GLint actual_patch=0;glGetIntegerv(0x8E72,&actual_patch);
     f.BindBuffer(0x8A11,foreign);std::vector<unsigned char>actual(sentinel.size());f.GetBufferSubData(0x8A11,0,actual.size(),actual.data());ok=actual==sentinel&&actual_patch==patch&&ok;f.BindBuffer(0x8A11,original_generic);f.DeleteBuffers(1,&foreign);
     if(!check(ok&&!glGetError(),"graphics shutdown deletes native shaders/buffer and restores new stage ranges"))return false;
     if(!check(igpu_bind_current()&&igpu::supports(igpu::Capability::ShaderStageGeometry)&&igpu::supports(igpu::Capability::ShaderStageTessellation)&&!igpu_shader_bind(handles[2],3),"graphics rebind capabilities and stale handles"))return false;
-    std::printf("graphics shutdown: five graphics shaders/native UBO deleted, geometry/hull/domain ranges/caller bytes restored and rebind passed\n");return true;
+    std::printf("graphics shutdown: five graphics shaders/native UBO deleted, geometry/hull/domain UBO+SSBO ranges/caller bytes restored and rebind passed\n");return true;
 }
