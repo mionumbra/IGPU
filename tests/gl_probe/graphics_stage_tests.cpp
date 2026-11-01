@@ -288,11 +288,20 @@ namespace
         const auto count = igpu::draw_count(), failures = igpu::draw_restore_failures();
         GLint generic = 0;
         glGetIntegerv(0x90D3, &generic);
+        GLint maximum = 0;
+        glGetIntegerv(0x90DD, &maximum);
+        const auto observed = static_cast<std::size_t>(maximum < 56 ? maximum : 56);
+        std::vector<StorageRange> indexed_before(observed), indexed_after(observed);
+        for (GLuint i = 0; i < observed; ++i)
+            indexed_before[i].capture(i);
         const bool rejected = t.rejected(submit, label);
         GLint after = 0;
         glGetIntegerv(0x90D3, &after);
+        for (GLuint i = 0; i < observed; ++i)
+            indexed_after[i].capture(i);
         return check(
-            rejected && count == igpu::draw_count() && failures == igpu::draw_restore_failures() && generic == after,
+            rejected && count == igpu::draw_count() && failures == igpu::draw_restore_failures() && generic == after &&
+                indexed_before == indexed_after,
             label
         );
     }
@@ -344,18 +353,18 @@ namespace
              )
             && ok;
         f.PatchParameteri = patch;
+        int rendered = 0, unsupported = 0;
         for (int stage = 3; stage <= 5; ++stage)
             for (int slot : {0, 7}) {
                 const GLuint physical = 8 + stage * 8 + slot;
-                const bool available = limits[stage - 3] >= 8 && physical < static_cast<GLuint>(maximum);
+                const bool available = igpu::gl_graphics_stage_supported(stage) && limits[stage - 3] >= 8 &&
+                    physical < static_cast<GLuint>(maximum);
                 if (!available) {
-                    const State before;
-                    ok = check(
-                             !igpu_storage_bind(data, stage, slot) && !igpu_get_last_error().empty()
-                                 && before == State {} && !glGetError(),
-                             "unsupported higher storage slot rejects quietly"
-                         )
-                        && ok;
+                    ++unsupported;
+                    std::printf("graphics storage case: stage%d slot%d binding%u blocks%d global%d unsupported\n",
+                                stage, slot, physical, limits[stage - 3], maximum);
+                    ok = storage_rejected(t, [&] { return igpu_storage_bind(data, stage, slot); },
+                                          "unsupported higher storage slot rejects quietly") && ok;
                     continue;
                 }
                 if (!check(igpu_storage_bind(data, stage, slot), "geometry/hull/domain storage input bind")) {
@@ -401,10 +410,11 @@ namespace
                     const auto other = t.shader(stage == 4 ? te : tc, stage == 4 ? 5 : 4);
                     pipeline = other && igpu_shader_bind(other, stage == 4 ? 5 : 4) && pipeline;
                 }
-                if (pipeline)
-                    ok = t.pixels(stage != 3, 0, stage == 3 ? 1 : 3) && ok;
-                else
-                    ok = check(false, "higher storage shader pipeline") && ok;
+                const bool pixels = pipeline && t.pixels(stage != 3, 0, stage == 3 ? 1 : 3);
+                rendered += pixels ? 1 : 0;
+                std::printf("graphics storage case: stage%d slot%d binding%u blocks%d global%d %s\n",
+                            stage, slot, physical, limits[stage - 3], maximum, pixels ? "rendered" : "failed");
+                ok = check(pixels, "higher storage shader pipeline and pixels") && ok;
                 using Map = void*(APIENTRY*)(GLenum, GLenum);
                 using Unmap = GLboolean(APIENTRY*)(GLenum);
                 const auto map = reinterpret_cast<Map>(wglGetProcAddress("glMapBuffer"));
@@ -451,15 +461,15 @@ namespace
         const auto released = buffers.create();
         if (released) {
             for (int stage = 3; stage <= 5; ++stage)
-                if (limits[stage - 3] >= 8 && 8 + stage * 8 < maximum)
+                if (igpu::gl_graphics_stage_supported(stage) && limits[stage - 3] >= 8 && 8 + stage * 8 < maximum)
                     ok = igpu_storage_bind(released, stage, 0) && ok;
             ok = igpu_buffer_release(released) && caller.unchanged() && caller.bytes() && ok;
             buffers.handles.pop_back();
         }
         if (ok)
             std::printf(
-                "graphics storage: geometry/hull/domain slot0/7 real pixels16samples, physical bindings, late mapping, "
-                "replacement/unbind/release and borrowed ranges/byte91 passed\n"
+                "graphics storage: rendered=%d/6 unsupported=%d, real pixels16samples, physical bindings, late mapping, "
+                "replacement/unbind/release and borrowed ranges/byte91 passed\n", rendered, unsupported
             );
         return ok;
     }

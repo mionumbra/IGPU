@@ -2,11 +2,11 @@
 
 The real WGL probe now supports native GLSL geometry, hull and domain shaders through the existing IGPU 0.5.0 APIs. Hull maps to tessellation control (TCS); domain maps to tessellation evaluation (TES). The formal Windows GameMaker DLL remains D3D11. Public API/version and generated GameMaker resources are unchanged.
 
-| Public stage | Native GLSL stage | UBO namespace |
-| --- | --- | --- |
-| Geometry 3 | geometry shader | 24..31 |
-| Hull 4 | tessellation control shader | 32..39 |
-| Domain 5 | tessellation evaluation shader | 40..47 |
+| Public stage | Native GLSL stage | UBO namespace | SSBO input namespace |
+| --- | --- | --- | --- |
+| Geometry 3 | geometry shader | 24..31 | 32..39 |
+| Hull 4 | tessellation control shader | 32..39 | 40..47 |
+| Domain 5 | tessellation evaluation shader | 40..47 | 48..55 |
 
 ## Compilation and graphics binding
 
