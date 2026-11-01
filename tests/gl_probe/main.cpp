@@ -9,6 +9,7 @@
 #include "layered_texture_tests.h"
 #include "graphics_stage_tests.h"
 #include "diagnostics_tests.h"
+#include "raster_stencil_tests.h"
 #include "query_shutdown_tests.h"
 
 #include "IGPU_native.h"
@@ -4672,15 +4673,15 @@ int main()
     {
         return fail("an unknown cull mode was accepted");
     }
-    if (igpu_raster_state_create(0, 1, false, true) != 0 ||
-        std::string(igpu_get_last_error()).find("solid") == std::string::npos)
+    if (igpu_raster_state_create(0, 2, false, true) != 0 ||
+        std::string(igpu_get_last_error()).find("fill") == std::string::npos)
     {
-        return fail("wireframe fill was accepted");
+        return fail("an unknown fill mode was accepted");
     }
-    if (igpu_raster_state_create(0, 0, false, false) != 0 ||
-        std::string(igpu_get_last_error()).find("depth clip") == std::string::npos)
+    if (igpu_raster_state_create(0, -1, false, true) != 0 ||
+        std::string(igpu_get_last_error()).find("fill") == std::string::npos)
     {
-        return fail("disabled depth clip was accepted");
+        return fail("a negative fill mode was accepted");
     }
     const float cull_ccw_vertices[] = {-1.f, -1.f, 0.f, -1.f, -1.f, 1.f};
     const float cull_cw_vertices[] = {0.f, -1.f, -1.f, -1.f, -1.f, 1.f};
@@ -4848,7 +4849,7 @@ int main()
         return fail("a released raster handle changed pixels");
     }
     if (!igpu_supports(static_cast<std::int32_t>(igpu::Capability::RasterState)) ||
-        igpu_supports(static_cast<std::int32_t>(igpu::Capability::Wireframe)))
+        !igpu_supports(static_cast<std::int32_t>(igpu::Capability::Wireframe)))
     {
         return fail("RasterState or Wireframe has the wrong value on the OpenGL backend");
     }
@@ -5073,10 +5074,10 @@ int main()
     {
         return fail("stencil ref outside 0..255 was accepted");
     }
-    if (igpu_depth_state_create(true, true, 2, true, 8, 1, 1, 1, 0, 255, 255) != 0 ||
+    if (igpu_depth_state_create(true, true, 2, true, 8, 0, 1, 1, 0, 255, 255) != 0 ||
         std::string(igpu_get_last_error()).find("stencil") == std::string::npos)
     {
-        return fail("stencil was enabled");
+        return fail("an unknown stencil operation was accepted");
     }
 
     const char* depth_near_vs =
@@ -5784,6 +5785,11 @@ int main()
     if (!run_gl_graphics_stage_tests())
     {
         return fail("geometry and tessellation suite failed");
+    }
+
+    if (!run_gl_raster_stencil_tests())
+    {
+        return fail("raster and stencil state suite failed");
     }
 
     if (!run_gl_diagnostics_tests())
