@@ -175,6 +175,106 @@ namespace
         if(!check(!invalid&&error&&!native_error&&rejected_before==NativeState{},"late invalid blend does not apply raster state"))return false;
         std::printf("raster states: real wireframe/fill pixels, asymmetric modes, depthclip/clamp and handle0 native restoration passed\n");return true;
     }
+    enum class StrictMode { ColorOnly, Extension };
+    StrictMode strict_mode = StrictMode::ColorOnly;
+    decltype(&glGetIntegerv) original_query = nullptr;
+    decltype(&glIsEnabled) original_enabled = nullptr;
+    decltype(&glEnable) original_enable = nullptr;
+    decltype(&glDisable) original_disable = nullptr;
+    IgpuGlDrawArraysInstanced original_instances = nullptr;
+    GLenum active_stencil_face = GL_BACK;
+    bool extension_enabled = true, extension_seen_during_draw = true;
+    void APIENTRY strict_query(GLenum field, GLint* value)
+    {
+        if (strict_mode == StrictMode::Extension)
+        {
+            if (field == 0x8911) { *value = static_cast<GLint>(active_stencil_face); return; }
+            if (active_stencil_face == GL_BACK)
+            {
+                const GLenum names[] = {0x0B92,0x0B97,0x0B93,0x0B98,0x0B94,0x0B95,0x0B96};
+                const GLint values[] = {GL_ALWAYS,37,0x6F,0x39,GL_KEEP,GL_INCR,GL_REPLACE};
+                for (int i=0;i<7;++i) if(field==names[i]) { *value=values[i];return; }
+            }
+        }
+        original_query(field,value);
+        if (strict_mode == StrictMode::ColorOnly && (field==0x0B97 || field==0x8CA3))
+        {
+            GLint bits=0;glGetIntegerv(GL_STENCIL_BITS,&bits);
+            if(!bits)*value=0;
+        }
+    }
+    GLboolean APIENTRY strict_enabled(GLenum capability)
+    { return capability==0x8910 ? (extension_enabled?GL_TRUE:GL_FALSE) : original_enabled(capability); }
+    void APIENTRY strict_enable(GLenum capability)
+    { if(capability==0x8910)extension_enabled=true;else original_enable(capability); }
+    void APIENTRY strict_disable(GLenum capability)
+    { if(capability==0x8910)extension_enabled=false;else original_disable(capability); }
+    void APIENTRY strict_face(GLenum face) { active_stencil_face=face; }
+    void APIENTRY strict_instances(GLenum primitive,GLint first,GLsizei count,GLsizei instances)
+    {
+        extension_seen_during_draw=extension_enabled;
+        original_instances(primitive,first,count,instances);
+    }
+    struct StrictDriver
+    {
+        decltype(igpu_gl_fns().ActiveStencilFaceEXT) saved_face;
+        explicit StrictDriver(StrictMode mode):saved_face(igpu_gl_fns().ActiveStencilFaceEXT)
+        {
+            auto&f=igpu_gl_fns();strict_mode=mode;original_query=f.GetIntegerv;f.GetIntegerv=strict_query;
+            original_enabled=f.IsEnabled;original_enable=f.Enable;original_disable=f.Disable;original_instances=f.DrawArraysInstanced;
+            if(mode==StrictMode::Extension)
+            {
+                active_stencil_face=GL_BACK;extension_enabled=true;extension_seen_during_draw=true;
+                f.ActiveStencilFaceEXT=strict_face;f.IsEnabled=strict_enabled;f.Enable=strict_enable;f.Disable=strict_disable;
+                f.DrawArraysInstanced=strict_instances;
+            }
+        }
+        ~StrictDriver()
+        {
+            auto&f=igpu_gl_fns();f.GetIntegerv=original_query;f.ActiveStencilFaceEXT=saved_face;
+            f.IsEnabled=original_enabled;f.Enable=original_enable;f.Disable=original_disable;f.DrawArraysInstanced=original_instances;
+        }
+    };
+    bool strict_stencil_driver(Fixture&x,Handle both,Handle disabled)
+    {
+        struct Owned {Handle value;~Owned(){if(value)igpu_texture_release(value);}};
+        Owned layered{static_cast<Handle>(igpu_texture_create(2,16,16,2,6,true,false,1))};
+        if(!check(layered.value!=0,"strict layered target"))return false;
+        Array single{x.source},multiple{x.target,x.source},volume{layered.value},zero{0},one{1},zeros{0,0};
+        bool ok=true;
+        for(auto state:{disabled,both})for(int family=0;family<3;++family)
+        {
+            x.clear();x.caller_stencil(); // Prime references immediately before each FBO switch.
+            const StrictDriver driver(StrictMode::ColorOnly);
+            const auto result=x.measure([&]{
+                if(family==0)return igpu_draw_to_render_targets(x.vertex,x.layout,4,0,3,single.view(),zero.view(),zero.view(),0,state,0,0);
+                if(family==1)return igpu_draw_to_render_targets(x.vertex,x.layout,4,0,3,multiple.view(),zeros.view(),zeros.view(),0,state,0,0);
+                return igpu_draw_to_render_targets(x.vertex,x.layout,4,0,3,volume.view(),one.view(),zero.view(),0,state,0,0);
+            });
+            const Handle texture=family==0?x.source:family==1?x.target:layered.value;
+            ok=check(result.accepted&&result.restored&&!result.error&&result.samples==256&&
+                igpu_texture_read(texture,8,8,family==2?1:0,0)==65280,
+                "strict zero-stencil-bit query preserves freshly primed front17/back29 across single/MRT/layered")&&ok;
+        }
+        for(bool was_enabled:{false,true})for(GLenum face:{GL_FRONT,GL_BACK})
+        {
+            x.clear();x.caller_stencil();
+            const StrictDriver driver(StrictMode::Extension);
+            extension_enabled=was_enabled;active_stencil_face=face;
+            const auto result=x.measure([&]{return x.draw(both,0,2);});
+            const auto stencil_value=x.stencil();
+            if(!result.accepted||!result.restored||result.error||result.samples!=512||stencil_value!=91||
+                active_stencil_face!=face||extension_enabled!=was_enabled||extension_seen_during_draw)
+                std::fprintf(stderr,"strict EXT actual: accepted%d restored%d error%u samples%lld stencil%u face%x enabled%d during%d\n",
+                    result.accepted,result.restored,result.error,static_cast<long long>(result.samples),stencil_value,
+                    active_stencil_face,extension_enabled,extension_seen_during_draw);
+            ok=check(result.accepted&&result.restored&&!result.error&&result.samples==512&&stencil_value==91&&
+                active_stencil_face==face&&extension_enabled==was_enabled&&!extension_seen_during_draw,
+                "strict EXT back selector/query redirection retains independent core faces and extension enable")&&ok;
+        }
+        if(ok)std::printf("stencil strict drivers: color-only single/MRT/layered refs17/29, EXT back selector/state and real byte91 passed\n");
+        return ok;
+    }
     bool stencil_test()
     {
         Fixture x;if(!x.initialize())return false;x.caller_stencil();
@@ -219,6 +319,7 @@ namespace
         const auto colors=x.measure([&]{return igpu_draw_to_render_targets(x.vertex,x.layout,4,0,3,multiple.view(),layers.view(),mips.view(),0,disabled,0,0);});
         if(!check(colors.accepted&&colors.restored&&!colors.error&&colors.pixel==65280&&colors.samples==256&&igpu_texture_read(x.source,8,8,0,0)==16711680,
             "color-only MRT retains asymmetric caller stencil state and actual colors"))return false;
+        if(!strict_stencil_driver(x,both,disabled))return false;
         const auto rejected_before=NativeState{};
         const bool invalid=igpu_draw(x.vertex,0,x.layout,4,0,3,1,-1,both,0,0);
         const bool error=!igpu_get_last_error().empty();const auto native_error=glGetError();

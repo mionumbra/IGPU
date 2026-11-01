@@ -515,7 +515,7 @@ namespace igpu
             const GLenum reverse[] = {0x8800,0x8CA3,0x8CA4,0x8CA5,0x8801,0x8802,0x8803};
             const auto* fields = back ? reverse : front;
             GLint* values[] = {&saved.function,&saved.reference,&saved.read_mask,&saved.write_mask,&saved.fail,&saved.depth_fail,&saved.pass};
-            for (int i = 0; i < 7; ++i) glGetIntegerv(fields[i], values[i]);
+            for (int i = 0; i < 7; ++i) igpu_gl_fns().GetIntegerv(fields[i], values[i]);
         }
         void restore_stencil_face(const SavedStencilFace& saved, GLenum face)
         {
@@ -530,51 +530,75 @@ namespace igpu
             GLint func = GL_LESS;
             GLboolean mask = GL_TRUE;
             GLboolean stencil = GL_FALSE;
+            bool stencil_storage = false;
+            bool two_side_extension = false;
+            GLint active_face = GL_FRONT;
+            GLboolean two_side_enabled = GL_FALSE;
             SavedStencilFace front, back;
         };
 
         void save_depth(SavedDepth& saved)
         {
+            auto& f = igpu_gl_fns();
             saved.enabled = glIsEnabled(GL_DEPTH_TEST);
             glGetIntegerv(GL_DEPTH_FUNC, &saved.func);
             glGetBooleanv(GL_DEPTH_WRITEMASK, &saved.mask);
             saved.stencil = glIsEnabled(GL_STENCIL_TEST);
-            save_stencil_face(saved.front, false); save_stencil_face(saved.back, true);
+            GLint framebuffer = 0, attachment = GL_NONE;
+            f.GetIntegerv(0x8CA6 /* DRAW_FRAMEBUFFER_BINDING */, &framebuffer);
+            f.GetFramebufferAttachmentParameteriv(0x8CA9 /* DRAW_FRAMEBUFFER */,
+                framebuffer ? 0x8D20 /* STENCIL_ATTACHMENT */ : 0x1802 /* STENCIL */,
+                0x8CD0 /* FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE */, &attachment);
+            saved.stencil_storage = attachment != GL_NONE;
+            saved.two_side_extension = f.ActiveStencilFaceEXT != nullptr;
+            if (saved.two_side_extension)
+            {
+                f.GetIntegerv(0x8911 /* ACTIVE_STENCIL_FACE_EXT */, &saved.active_face);
+                saved.two_side_enabled = f.IsEnabled(0x8910 /* STENCIL_TEST_TWO_SIDE_EXT */);
+                // Legacy STENCIL_* queries follow the EXT selector. Core back
+                // queries have their own names and remain independent.
+                if (saved.stencil_storage) f.ActiveStencilFaceEXT(GL_FRONT);
+            }
+            // Reference queries are clamped to the current stencil-buffer width.
+            // With no storage they cannot recover the caller's reference values.
+            if (saved.stencil_storage)
+            {
+                save_stencil_face(saved.front, false); save_stencil_face(saved.back, true);
+            }
         }
 
-        void apply_depth(const DepthObject& depth)
+        void apply_depth(const DepthObject& depth, const SavedDepth& saved)
         {
-            if (depth.test)
-            {
-                glEnable(GL_DEPTH_TEST);
-            }
-            else
-            {
-                glDisable(GL_DEPTH_TEST);
-            }
+            if (depth.test) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
             glDepthFunc(depth.func);
             glDepthMask(depth.write ? GL_TRUE : GL_FALSE);
             if (depth.stencil) glEnable(GL_STENCIL_TEST); else glDisable(GL_STENCIL_TEST);
             auto& f = igpu_gl_fns();
-            f.StencilFuncSeparate(GL_FRONT_AND_BACK, depth.stencil_func, depth.stencil_ref, depth.read_mask);
-            f.StencilMaskSeparate(GL_FRONT_AND_BACK, depth.write_mask);
-            f.StencilOpSeparate(GL_FRONT_AND_BACK, depth.fail, depth.depth_fail, depth.pass);
+            if (saved.two_side_extension) f.Disable(0x8910 /* STENCIL_TEST_TWO_SIDE_EXT */);
+            if (saved.stencil_storage)
+            {
+                f.StencilFuncSeparate(GL_FRONT_AND_BACK, depth.stencil_func, depth.stencil_ref, depth.read_mask);
+                f.StencilMaskSeparate(GL_FRONT_AND_BACK, depth.write_mask);
+                f.StencilOpSeparate(GL_FRONT_AND_BACK, depth.fail, depth.depth_fail, depth.pass);
+            }
         }
 
         void restore_depth(const SavedDepth& saved)
         {
-            restore_stencil_face(saved.front, GL_FRONT); restore_stencil_face(saved.back, GL_BACK);
+            auto& f = igpu_gl_fns();
+            if (saved.stencil_storage)
+            {
+                restore_stencil_face(saved.front, GL_FRONT); restore_stencil_face(saved.back, GL_BACK);
+            }
+            if (saved.two_side_extension)
+            {
+                f.ActiveStencilFaceEXT(static_cast<GLenum>(saved.active_face));
+                if (saved.two_side_enabled) f.Enable(0x8910); else f.Disable(0x8910);
+            }
             if (saved.stencil) glEnable(GL_STENCIL_TEST); else glDisable(GL_STENCIL_TEST);
             glDepthFunc(static_cast<GLenum>(saved.func));
             glDepthMask(saved.mask);
-            if (saved.enabled == GL_TRUE)
-            {
-                glEnable(GL_DEPTH_TEST);
-            }
-            else
-            {
-                glDisable(GL_DEPTH_TEST);
-            }
+            if (saved.enabled == GL_TRUE) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
         }
 
         bool gl_draw_accepted(const char* entry, std::int32_t primitive, std::int64_t blend_state,
@@ -1126,7 +1150,7 @@ namespace igpu
         if (depth != nullptr)
         {
             save_depth(saved_depth);
-            apply_depth(*depth);
+            apply_depth(*depth, saved_depth);
         }
         if (raster != nullptr)
         {
@@ -1275,7 +1299,7 @@ namespace igpu
             SavedDepth saved_depth{};
             SavedCull saved_cull{};
             if (blend) { save_blend(saved_blend); apply_blend(*blend); }
-            if (depth) { save_depth(saved_depth); apply_depth(*depth); }
+            if (depth) { save_depth(saved_depth); apply_depth(*depth, saved_depth); }
             if (raster) { save_cull(saved_cull); apply_cull(*raster); }
             if (!draw.indirect)
                 f.DrawArraysInstanced(mode, static_cast<GLint>(draw.first), static_cast<GLsizei>(draw.count),
@@ -1406,7 +1430,7 @@ namespace igpu
         if (depth != nullptr)
         {
             save_depth(saved_depth);
-            apply_depth(*depth);
+            apply_depth(*depth, saved_depth);
         }
         if (raster != nullptr)
         {
@@ -1707,7 +1731,7 @@ namespace igpu
         if (depth != nullptr)
         {
             save_depth(saved_depth);
-            apply_depth(*depth);
+            apply_depth(*depth, saved_depth);
         }
         if (raster != nullptr)
         {

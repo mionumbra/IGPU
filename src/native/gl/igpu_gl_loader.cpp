@@ -104,6 +104,7 @@ namespace igpu
         LOAD(FramebufferTexture2D, "glFramebufferTexture2D")
         LOAD(DeleteFramebuffers, "glDeleteFramebuffers")
         LOAD(CheckFramebufferStatus, "glCheckFramebufferStatus")
+        LOAD(GetFramebufferAttachmentParameteriv, "glGetFramebufferAttachmentParameteriv")
         LOAD(EnableVertexAttribArray, "glEnableVertexAttribArray")
         LOAD(DisableVertexAttribArray, "glDisableVertexAttribArray")
         LOAD(GetVertexAttribiv, "glGetVertexAttribiv")
@@ -127,6 +128,18 @@ namespace igpu
         LOAD(RenderbufferStorage, "glRenderbufferStorage")
         LOAD(FramebufferRenderbuffer, "glFramebufferRenderbuffer")
 #undef LOAD
+        // This extension has state independent from the core separate-face API.
+        // An exported address alone does not establish extension support.
+        fns.ActiveStencilFaceEXT = nullptr;
+        if (gl_context_extension("GL_EXT_stencil_two_side"))
+        {
+            fns.ActiveStencilFaceEXT = reinterpret_cast<decltype(fns.ActiveStencilFaceEXT)>(optional_proc("glActiveStencilFaceEXT"));
+            if (!fns.ActiveStencilFaceEXT)
+            {
+                set_last_error("igpu_bind_current: advertised stencil-two-side extension is missing glActiveStencilFaceEXT");
+                return false;
+            }
+        }
         // Optional entrypoints gate only their individual capability families.
 #define LOAD_OPTIONAL(field, symbol) \
         fns.field = reinterpret_cast<decltype(fns.field)>(optional_proc(symbol));
