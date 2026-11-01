@@ -1,3 +1,16 @@
+# 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 绘制诊断与输入生命周期完整批次
+
+> PR #51 几何/曲面细分已合并，merge `a63a3ecddda2cf66ab4949b619e6054b13e026da`，测试/批准头 `a684c8eaeeda2ccca6152982a75809fc666373af`。当前 `gl-draw-diagnostics`，持续授权整批开发/一次独立审查/功能PR合并；复用缓存与/MP8。
+
+- 接通既有native `igpu_draw.h`诊断facade：接受的一次普通/索引/实例/两种间接/patch/MRT/采样提交只计1次；内部比较镜像、查询和计算不计数。计数按进程累积、int32饱和，无active backend时公共facade返回0；重绑GL恢复既有总数。精简GML0.5未导出这些legacy诊断，本批不增加导出、不手改生成文件。
+- 所有10个已实现backend绘制边界保存实际native输入状态并返回后核对VAO、ARRAY/ELEMENT/支持的INDIRECT、属性0/1格式/指针/来源/开关及实际context支持的integer/divisor/long字段；一次提交任一差异只增1个restore failure，不清GLerror或覆盖提交诊断。
+- 顶点绑定查询读取当前VAO属性0来源，不能猜generic ARRAY_BUFFER；未知/释放/错误角色静默false。shutdown删除owned private drawVAO，缓冲句柄不再重置以防旧句柄误认新对象；保持foreign VAO/buffer/bytes及借用上下文。
+- 真实RED依次为 `out/diagnostics-red-run.log`（旧查询stub）、`out/diagnostics-lifetime-red-run.log`（VAO泄漏）、`out/diagnostics-identity-red-run.log`（重绑句柄别名）。扩展GREEN覆盖真实像素/16样本、两实例32样本、全部提交族、镜像/计算排除、VAO/divisor/format/indirect实际破坏、已有GLerror及生命周期；最终完整记录 `out/diagnostics-complete-run.log`。指南 `OPENGL_DRAW_DIAGNOSTICS.md`。
+
+正式Windows DLL保持D3D11、API/版本0.5.0，无yy/yyp改动。下一批优先线框/深度夹取光栅与stencil等实际缺口；旧包装中已有高级路径的入口单独核对，避免误报为缺功能。
+
+---
+
 # 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 几何与曲面细分完整批次
 
 > 先读本节。PR #50 三维/数组/立方纹理已合并，合并提交 `832641a1b775af8e00a62a378a05108ad8fc8edc`，测试/批准头 `f2f48748047f0fa0036e4aaf9014397896ee9703`。当前分支 `gl-geometry-tessellation`；按持续授权整批开发、验证、一次独立审查及PR合并，不重复询问。

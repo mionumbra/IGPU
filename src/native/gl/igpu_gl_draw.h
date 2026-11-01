@@ -23,6 +23,7 @@ namespace igpu
     bool gl_buffer_resize(std::uint64_t buffer, std::int64_t size);
     bool gl_buffer_read(std::uint64_t buffer, std::int64_t offset, const gm::wire::GMBuffer& dest);
     std::int64_t gl_buffer_size(std::uint64_t buffer);
+    bool gl_is_vertex_buffer_bound(std::uint64_t buffer);
     bool gl_buffer_release(std::uint64_t buffer);
 
     std::int64_t gl_input_layout_create(std::int64_t shader, const gm::wire::GMArrayView& usage,

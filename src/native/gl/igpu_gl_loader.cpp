@@ -95,6 +95,8 @@ namespace igpu
         LOAD(CheckFramebufferStatus, "glCheckFramebufferStatus")
         LOAD(EnableVertexAttribArray, "glEnableVertexAttribArray")
         LOAD(DisableVertexAttribArray, "glDisableVertexAttribArray")
+        LOAD(GetVertexAttribiv, "glGetVertexAttribiv")
+        LOAD(GetVertexAttribPointerv, "glGetVertexAttribPointerv")
         LOAD(VertexAttribPointer, "glVertexAttribPointer")
         LOAD(GenVertexArrays, "glGenVertexArrays")
         LOAD(DeleteVertexArrays, "glDeleteVertexArrays")

@@ -4,6 +4,7 @@
 #include "igpu_device.h"
 #include "igpu_error.h"
 #include "igpu_gl_draw.h"
+#include "igpu_gl_diagnostics.h"
 #include "igpu_gl_compute.h"
 #include "igpu_gl_uniform.h"
 #include "igpu_gl_targets.h"
@@ -87,49 +88,49 @@ namespace igpu
                       std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
                       std::int64_t sampler_state) override
             {
-                return gl_draw(vertex_buffer, layout, primitive, first_vertex, vertex_count,
-                               blend_state, depth_state, raster_state, sampler_state);
+                return gl_diagnostic_submit([&]{ return gl_draw(vertex_buffer, layout, primitive, first_vertex, vertex_count,
+                               blend_state, depth_state, raster_state, sampler_state); });
             }
             bool draw_instanced(std::uint64_t vertex, std::uint64_t instances, std::uint64_t layout,
                                 std::int32_t primitive, std::int64_t first, std::int64_t count,
                                 std::int64_t instance_count, std::int64_t blend, std::int64_t depth,
                                 std::int64_t raster, std::int64_t sampler) override
             {
-                return gl_draw_instanced(vertex, instances, layout, primitive, first, count, instance_count,
-                                         blend, depth, raster, sampler);
+                return gl_diagnostic_submit([&]{ return gl_draw_instanced(vertex, instances, layout, primitive, first, count, instance_count,
+                                         blend, depth, raster, sampler); });
             }
             bool draw_indirect(std::uint64_t vertex, std::uint64_t instances, std::uint64_t layout,
                                std::int32_t primitive, std::uint64_t args, std::int64_t offset,
                                std::int64_t blend, std::int64_t depth, std::int64_t raster, std::int64_t sampler) override
             {
-                return gl_draw_indirect_record(vertex, instances, layout, 0, false, primitive, args, offset,
-                                               blend, depth, raster, sampler);
+                return gl_diagnostic_submit([&]{ return gl_draw_indirect_record(vertex, instances, layout, 0, false, primitive, args, offset,
+                                               blend, depth, raster, sampler); });
             }
             bool draw_patch(std::uint64_t vertex,std::uint64_t layout,std::int32_t points,std::int64_t first,std::int64_t count,
                             std::int64_t blend,std::int64_t depth,std::int64_t raster,std::int64_t sampler) override
             {
                 if(!bound.count(4)||!bound.count(5)){set_last_error("igpu_draw_patch: bind a hull and a domain shader first");return false;}
-                return gl_draw_patch(vertex,layout,points,first,count,blend,depth,raster,sampler);
+                return gl_diagnostic_submit([&]{ return gl_draw_patch(vertex,layout,points,first,count,blend,depth,raster,sampler); });
             }
             bool draw_indexed_indirect(std::uint64_t vertex, std::uint64_t instances, std::uint64_t layout,
                                        std::uint64_t index, std::int32_t primitive, std::uint64_t args,
                                        std::int64_t offset, std::int64_t blend, std::int64_t depth,
                                        std::int64_t raster, std::int64_t sampler) override
             {
-                return gl_draw_indirect_record(vertex, instances, layout, index, true, primitive, args, offset,
-                                               blend, depth, raster, sampler);
+                return gl_diagnostic_submit([&]{ return gl_draw_indirect_record(vertex, instances, layout, index, true, primitive, args, offset,
+                                               blend, depth, raster, sampler); });
             }
             bool draw_indexed(std::uint64_t vertex_buffer, std::uint64_t layout, std::uint64_t index_buffer,
                               std::int32_t primitive, std::int64_t first_index, std::int64_t index_count,
                               std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
                               std::int64_t sampler_state) override
             {
-                return gl_draw_indexed(vertex_buffer, layout, index_buffer, primitive, first_index, index_count,
-                                       blend_state, depth_state, raster_state, sampler_state);
+                return gl_diagnostic_submit([&]{ return gl_draw_indexed(vertex_buffer, layout, index_buffer, primitive, first_index, index_count,
+                                       blend_state, depth_state, raster_state, sampler_state); });
             }
-            std::int32_t draw_count() override { not_yet("igpu_get_draw_count"); return 0; }
-            std::int32_t draw_restore_failures() override { not_yet("igpu_get_draw_restore_failures"); return 0; }
-            bool is_vertex_buffer_bound(std::uint64_t) override { return not_yet("igpu_is_vertex_buffer_bound"); }
+            std::int32_t draw_count() override { return gl_diagnostic_draw_count(); }
+            std::int32_t draw_restore_failures() override { return gl_diagnostic_restore_failures(); }
+            bool is_vertex_buffer_bound(std::uint64_t buffer) override { return gl_is_vertex_buffer_bound(buffer); }
 
             std::int64_t blend_state_create(bool enabled, std::int32_t src, std::int32_t dest, std::int32_t equation,
                                             std::int32_t src_alpha, std::int32_t dest_alpha, std::int32_t equation_alpha,
@@ -318,10 +319,10 @@ namespace igpu
                                  const gm::wire::GMArrayView& kinds, const gm::wire::GMArrayView& targets) override
             { return gl_dispatch_storage(compute_program, x, y, z, kinds, targets); }
             bool draw_to_render_targets(std::uint64_t vertex,std::uint64_t layout,std::int32_t primitive,std::int64_t first,std::int64_t count,const gm::wire::GMArrayView&targets) override
-            {return gl_draw_targets(vertex,layout,primitive,first,count,targets,nullptr,nullptr);}
+            {return gl_diagnostic_submit([&]{ return gl_draw_targets(vertex,layout,primitive,first,count,targets,nullptr,nullptr); });}
             bool draw_to_render_targets_level(std::uint64_t vertex,std::uint64_t layout,std::int32_t primitive,std::int64_t first,std::int64_t count,
                                               const gm::wire::GMArrayView&targets,const gm::wire::GMArrayView&mips) override
-            {return gl_draw_targets(vertex,layout,primitive,first,count,targets,nullptr,&mips);}
+            {return gl_diagnostic_submit([&]{ return gl_draw_targets(vertex,layout,primitive,first,count,targets,nullptr,&mips); });}
             bool draw_to_render_targets_layer(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                                               std::int64_t first_vertex, std::int64_t vertex_count,
                                               const gm::wire::GMArrayView& targets, const gm::wire::GMArrayView& layers,
@@ -329,17 +330,17 @@ namespace igpu
                                               std::int64_t depth_state, std::int64_t raster_state,
                                               std::int64_t sampler_state) override
             {
-                return gl_draw_to_render_targets_layer(
+                return gl_diagnostic_submit([&]{ return gl_draw_to_render_targets_layer(
                     vertex_buffer, layout, primitive, first_vertex, vertex_count, targets, layers, mips, blend_state,
-                    depth_state, raster_state, sampler_state);
+                    depth_state, raster_state, sampler_state); });
             }
             bool draw_sampled(std::uint64_t vertex_buffer, std::uint64_t layout, std::int32_t primitive,
                               std::int64_t first_vertex, std::int64_t vertex_count, std::uint64_t texture,
                               std::int64_t blend_state, std::int64_t depth_state, std::int64_t raster_state,
                               std::int64_t sampler_state) override
             {
-                return gl_draw_sampled(vertex_buffer, layout, primitive, first_vertex, vertex_count, texture,
-                                       blend_state, depth_state, raster_state, sampler_state);
+                return gl_diagnostic_submit([&]{ return gl_draw_sampled(vertex_buffer, layout, primitive, first_vertex, vertex_count, texture,
+                                       blend_state, depth_state, raster_state, sampler_state); });
             }
 
             bool reflect_uniforms(const void*, std::size_t, UniformLayout& out) override

@@ -8,6 +8,7 @@
 #include "target_tests.h"
 #include "layered_texture_tests.h"
 #include "graphics_stage_tests.h"
+#include "diagnostics_tests.h"
 #include "query_shutdown_tests.h"
 
 #include "IGPU_native.h"
@@ -5785,6 +5786,11 @@ int main()
         return fail("geometry and tessellation suite failed");
     }
 
+    if (!run_gl_diagnostics_tests())
+    {
+        return fail("draw diagnostics suite failed");
+    }
+
     if (!run_gl_instanced_tests())
     {
         return fail("instanced and indirect draw suite failed");
@@ -5818,6 +5824,11 @@ int main()
     if (!run_gl_graphics_stage_shutdown_tests())
     {
         return fail("graphics stage shutdown suite failed");
+    }
+
+    if (!run_gl_diagnostics_shutdown_tests())
+    {
+        return fail("draw diagnostics shutdown suite failed");
     }
 
     void* context = gl_probe_context();
