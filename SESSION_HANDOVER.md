@@ -1,3 +1,15 @@
+# 会话交接 — 2026-11-01 — 版本0.5.0 — OpenGL 混合边框采样器完整批次
+
+> PR #53光栅/模板已合并 `4c197ff810c18c70c8528ec5806033be908b18fc`，批准头 `b618f979ec7206fd48d70197c54077b8d2d00a26`，树一致。本批 `gl-mixed-border-samplers` 基于native包装PR #54头 `eb484fbda8ad84ba189f294be15de703a0ca9b6d`；准备时该PR在独立审查中。复用e412构建缓存，按持续授权整批实现、验证、一次独立审查、功能PR及准确头合并。
+
+- 既有全采样器描述符/native边框便利入口支持U/V/W各自 Clamp/Repeat/Mirror/Border；规范构造器逐轴验证0..3并保存实际模式，绘制以任一轴Border决定边框色应用和恢复。无颜色入口仍拒绝Border，比较采样器仍拒绝Border，不增加API/导出/能力键。
+- 实际3D RED `out/mixed-border-red-run.log`，为到达后续2D套件临时绕过已验证3D失败后的独立2D RED `out/mixed-border-2d-red-run.log`，然后恢复完整源码。旧main中两个“混用不支持”负例改为真正非法mode4，保留不消耗句柄的检查。
+- 首次完整GREEN `out/mixed-border-green-run.log`（退出0/PASS）：公开/native三条构造路径、U/V/W组合、clamp/repeat/mirror保持、线性边缘混色、mip/range，真实3D W正负越界/内部切片/线性边缘16样本，以及原生参数与调用方状态恢复。补齐可用硬件各向异性V-only Border及每轴-1/4校验后的最终完整 `out/mixed-border-complete-build.log` / `out/mixed-border-complete-run.log` 均退出0，最终PASS；全部历史与真实4.1core套件保留。
+
+指南 `OPENGL_SAMPLER_AXES.md`，native指南同步现状。正式D3D11 DLL `out/mixed-border-dll-build.log` 和交接检查 `out/mixed-border-handover.log` 均退出0。API/版本0.5.0，无生成资源或yy/yyp改动。更通用顶点布局与更多图形输入仍需后续批次；其他语言/ES/mesh仍单独设计。
+
+---
+
 # 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 既有 native 包装完整接通
 
 > 本批 `gl-native-compatibility` 基于光栅/模板批次测试头 `e9568bec656057a1835512102cb6e931ab402033`；PR #53 修复头 `b618f979ec7206fd48d70197c54077b8d2d00a26` 已集成；本批准备时原审查者正在复核该头。PR #52 已合并 `c9301450103f4d8d808d8304df819a7295cb5d75`。沿用持续授权，整批实现、真实GPU验证及一次独立审查后合并，不重复逐项确认。

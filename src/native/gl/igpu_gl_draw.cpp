@@ -1638,7 +1638,7 @@ namespace igpu
         GLfloat previous_min_lod = -1000.f;
         GLfloat previous_max_lod = 1000.f;
         GLfloat previous_aniso = 1.f;
-        const bool border = address == 3;
+        const bool border = address == 3 || address_v == 3 || address_w == 3;
         const bool limit_coarsest = coarsest < 3.402823466e+38f;
         const bool select_mip = comparing || level_offset != 0.f || finest != 0.f || limit_coarsest;
         const bool adjust_aniso = anisotropy > 1;
@@ -1915,7 +1915,8 @@ namespace igpu
         // Linear mip filtering blends neighboring levels. A level offset
         // selects a coarser mip. A finest level above 0 raises that
         // selection. A coarsest level below the unlimited sentinel lowers
-        // it. Every axis must be border. The border color is applied only
+        // it. Axes may independently use clamp, repeat, mirror or border.
+        // The supplied border color is applied only
         // for this draw.
         const bool mip_linear = mip == 1;
         if ((mip != 0 && !mip_linear) || (magnification != 0 && magnification != 1) ||
@@ -1924,9 +1925,9 @@ namespace igpu
             set_last_error("igpu_sampler_state_create: the opengl backend only samples the nearest texel");
             return 0;
         }
-        if (address_u != 3 || address_v != 3 || address_w != 3)
+        if (address_u < 0 || address_u > 3 || address_v < 0 || address_v > 3 || address_w < 0 || address_w > 3)
         {
-            set_last_error("igpu_sampler_state_create: the opengl backend only accepts border on every axis");
+            set_last_error("igpu_sampler_state_create: address modes must be Clamp, Repeat, Mirror or Border");
             return 0;
         }
         if (finest < 0.f || !(coarsest >= 0.f))
@@ -1941,7 +1942,7 @@ namespace igpu
         const bool linear = magnification == 1;
         const bool linear_min = minification == 1;
         const std::uint64_t handle = g_next_sampler++;
-        g_samplers.emplace(handle, SamplerObject{3, 3, linear, red, green, blue, alpha, linear_min, level_offset,
+        g_samplers.emplace(handle, SamplerObject{address_u, address_v, linear, red, green, blue, alpha, linear_min, level_offset,
                                                  finest, coarsest, mip_linear, anisotropy});
         g_samplers.at(handle).address_w = address_w;
         return static_cast<std::int64_t>(handle);
