@@ -10,6 +10,7 @@
 #include "graphics_stage_tests.h"
 #include "diagnostics_tests.h"
 #include "raster_stencil_tests.h"
+#include "native_facade_tests.h"
 #include "query_shutdown_tests.h"
 
 #include "IGPU_native.h"
@@ -5790,6 +5791,11 @@ int main()
     if (!run_gl_raster_stencil_tests())
     {
         return fail("raster and stencil state suite failed");
+    }
+
+    if (!run_gl_native_facade_tests())
+    {
+        return 1;
     }
 
     if (!run_gl_diagnostics_tests())

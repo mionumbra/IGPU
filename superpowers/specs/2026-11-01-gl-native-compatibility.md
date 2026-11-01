@@ -1,0 +1,9 @@
+# GL existing native facade compatibility
+
+Intent: continue completing the existing IGPU desktop GL backend in coherent batches, with actual GPU evidence and one independent review. The user has standing authorization for continuous implementation, feature PRs and reviewed merges; do not repeat approval gates. This is a bounded bridge over existing source paths, not a new public API or subsystem.
+
+Route existing native sampler convenience constructors, simple 2D allocation/read, three single-target draw helpers and per-vertex input-layout convenience construction to the already tested canonical GL implementations. Match existing D3D defaults: point/linear/anisotropic filters, clamp/repeat/mirror, supplied border, LOD bias0/min0/maxfloat, and per-vertex step0. Validate filter and anisotropy before discarding irrelevant anisotropy on non-anisotropic filters. Existing all-border-only GL constraints remain explicit; advanced GML facade paths already work and gain no extra exports.
+
+Every accepted native single-target draw increments diagnostics exactly once, through the same snapshot and core-safe logic. Preserve native framebuffer/viewport/input state, source texture parameters and caller resources. Invalid or released handles/roles/subresources/filter parameters reject before mutation. Reuse canonical validation rather than duplicate rendering logic. Legacy bytecode reflection is D3D-specific and has no GL caller; existing shader-handle GL reflection remains the supported contract.
+
+API/version0.5.0, formal Windows DLL D3D11, no generated resources or yy/yyp edits. Verify real literal sampler pixels and defaults, native create/read/layout, selected layers/mips, exact counters/state restoration, failure cases and the whole historical real-WGL probe. Retain existing advanced-stage, color-only target and ES/language boundaries.

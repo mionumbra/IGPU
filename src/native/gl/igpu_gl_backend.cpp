@@ -16,6 +16,7 @@
 #include <Windows.h>
 #include <GL/gl.h>
 
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -32,6 +33,54 @@ namespace igpu
 {
     namespace
     {
+        constexpr float unlimited_lod = (std::numeric_limits<float>::max)();
+
+        // A small borrowed wire view lets native convenience methods reuse the
+        // same validation and rendering path as the array-based public API.
+        struct WireIntegers
+        {
+            std::vector<std::byte> bytes;
+            explicit WireIntegers(std::initializer_list<std::uint64_t> values) : bytes(2 + 9 * values.size())
+            {
+                gm::byteio::writeLe(bytes.data(), static_cast<std::uint16_t>(values.size()));
+                std::size_t offset = 2;
+                for (auto value : values)
+                {
+                    bytes[offset] = static_cast<std::byte>(gm::wire::GMKind::UInt64);
+                    gm::byteio::writeLe(bytes.data() + offset + 1, value);
+                    offset += 9;
+                }
+            }
+            gm::wire::GMArrayView view() const
+            { return gm::wire::GMArrayView(gm::wire::GMValue(gm::wire::GMKind::Array, bytes.data())); }
+        };
+
+        std::int64_t legacy_sampler(std::int32_t filter, std::int32_t address_u, std::int32_t address_v,
+                                    std::int32_t address_w, std::int32_t anisotropy, const float* border,
+                                    float offset, float finest, float coarsest)
+        {
+            if (filter < 0 || filter > 2)
+            {
+                set_last_error("igpu_sampler_state_create: filter must be point, linear or anisotropic");
+                return 0;
+            }
+            if (anisotropy < 1 || anisotropy > 16)
+            {
+                set_last_error("igpu_sampler_state_create: anisotropy must be in 1..16");
+                return 0;
+            }
+            const int linear = filter == 0 ? 0 : 1;
+            // The D3D convenience API validates MaxAnisotropy for all filters,
+            // but only the anisotropic filter uses it.
+            const int effective_anisotropy = filter == 2 ? anisotropy : 1;
+            if (border != nullptr && (address_u == 3 || address_v == 3 || address_w == 3))
+                return gl_sampler_state_create_filters_border_range(linear, linear, linear,
+                    address_u, address_v, address_w, border[0], border[1], border[2], border[3],
+                    offset, finest, coarsest, effective_anisotropy);
+            return gl_sampler_state_create_filters_range(linear, linear, linear,
+                address_u, address_v, address_w, offset, finest, coarsest, effective_anisotropy);
+        }
+
         class GlBackend final : public Backend
         {
         public:
@@ -153,78 +202,45 @@ namespace igpu
             {
                 return gl_raster_state_create(cull, fill, scissor, depth_clip);
             }
-            std::int64_t sampler_state_create(std::int32_t, bool, std::int32_t) override
+            std::int64_t sampler_state_create(std::int32_t filter, bool repeat, std::int32_t anisotropy) override
+            { return sampler_state_create_address(filter, repeat ? 1 : 0, anisotropy); }
+            std::int64_t sampler_state_create_address(std::int32_t filter, std::int32_t address, std::int32_t anisotropy) override
+            { return sampler_state_create_axes(filter, address, address, address, anisotropy); }
+            std::int64_t sampler_state_create_border(std::int32_t filter, std::int32_t anisotropy,
+                                                    float red, float green, float blue, float alpha) override
+            { return sampler_state_create_axes_border(filter, 3, 3, 3, anisotropy, red, green, blue, alpha); }
+            std::int64_t sampler_state_create_axes(std::int32_t filter, std::int32_t u, std::int32_t v,
+                                                  std::int32_t w, std::int32_t anisotropy) override
+            { return sampler_state_create_axes_range(filter, u, v, w, anisotropy, 0.f, 0.f, unlimited_lod); }
+            std::int64_t sampler_state_create_axes_border(std::int32_t filter, std::int32_t u, std::int32_t v,
+                                                         std::int32_t w, std::int32_t anisotropy,
+                                                         float red, float green, float blue, float alpha) override
+            { return sampler_state_create_axes_border_range(filter, u, v, w, anisotropy,
+                red, green, blue, alpha, 0.f, 0.f, unlimited_lod); }
+            std::int64_t sampler_state_create_axes_range(std::int32_t filter, std::int32_t u, std::int32_t v,
+                                                        std::int32_t w, std::int32_t anisotropy,
+                                                        float offset, float finest, float coarsest) override
+            { return legacy_sampler(filter, u, v, w, anisotropy, nullptr, offset, finest, coarsest); }
+            std::int64_t sampler_state_create_axes_border_range(std::int32_t filter, std::int32_t u, std::int32_t v,
+                                                               std::int32_t w, std::int32_t anisotropy,
+                                                               float red, float green, float blue, float alpha,
+                                                               float offset, float finest, float coarsest) override
             {
-                not_yet("igpu_sampler_state_create");
-                return 0;
+                const float border[] = {red, green, blue, alpha};
+                return legacy_sampler(filter, u, v, w, anisotropy, border, offset, finest, coarsest);
             }
-            std::int64_t sampler_state_create_address(std::int32_t, std::int32_t, std::int32_t) override
-            {
-                not_yet("igpu_sampler_state_create");
-                return 0;
-            }
-            std::int64_t sampler_state_create_border(std::int32_t, std::int32_t, float, float, float, float) override
-            {
-                not_yet("igpu_sampler_state_create");
-                return 0;
-            }
-            std::int64_t sampler_state_create_axes(std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t) override
-            {
-                not_yet("igpu_sampler_state_create");
-                return 0;
-            }
-            std::int64_t sampler_state_create_axes_border(std::int32_t, std::int32_t, std::int32_t, std::int32_t,
-                                                          std::int32_t, float, float, float, float) override
-            {
-                not_yet("igpu_sampler_state_create");
-                return 0;
-            }
-            std::int64_t sampler_state_create_axes_range(std::int32_t filter, std::int32_t address_u,
-                                                         std::int32_t address_v, std::int32_t address_w,
-                                                         std::int32_t anisotropy, float level_offset, float finest,
-                                                         float coarsest) override
-            {
-                if (filter != 2)
-                {
-                    not_yet("igpu_sampler_state_create");
-                    return 0;
-                }
-                return gl_sampler_state_create_filters_range(
-                    1, 1, 1, address_u, address_v, address_w, level_offset, finest, coarsest, anisotropy);
-            }
-            std::int64_t sampler_state_create_axes_border_range(std::int32_t filter, std::int32_t address_u,
-                                                                std::int32_t address_v, std::int32_t address_w,
-                                                                std::int32_t anisotropy, float red, float green,
-                                                                float blue, float alpha, float level_offset,
-                                                                float finest, float coarsest) override
-            {
-                if (filter != 2)
-                {
-                    not_yet("igpu_sampler_state_create");
-                    return 0;
-                }
-                return gl_sampler_state_create_filters_border_range(
-                    1, 1, 1, address_u, address_v, address_w, red, green, blue, alpha,
-                    level_offset, finest, coarsest, anisotropy);
-            }
-            std::int64_t sampler_state_create_filters(std::int32_t, std::int32_t, std::int32_t, std::int32_t,
-                                                      std::int32_t, std::int32_t) override
-            {
-                not_yet("igpu_sampler_state_create");
-                return 0;
-            }
-            std::int64_t sampler_state_create_filters_border(std::int32_t, std::int32_t, std::int32_t, std::int32_t,
-                                                             std::int32_t, std::int32_t, float, float, float, float) override
-            {
-                not_yet("igpu_sampler_state_create");
-                return 0;
-            }
-            std::int64_t sampler_state_create_filters_offset(std::int32_t, std::int32_t, std::int32_t, std::int32_t,
-                                                             std::int32_t, std::int32_t, float) override
-            {
-                not_yet("igpu_sampler_state_create");
-                return 0;
-            }
+            std::int64_t sampler_state_create_filters(std::int32_t mag, std::int32_t min, std::int32_t mip,
+                                                     std::int32_t u, std::int32_t v, std::int32_t w) override
+            { return gl_sampler_state_create_filters_range(mag, min, mip, u, v, w, 0.f, 0.f, unlimited_lod); }
+            std::int64_t sampler_state_create_filters_border(std::int32_t mag, std::int32_t min, std::int32_t mip,
+                                                            std::int32_t u, std::int32_t v, std::int32_t w,
+                                                            float red, float green, float blue, float alpha) override
+            { return gl_sampler_state_create_filters_border_range(mag, min, mip, u, v, w,
+                red, green, blue, alpha, 0.f, 0.f, unlimited_lod); }
+            std::int64_t sampler_state_create_filters_offset(std::int32_t mag, std::int32_t min, std::int32_t mip,
+                                                            std::int32_t u, std::int32_t v, std::int32_t w,
+                                                            float offset) override
+            { return gl_sampler_state_create_filters_range(mag, min, mip, u, v, w, offset, 0.f, unlimited_lod); }
             std::int64_t sampler_state_create_filters_range(std::int32_t magnification, std::int32_t minification,
                                                             std::int32_t mip, std::int32_t address_u,
                                                             std::int32_t address_v, std::int32_t address_w,
@@ -255,11 +271,8 @@ namespace igpu
             }
             bool state_release(std::uint64_t handle) override { return gl_state_release(handle); }
 
-            std::int64_t texture_create(std::int32_t, std::int32_t, std::int32_t, bool) override
-            {
-                not_yet("igpu_texture_create");
-                return 0;
-            }
+            std::int64_t texture_create(std::int32_t width, std::int32_t height, std::int32_t format, bool target) override
+            { return gl_texture_create_kind(0, width, height, 1, format, target, false); }
             std::int64_t texture_create_kind(std::int32_t kind, std::int32_t width, std::int32_t height, std::int32_t depth,
                                              std::int32_t format, bool render_target, bool storage) override
             {
@@ -273,32 +286,31 @@ namespace igpu
             }
             bool texture_generate_mips(std::uint64_t texture) override { return gl_texture_generate_mips(texture); }
             bool texture_release(std::uint64_t texture) override { return gl_texture_release(texture); }
-            std::int64_t texture_get_pixel(std::uint64_t, std::int32_t, std::int32_t) override
-            {
-                not_yet("igpu_texture_read");
-                return 0;
-            }
-            std::int64_t texture_read(std::uint64_t, std::int32_t, std::int32_t, std::int32_t) override
-            {
-                not_yet("igpu_texture_read");
-                return 0;
-            }
+            std::int64_t texture_get_pixel(std::uint64_t texture, std::int32_t x, std::int32_t y) override
+            { return gl_texture_read_level(texture, x, y, 0, 0); }
+            std::int64_t texture_read(std::uint64_t texture, std::int32_t x, std::int32_t y, std::int32_t layer) override
+            { return gl_texture_read_level(texture, x, y, layer, 0); }
             std::int64_t texture_read_level(std::uint64_t texture, std::int32_t x, std::int32_t y, std::int32_t layer,
                                             std::int32_t mip) override
             {
                 return gl_texture_read_level(texture, x, y, layer, mip);
             }
-            bool draw_to_texture(std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t, std::uint64_t) override
+            bool draw_to_texture(std::uint64_t vertex, std::uint64_t layout, std::int32_t primitive,
+                                 std::int64_t first, std::int64_t count, std::uint64_t texture) override
+            { return draw_to_texture_level(vertex, layout, primitive, first, count, texture, 0, 0); }
+            bool draw_to_texture_layer(std::uint64_t vertex, std::uint64_t layout, std::int32_t primitive,
+                                       std::int64_t first, std::int64_t count, std::uint64_t texture, std::int32_t layer) override
+            { return draw_to_texture_level(vertex, layout, primitive, first, count, texture, layer, 0); }
+            bool draw_to_texture_level(std::uint64_t vertex, std::uint64_t layout, std::int32_t primitive,
+                                       std::int64_t first, std::int64_t count, std::uint64_t texture,
+                                       std::int32_t layer, std::int32_t mip) override
             {
-                return not_yet("igpu_draw_to_render_targets");
-            }
-            bool draw_to_texture_layer(std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t, std::uint64_t, std::int32_t) override
-            {
-                return not_yet("igpu_draw_to_render_targets");
-            }
-            bool draw_to_texture_level(std::uint64_t, std::uint64_t, std::int32_t, std::int64_t, std::int64_t, std::uint64_t, std::int32_t, std::int32_t) override
-            {
-                return not_yet("igpu_draw_to_render_targets");
+                return gl_diagnostic_submit([&] {
+                    const WireIntegers targets{texture}, layers{static_cast<std::uint64_t>(layer)},
+                                       mips{static_cast<std::uint64_t>(mip)};
+                    const auto target_view = targets.view(), layer_view = layers.view(), mip_view = mips.view();
+                    return gl_draw_targets(vertex, layout, primitive, first, count, target_view, &layer_view, &mip_view);
+                });
             }
             bool dispatch(std::int32_t x, std::int32_t y, std::int32_t z, std::uint64_t texture) override
             { return gl_dispatch_single(compute_program, x, y, z, texture, 0, 0); }
@@ -535,11 +547,11 @@ namespace igpu
             bool buffer_patch(std::uint64_t buffer, std::int64_t offset, const void* data, std::size_t size, const char* entry) override
             { return gl_uniform_patch(buffer, offset, data, size, entry); }
 
-            std::int64_t input_layout_create(std::int64_t, const gm::wire::GMArrayView&, const gm::wire::GMArrayView&,
-                                             std::int32_t, std::int32_t) override
+            std::int64_t input_layout_create(std::int64_t shader, const gm::wire::GMArrayView& usage,
+                                             const gm::wire::GMArrayView& type, std::int32_t count, std::int32_t stride) override
             {
-                not_yet("igpu_input_layout_create");
-                return 0;
+                const WireIntegers step{0, 0};
+                return gl_input_layout_create(shader, usage, type, step.view(), count, stride, 0);
             }
             std::int64_t input_layout_create_step(std::int64_t shader, const gm::wire::GMArrayView& usage,
                                                   const gm::wire::GMArrayView& type, const gm::wire::GMArrayView& step,
