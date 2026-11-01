@@ -13,3 +13,5 @@ Tests must observe the oldstubs fail. Verify actual16sample pixels and counterde
 Lifecycle also covers deleting the owned drawVAO (existing gl_resources_release discards its name without deletion) and keeping bufferhandles monotonic across GLshutdown so a stale vertexbuffer diagnostic cannot alias a newly created buffer. These are part of actual drawinput resource lifetime, with native IsVertexArray and freshbinding evidence.
 
 The generated slim0.5 GML exports intentionally do not expose these legacy diagnostic wrappers. Verify through the existing native igpu_draw.h facade; this batch adds no GML export or generatedresource edit.
+
+Review refinement: coreprofile VAO0 has no attribute/EBO object state; skip thosequeries and returnquietfalse forbindingdiagnostics. CompatibilitydefaultVAO0 stillsupportsrealqueries. LONGquery token requiresGL4.3 independentlyof4.1/ARB64bitformat support; oldercontexts skipthisquery. Validateactual4.1core andstrictdriver-tokenbehavior, restoringoriginalborrowedcontext.

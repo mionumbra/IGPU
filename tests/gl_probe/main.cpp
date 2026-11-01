@@ -5837,6 +5837,11 @@ int main()
         return fail("draw diagnostics shutdown suite failed");
     }
 
+    if (!run_gl_diagnostics_core_tests())
+    {
+        return fail("draw diagnostics core-context suite failed");
+    }
+
     void* context = gl_probe_context();
     igpu_shutdown();
     if (!wglMakeCurrent(nullptr, nullptr) || !wglDeleteContext(static_cast<HGLRC>(context)))

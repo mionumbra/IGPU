@@ -896,6 +896,8 @@ namespace igpu
     {
         const auto found = g_buffers.find(buffer);
         if (found == g_buffers.end() || found->second.bind != 1) return false;
+        GLint vao = 0; glGetIntegerv(0x85B5 /* VERTEX_ARRAY_BINDING */, &vao);
+        if (!gl_vertex_array_has_attributes(static_cast<std::uint32_t>(vao))) return false;
         GLint source = 0;
         igpu_gl_fns().GetVertexAttribiv(0, 0x889F /* VERTEX_ATTRIB_ARRAY_BUFFER_BINDING */, &source);
         return static_cast<GLuint>(source) == found->second.id;
