@@ -11,6 +11,7 @@
 #include "diagnostics_tests.h"
 #include "raster_stencil_tests.h"
 #include "native_facade_tests.h"
+#include "vertex_layout_tests.h"
 #include "query_shutdown_tests.h"
 
 #include "IGPU_native.h"
@@ -781,11 +782,11 @@ int main()
         return fail(igpu_get_last_error().c_str());
     }
     const auto reversed_usage = encode_i32_2(2, 1);
-    const auto reversed_type = encode_i32_2(5, 2);
+    const auto reversed_type = encode_i32_2(7, 2);
     if (igpu_input_layout_create(colour_vert, as_array(reversed_usage), as_array(reversed_type),
                                  as_array(colour_step), 2, 12, 0) != 0)
     {
-        return fail("colour-before-position layout was accepted");
+        return fail("unknown colour vertex type was accepted");
     }
 
     const auto colour_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
@@ -5793,6 +5794,8 @@ int main()
         return fail("raster and stencil state suite failed");
     }
 
+    if (!run_gl_vertex_layout_tests()) return fail("general vertex input suite failed");
+
     if (!run_gl_native_facade_tests())
     {
         return 1;
@@ -5847,6 +5850,7 @@ int main()
     {
         return fail("draw diagnostics core-context suite failed");
     }
+    if (!run_gl_vertex_forward_tests()) return fail("forward-compatible vertex suite failed");
 
     void* context = gl_probe_context();
     igpu_shutdown();

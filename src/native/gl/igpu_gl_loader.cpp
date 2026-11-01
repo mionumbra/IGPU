@@ -40,7 +40,7 @@ namespace igpu
 
     bool gl_context_at_least(int required_major, int required_minor)
     {
-        const auto version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
+        const auto version = reinterpret_cast<const char*>(igpu_gl_fns().GetString(GL_VERSION));
         int major = 0, minor = 0;
         return version && std::sscanf(version, "%d.%d", &major, &minor) == 2 &&
             (major > required_major || (major == required_major && minor >= required_minor));
@@ -83,6 +83,8 @@ namespace igpu
         LOAD(DeleteShader, "glDeleteShader")
         LOAD(CreateProgram, "glCreateProgram")
         LOAD(AttachShader, "glAttachShader")
+        LOAD(GetAttribLocation, "glGetAttribLocation")
+        LOAD(GetActiveAttrib, "glGetActiveAttrib")
         LOAD(BindAttribLocation, "glBindAttribLocation")
         LOAD(LinkProgram, "glLinkProgram")
         LOAD(UseProgram, "glUseProgram")
@@ -143,6 +145,9 @@ namespace igpu
         // Optional entrypoints gate only their individual capability families.
 #define LOAD_OPTIONAL(field, symbol) \
         fns.field = reinterpret_cast<decltype(fns.field)>(optional_proc(symbol));
+        LOAD_OPTIONAL(VertexAttribIPointer, "glVertexAttribIPointer")
+        if (!fns.VertexAttribIPointer && gl_context_extension("GL_EXT_gpu_shader4"))
+            LOAD_OPTIONAL(VertexAttribIPointer, "glVertexAttribIPointerEXT")
         LOAD_OPTIONAL(GetBooleani, "glGetBooleani_v")
         LOAD_OPTIONAL(IsEnabledi, "glIsEnabledi")
         LOAD_OPTIONAL(Enablei, "glEnablei")

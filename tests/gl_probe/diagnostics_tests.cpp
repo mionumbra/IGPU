@@ -1,5 +1,6 @@
 #include "diagnostics_tests.h"
 #include "raster_stencil_tests.h"
+#include "vertex_layout_tests.h"
 #include "IGPU_native.h"
 #include "native/igpu_draw.h"
 #include "native/gl/igpu_gl_loader.h"
@@ -70,8 +71,9 @@ namespace
         if (vao == dropped_vao)
         {
             auto& f = igpu_gl_fns();
-            if (vao_fault == 1) f.VertexAttribDivisor(1, 0);
-            else f.VertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8, nullptr);
+            const GLuint attribute = vao_fault > 2 ? 5 : 1;
+            if (vao_fault == 1 || vao_fault == 3) f.VertexAttribDivisor(attribute, 0);
+            else f.VertexAttribPointer(attribute, 2, GL_FLOAT, GL_FALSE, 8, nullptr);
         }
     }
     IgpuGlBindBuffer original_bind_buffer = nullptr;
@@ -243,7 +245,9 @@ bool run_gl_diagnostics_tests()
     if (!check(submitted && fault_count == count + 1 && fault_failures == failures + 1,
         "actual dropped VAO restore increments failure counter once") ||
         !x.accepted([&]{ return x.direct(); }, "subsequent clean draw does not add a restoration failure")) return false;
-    for (int fault : {1, 2})
+    f.VertexAttribDivisor(5, 3);
+    f.VertexAttribPointer(5, 4, GL_UNSIGNED_BYTE, GL_TRUE, 4, reinterpret_cast<void*>(16));
+    for (int fault : {1, 2, 3, 4})
     {
         const auto before_count = igpu::draw_count(), before_failures = igpu::draw_restore_failures();
         const Bindings same_bindings;
@@ -251,9 +255,12 @@ bool run_gl_diagnostics_tests()
         const bool drawn = x.direct(); f.BindVertexArray = original_bind_vao;
         const bool detected = drawn && Bindings() == same_bindings && igpu::draw_count() == before_count + 1 &&
             igpu::draw_restore_failures() == before_failures + 1;
-        f.VertexAttribDivisor(1, 3);
-        f.VertexAttribPointer(1, 4, GL_UNSIGNED_BYTE, GL_TRUE, 4, reinterpret_cast<void*>(16));
-        if (!check(detected, fault == 1 ? "actual divisor corruption detected with identical bindings" : "actual format/pointer corruption detected with identical bindings")) return false;
+        const GLuint attribute = fault > 2 ? 5 : 1;
+        f.VertexAttribDivisor(attribute, 3);
+        f.VertexAttribPointer(attribute, 4, GL_UNSIGNED_BYTE, GL_TRUE, 4, reinterpret_cast<void*>(16));
+        const char* label = fault > 2 ? (fault == 3 ? "actual slot5 divisor corruption detected with identical bindings" : "actual slot5 format corruption detected with identical bindings") :
+            (fault == 1 ? "actual divisor corruption detected with identical bindings" : "actual format/pointer corruption detected with identical bindings");
+        if (!check(detected, label)) return false;
     }
     const auto indirect_count = igpu::draw_count(), indirect_failures = igpu::draw_restore_failures();
     original_bind_buffer = f.BindBuffer; dropped_indirect = x.foreign; f.BindBuffer = drop_indirect_restore;
@@ -270,7 +277,7 @@ bool run_gl_diagnostics_tests()
     if (!check(error_drawn && pending_error == GL_INVALID_ENUM && igpu::draw_count() == error_count + 1 &&
         igpu::draw_restore_failures() == error_failures, "pending caller GL error is preserved by diagnostic snapshots") ||
         !x.accepted([&]{ return x.direct(); }, "clean final drawing after all observed native faults")) return false;
-    std::printf("draw diagnostics: native attribute0 binding, direct/indexed/instanced/indirect/MRT/sample/patch counters, compute/helper exclusions, rejects and actual VAO/divisor/format/indirect restoration faults passed\n");
+    std::printf("draw diagnostics: native attribute0 binding, direct/indexed/instanced/indirect/MRT/sample/patch counters, compute/helper exclusions, rejects and actual VAO/divisor/format/slot5/indirect restoration faults passed\n");
     return true;
 }
 
@@ -409,6 +416,7 @@ bool run_gl_diagnostics_core_tests()
     ok = check(strict_drawn && unsupported_long_queries == 0 && strict_error == GL_NO_ERROR,
         "strict4.1 driver receives no4.3 LONG attribute token") && ok;
     ok = run_gl_raster_stencil_core_tests(vertex, layout, target) && ok;
+    ok = run_gl_vertex_layout_tests() && ok;
     f.DeleteVertexArrays(1, &caller);
     const bool restored = restore_context();
     if (!check(restored && ok, "core4.1 regressions and original borrowed compatibility context restored")) return false;
