@@ -111,6 +111,7 @@ if(WIN32)
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/uniform_tests.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/target_tests.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/layered_texture_tests.cpp"
+      "${CMAKE_SOURCE_DIR}/tests/gl_probe/graphics_stage_tests.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/instanced_tests.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/query_tests.cpp"
       "${CMAKE_SOURCE_DIR}/tests/gl_probe/query_shutdown_tests.cpp"

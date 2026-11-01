@@ -1,5 +1,6 @@
 #include "igpu_gl_uniform.h"
 #include "igpu_gl_loader.h"
+#include "igpu_gl_graphics.h"
 #include "igpu_error.h"
 #include <algorithm>
 #include <limits>
@@ -13,7 +14,7 @@ namespace igpu
     {
         constexpr GLenum ubo = 0x8A11, binding = 0x8A28;
         bool context = false;
-        GLint bindings = 0, block_bytes = 0, blocks[3]{};
+        GLint bindings = 0, block_bytes = 0, blocks[6]{};
         bool fail(const char* entry, const std::string& message)
         { set_last_error(std::string(entry) + ": " + message); return false; }
         struct Generic
@@ -77,6 +78,8 @@ namespace igpu
         glGetIntegerv(0x8A2F, &bindings); glGetIntegerv(0x8A30, &block_bytes);
         const GLenum fields[] = {0x8A2B,0x8A2D,0x91BB};
         for (int i=0;i<3;++i) glGetIntegerv(fields[i], &blocks[i]);
+        if(gl_context_at_least(3,2))glGetIntegerv(0x8A2C,&blocks[3]);
+        if(gl_context_at_least(4,0)||gl_context_extension("GL_ARB_tessellation_shader")){glGetIntegerv(0x8E89,&blocks[4]);glGetIntegerv(0x8E8A,&blocks[5]);}
     }
     bool gl_uniform_supported()
     {
@@ -104,6 +107,21 @@ namespace igpu
             f.ProgramParameteri(program,0x8258,GL_FALSE);f.LinkProgram(program);
             f.GetProgramiv(program,0x8B82,&linked);
         }
+        if(!linked && stage>=3 && stage<=5)
+        {
+            // Ordinary geometry/tessellation shaders can need companion stages
+            // even though separable interfaces are optional in a normal pipeline.
+            // Link native companions; the caller's shader text is never modified.
+            const auto companion=[&](GLenum type,const char*source)
+            {
+                const auto name=f.CreateShader(type);if(!name)return false;
+                f.ShaderSource(name,1,&source,nullptr);f.CompileShader(name);GLint ok=0;f.GetShaderiv(name,0x8B81,&ok);
+                if(ok)f.AttachShader(program,name);f.DeleteShader(name);return ok!=0;
+            };
+            bool complete=companion(0x8B31,"#version 430\nvoid main(){gl_Position=vec4(0,0,0,1);}");
+            if(stage==4)complete=companion(0x8E87,"#version 430\nlayout(triangles,equal_spacing,cw)in;void main(){gl_Position=gl_in[0].gl_Position;}")&&complete;
+            if(complete){f.LinkProgram(program);f.GetProgramiv(program,0x8B82,&linked);}
+        }
         if (!linked)
         {
             GLint length=0;f.GetProgramiv(program,0x8B84,&length);std::vector<char> text(static_cast<std::size_t>((std::max)(length,1)));
@@ -121,7 +139,7 @@ namespace igpu
             f.GetActiveUniformBlockName(program,index,static_cast<GLsizei>(name.size()),nullptr,name.data());
             f.GetActiveUniformBlockiv(program,index,0x8A40,&size);f.GetActiveUniformBlockiv(program,index,0x8A3F,&slot);
             f.GetActiveUniformBlockiv(program,index,0x8A42,&members);
-            if (size <= 0 || size > block_bytes || slot < stage*8 || slot >= stage*8+8)
+            if (size <= 0 || size > block_bytes || slot < stage*8 || slot >= stage*8+8 || slot>=bindings || stage<0 || stage>=6 || blocks[stage]<1)
                 return fail(entry,"uniform block '"+std::string(name.data())+"' must use GLSL binding stage*8+slot with slot 0..7 and fit the context block limit");
             UniformBlock block;block.name=name.data();block.size=static_cast<std::uint32_t>(size);block.slot=slot-stage*8;
             std::vector<GLint> indices(static_cast<std::size_t>(members));
@@ -161,7 +179,8 @@ namespace igpu
     {
         const char* entry="igpu_uniform_bind";
         if (!gl_uniform_supported()) return fail(entry,"this OpenGL context lacks uniform buffer support");
-        if (stage<0 || stage>2 || slot<0 || slot>=8) return fail(entry,"use vertex/pixel/compute stages and slots 0..7");
+        if(stage<0||stage>=6||slot<0||slot>=8||!gl_graphics_stage_supported(stage)||blocks[stage]<8||stage*8+slot>=bindings)
+            return fail(entry,"the requested stage/slot is unsupported by the context's uniform limits");
         const auto key=stage*8+slot;auto existing=claims.find(key);
         if (!buffer)
         {

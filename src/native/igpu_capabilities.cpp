@@ -274,8 +274,10 @@ namespace igpu
                    (opengl_backend() && active_backend()->compute_supported());
 
         // Geometry and tessellation are core from D3D feature level 11_0.
-        case Capability::ShaderStageGeometry:     return device_at_least(D3D_FEATURE_LEVEL_11_0);
-        case Capability::ShaderStageTessellation: return device_at_least(D3D_FEATURE_LEVEL_11_0);
+        case Capability::ShaderStageGeometry:     return device_at_least(D3D_FEATURE_LEVEL_11_0) ||
+                   (opengl_backend() && active_backend()->geometry_supported());
+        case Capability::ShaderStageTessellation: return device_at_least(D3D_FEATURE_LEVEL_11_0) ||
+                   (opengl_backend() && active_backend()->tessellation_supported());
 
         // Mesh/amplification shaders need D3D12 with shader model 6.5; the
         // interface reserves the stages but this backend cannot serve them.

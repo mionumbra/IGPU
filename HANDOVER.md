@@ -1,3 +1,5 @@
+> 2026-11-01 最新：PR #50 分层纹理已合并（`832641a1b775af8e00a62a378a05108ad8fc8edc`）。当前 `gl-geometry-tessellation` 整批接通GL几何、Hull/TCS、Domain/TES、事务图形链接与patch绘制，增加GS/Hull/Domain UBO反射/绑定及晚映射校验；完整WGL探针PASS，含真实像素/16样本、TF/patch/回滚和shutdown原生删除/状态恢复。正式Windows DLL仍D3D11、API0.5.0。详见 `SESSION_HANDOVER.md` 顶部及 `OPENGL_GRAPHICS_STAGES.md`。持续授权覆盖一次整批独立审查、功能PR和合并；后续整批绘制诊断，不逐步询问。
+
 # IGPU — 交接文档
 
 > **2026-11-01 最新进度：先读 SESSION_HANDOVER.md 最上方。** PR #44～#49 已合并，已含MRT；当前整批补全三维/数组/立方纹理全生命周期，说明见 OPENGL_TEXTURE_KINDS.md。版本仍为0.5.0。
