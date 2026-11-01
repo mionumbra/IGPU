@@ -19,7 +19,7 @@ Simple filter0 selects point on all filters, filter1 selects linear on all filte
 
 Every nonzero sampler applies its complete source-texture descriptor, including default bias0, finest0, maxfloat coarsest, point/linear filters and factor1 on contexts supporting anisotropy. It does not inherit conflicting source LOD/filter values. All previous values are restored after drawing. Sampler0 retains the caller's native parameters.
 
-Existing GL boundaries remain: a border constructor accepts Border on all three axes, while an ordinary constructor accepts Clamp/Repeat/Mirror on each axis. Mixed Border/non-Border is outside this batch. Layouts retain the canonical float2 position and optional color/float2 UV, with the existing supported instance records on the advanced entry point. This bridge does not add other vertex formats.
+Border-aware constructors accept Clamp/Repeat/Mirror/Border independently on U/V/W. Ordinary constructors without a supplied color accept Clamp/Repeat/Mirror on each axis. Mixed-axis behavior and real2D/3D evidence are described in OPENGL_SAMPLER_AXES.md. Layouts retain the canonical float2 position and optional color/float2 UV, with the existing supported instance records on the advanced entry point. This bridge does not add other vertex formats.
 
 The three native target helpers reuse shared subresource validation and target drawing. They each cross the diagnostics boundary once: an accepted submission adds one draw, a rejected submission adds none, and native input-state restoration is checked as with advanced draws. Target role, layer/mip bounds, viewport and framebuffer restoration follow OPENGL_TARGETS.md and OPENGL_TEXTURE_KINDS.md. No depth/stencil storage is synthesized.
 

@@ -294,6 +294,66 @@ namespace
         if(ok)std::printf("sampler defaults: native/public conflicting caller LOD/bias/filters/anisotropy overridden during real draw and restored afterward passed\n");
         return ok;
     }
+    bool mixed_border_samplers(Fixture& x)
+    {
+        constexpr int magenta=16711935;
+        struct Case { int u,v,w,pixel;float s,t,lod; };
+        const Case cases[] = {
+            {3,0,0,magenta,-.25f,.25f,0}, {3,1,0,255,.25f,1.25f,0},
+            {3,2,0,16711680,.25f,1.25f,0}, {0,3,0,magenta,.25f,-.25f,0},
+            {1,3,0,255,1.25f,.25f,0}, {2,3,0,65280,1.25f,.25f,0},
+            {0,0,3,65280,1.25f,.25f,0}, {1,2,3,16711680,1.25f,1.25f,0},
+            {3,0,2,255,.25f,.25f,0}, {0,3,1,65535,.25f,.25f,1}
+        };
+        bool ok=true;
+        for(const auto& c:cases)for(int path=0;path<3;++path)
+        {
+            const auto state=path==0?igpu_sampler_state_create(0,0,0,c.u,c.v,c.w,1,magenta,0,0,0,-1):
+                path==1?igpu::sampler_state_create_axes_border(0,c.u,c.v,c.w,1,magenta):
+                        igpu::sampler_state_create_filters_border(0,0,0,c.u,c.v,c.w,magenta);
+            if(!check(state>0,"public/native mixed-border constructor")){ok=false;continue;}
+            ok=x.sample(state,c.pixel,c.s,c.t,c.lod)&&ok;
+            ok=check(igpu_state_release(state),"mixed border state release")&&ok;
+        }
+        for(bool v_only:{false,true})
+        {
+            const auto state=igpu_sampler_state_create(1,1,1,v_only?1:3,v_only?3:2,0,1,magenta,0,0,0,-1);
+            if(!check(state>0,"linear mixed-border constructor")){ok=false;continue;}
+            ok=x.sample(state,12517631,v_only?.25f:-.125f,v_only?-.125f:.25f,0)&&ok;
+            igpu_state_release(state);
+        }
+        const bool has_anisotropy=igpu::gl_context_at_least(4,6)||
+            igpu::gl_context_extension("GL_ARB_texture_filter_anisotropic")||igpu::gl_context_extension("GL_EXT_texture_filter_anisotropic");
+        GLfloat max_anisotropy=1.f;if(has_anisotropy)glGetFloatv(0x84FF,&max_anisotropy);
+        if(max_anisotropy>=2.f)
+        {
+            const auto state=igpu_sampler_state_create(1,1,1,0,3,2,2,magenta,0,0,0,-1);
+            ok=check(state>0,"anisotropic V-only border constructor")&&ok;
+            if(state){ok=x.sample(state,magenta,.25f,-.25f,0)&&ok;ok=x.sample(state,8421504,.5f,.5f,0)&&ok;igpu_state_release(state);}
+        }
+        const auto offset=igpu::sampler_state_create_axes_border_range(0,0,3,1,1,magenta,1,0,1);
+        ok=check(offset>0,"mixed border native range")&&ok;
+        if(offset){ok=x.sample(offset,65535,.25f,.25f,0)&&ok;igpu_state_release(offset);}
+        const auto unused=igpu::sampler_state_create_filters_border(0,0,0,0,0,0,magenta);
+        ok=check(unused>0,"supplied unused border color with no border axes")&&ok;
+        if(unused){ok=x.sample(unused,255,.25f,.25f,0)&&ok;igpu_state_release(unused);}
+        const NativeState before;
+        for(auto create:std::vector<std::function<std::int64_t()>>{
+            []{return igpu_sampler_state_create(0,0,0,3,4,0,1,16711935,0,0,0,-1);},
+            []{return igpu_sampler_state_create(0,0,0,0,3,0,1,16711935,1,0,0,-1);},
+            []{return igpu::sampler_state_create_axes(0,0,3,0,1);}})
+            ok=check(create()==0&&!igpu_get_last_error().empty()&&before==NativeState{}&&!glGetError(),
+                "mixed border invalid modes, comparison and missing-color guards")&&ok;
+        for(int axis=0;axis<3;++axis)for(int invalid:{-1,4})
+        {
+            int address[]={3,3,3};address[axis]=invalid;
+            const auto state=igpu_sampler_state_create(0,0,0,address[0],address[1],address[2],1,magenta,0,0,0,-1);
+            ok=check(state==0&&!igpu_get_last_error().empty()&&before==NativeState{}&&!glGetError(),
+                "all mixed-border axes retain negative and upper-bound validation")&&ok;
+        }
+        if(ok)std::printf("mixed border2D: public/native U/V/W combinations, wrap/mirror/clamp, linear edges, mip/range and restoration passed\n");
+        return ok;
+    }
     bool resources(Fixture& x)
     {
         bool ok = true; Array usage{1}, type{2};
@@ -375,6 +435,7 @@ bool run_gl_native_facade_tests()
     igpu_state_release(canonical);
     bool ok = samplers(x);
     ok = descriptor_defaults(x) && ok;
+    ok = mixed_border_samplers(x) && ok;
     ok = resources(x) && ok;
     if (ok) std::printf("native facade: sampler defaults/literal pixels/actual anisotropy, simple2D/read/layout, layer/mip isolation, exact diagnostics and caller state passed\n");
     return ok;

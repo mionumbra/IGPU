@@ -2837,10 +2837,10 @@ int main()
         return fail(igpu_get_last_error().c_str());
     }
 
-    const auto border_mixed = igpu_sampler_state_create(0, 0, 0, 3, 0, 0, 1, 65280, 0, 0.f, 0.f, -1.f);
-    if (border_mixed != 0 || std::string(igpu_get_last_error()).find("border on every axis") == std::string::npos)
+    const auto border_mixed = igpu_sampler_state_create(0, 0, 0, 3, 4, 0, 1, 65280, 0, 0.f, 0.f, -1.f);
+    if (border_mixed != 0 || std::string(igpu_get_last_error()).find("address") == std::string::npos)
     {
-        return fail("border mixed with clamp was accepted");
+        return fail("border sampler accepted an invalid address mode");
     }
     const auto wrap_compare = igpu_sampler_state_create(0, 0, 0, 0, 0, 0, 1, 0, 1, 0.f, 0.f, -1.f);
     if (wrap_compare <= 0 || !igpu_state_release(wrap_compare))
@@ -2894,10 +2894,10 @@ int main()
             }
         }
     }
-    if (igpu_sampler_state_create(1, 1, 1, 3, 0, 3, 2, 65280, 0, 0.f, 0.f, -1.f) != 0 ||
-        igpu_get_last_error().find("border on every axis") == std::string::npos)
+    if (igpu_sampler_state_create(1, 1, 1, 3, 4, 3, 2, 65280, 0, 0.f, 0.f, -1.f) != 0 ||
+        igpu_get_last_error().find("address") == std::string::npos)
     {
-        return fail("anisotropy accepted mixed border address axes");
+        return fail("anisotropic border sampler accepted an invalid address mode");
     }
     if (igpu_sampler_state_create(1, 1, 1, 0, 4, 0, 2, 0, 0, 0.f, 0.f, -1.f) != 0)
     {

@@ -173,6 +173,42 @@ namespace
         }
         std::printf("layered samples: every volume/array slice and six native cube directions, sampler mismatch, sixteen samples and active unit3 preserved\n");return true;
     }
+    bool mixed_border_volume_tests()
+    {
+        Fixture t;if(!t.initialize())return false;auto&f=igpu_gl_fns();
+        const auto source=t.texture(1),target=t.texture(0);
+        if(!check(source&&target&&t.draw({source,source,source,source},{0,1,2,3}),"mixed border volume slice colors"))return false;
+        struct Case {int u,v,w,filter,pixel;const char*coordinate;};
+        const Case cases[]={{0,0,3,0,16711935,"vec3(.5,.5,-.25)"},
+            {1,2,3,0,16711935,"vec3(.5,.5,1.25)"}, {0,0,3,0,255,"vec3(1.25,.5,.125)"},
+            {3,0,1,0,16711935,"vec3(-.25,.5,.125)"}, {0,3,2,0,16711935,"vec3(.5,-.25,.125)"},
+            {0,0,3,1,12517631,"vec3(.5,.5,-.0625)"}, {1,2,3,0,16711680,"vec3(1.25,1.25,.625)"}};
+        bool ok=true;
+        for(const auto&c:cases)
+        {
+            const auto sampler=igpu_sampler_state_create(c.filter,c.filter,c.filter,c.u,c.v,c.w,1,16711935,0,0,0,-1);
+            if(!check(sampler>0,"mixed-border volume constructor")){ok=false;continue;}
+            const std::string ps=std::string("#version 430\nuniform sampler3D igpu_tex;out vec4 c;void main(){c=textureLod(igpu_tex,")+c.coordinate+",0);}";
+            const auto program=compile(ps.c_str());f.UseProgram(program);std::int32_t old=0,vp[4]{};
+            const bool begun=igpu::gl_color_target_begin(target,old,vp);f.ActiveTexture(0x84C3);const State before;
+            const auto*texture=igpu::gl_find_texture(source);GLint prior=0;glGetIntegerv(0x806A,&prior);glBindTexture(0x806F,texture->texture);
+            std::array<GLint,3>wrap{};GLfloat border[4]{};
+            const GLenum fields[]={GL_TEXTURE_WRAP_S,GL_TEXTURE_WRAP_T,0x8072};
+            for(int i=0;i<3;++i)glGetTexParameteriv(0x806F,fields[i],&wrap[i]);glGetTexParameterfv(0x806F,GL_TEXTURE_BORDER_COLOR,border);
+            glBindTexture(0x806F,prior);
+            const auto q=igpu_query_create(0);bool drawn=program&&begun&&q&&igpu_query_begin(q)&&igpu_draw_sampled(t.vertex,t.layout,5,0,4,source,0,0,0,sampler);
+            if(q){drawn=igpu_query_end(q)&&drawn;drawn=igpu_query_result(q)==16&&drawn;igpu_query_release(q);}
+            const bool state=before==State{};const auto pixel=igpu_texture_read(target,0,0,0,0);
+            glBindTexture(0x806F,texture->texture);bool parameters=true;GLfloat after[4]{};
+            for(int i=0;i<3;++i){GLint value=0;glGetTexParameteriv(0x806F,fields[i],&value);parameters=parameters&&value==wrap[i];}
+            glGetTexParameterfv(0x806F,GL_TEXTURE_BORDER_COLOR,after);for(int i=0;i<4;++i)parameters=parameters&&after[i]==border[i];glBindTexture(0x806F,prior);
+            bool close=true;for(int shift:{0,8,16})close=close&&std::abs(int((pixel>>shift)&255)-((c.pixel>>shift)&255))<=1;
+            if(begun)igpu::gl_color_target_end(old,vp);f.ActiveTexture(0x84C0);f.UseProgram(t.program);f.DeleteProgram(program);igpu_state_release(sampler);
+            ok=check(drawn&&state&&parameters&&close&&!glGetError(),"real3D mixed border pixels, sixteen samples and S/T/R/color restoration")&&ok;
+        }
+        if(ok)std::printf("mixed border3D: W-only positive/negative border, interior slice, U/V border, linear edge and parameter restoration passed\n");
+        return ok;
+    }
     bool validation_tests()
     {
         Fixture t;if(!t.initialize())return false;auto&f=igpu_gl_fns();
@@ -209,7 +245,7 @@ namespace
     }
     bool capability_test(){return check(igpu::supports(igpu::Capability::Texture3D)&&igpu::supports(igpu::Capability::TextureArray)&&igpu::supports(igpu::Capability::TextureCubemap),"all implemented texture kinds advertised");}
 }
-bool run_gl_layered_texture_tests(){bool ok=layer_tests();ok=sampling_tests()&&ok;ok=compute_tests()&&ok;ok=capability_test()&&ok;ok=w_address_tests()&&ok;ok=mip_generation_tests()&&ok;ok=full_sampling_tests()&&ok;ok=validation_tests()&&ok;ok=read_state_tests()&&ok;return ok;}
+bool run_gl_layered_texture_tests(){bool ok=layer_tests();ok=sampling_tests()&&ok;ok=compute_tests()&&ok;ok=capability_test()&&ok;ok=w_address_tests()&&ok;ok=mip_generation_tests()&&ok;ok=full_sampling_tests()&&ok;ok=mixed_border_volume_tests()&&ok;ok=validation_tests()&&ok;ok=read_state_tests()&&ok;return ok;}
 
 bool run_gl_layered_texture_shutdown_tests()
 {
