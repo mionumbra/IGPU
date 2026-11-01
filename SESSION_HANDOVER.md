@@ -1,13 +1,13 @@
 # 会话交接 — 2026-11-01 — 版本 0.5.0 — OpenGL 既有 native 包装完整接通
 
-> 本批 `gl-native-compatibility` 基于光栅/模板批次测试头 `e9568bec656057a1835512102cb6e931ab402033`；PR #53 的独立审查在另一工作目录进行。PR #52 已合并 `c9301450103f4d8d808d8304df819a7295cb5d75`。沿用持续授权，整批实现、真实GPU验证及一次独立审查后合并，不重复逐项确认。
+> 本批 `gl-native-compatibility` 基于光栅/模板批次测试头 `e9568bec656057a1835512102cb6e931ab402033`；PR #53 修复头 `b618f979ec7206fd48d70197c54077b8d2d00a26` 已集成；本批准备时原审查者正在复核该头。PR #52 已合并 `c9301450103f4d8d808d8304df819a7295cb5d75`。沿用持续授权，整批实现、真实GPU验证及一次独立审查后合并，不重复逐项确认。
 
 - 接通 native facade 既有便利入口：simple/address/border/axes/filter 采样器及 bias/range 变体，simple2D创建、默认层/mip读取，三个单目标绘制入口，默认step0顶点布局。复用已经实现的高级GL路径，不增加精简GML导出。
 - 默认值对照D3D：point/linear/anisotropic、repeat布尔到全部轴、bias0/finest0/maxfloat、2D/depth1/storagefalse。非各向异性过滤仍验证1..16因子但不应用；filter2才使用实际因子。既有GL边框全轴限制和受支持布局格式不扩大。指南 `OPENGL_NATIVE_FACADES.md`。
 - 三个旧目标入口只进入一次诊断边界；共用层/mip/角色/句柄验证、FBO/viewport恢复。普通默认层/mip0，其他入口保留指定子资源。native字节码反射虚函数属于D3D路径，GL没有调用方；GL的shader-handle反射早已接通，不误算为缺失公开能力。
 - RED `out/native-red-run.log`（退出1）：高级采样器对照先通过，旧采样器、布局、分配、绘制及读取入口实际失败。GREEN `out/native-green-run.log`，最终完整 `out/native-complete-build.log`、`out/native-complete-run.log`（退出0/PASS）：真实像素、默认值、驱动实际各向异性因子、纹理参数/调用方状态、未选层/mip保持、错误角色/失效句柄/范围及准确计数；全部历史套件及真实4.1core均保留。
 
-正式D3D11 DLL构建 `out/native-dll-build.log` 与交接检查 `out/native-handover-verified.log` 均退出0。PR #53独立审查发现两个模板状态可移植性问题，已在其工作目录补严格驱动回归；本批独立审查前先集成已验证修复。API/版本0.5.0，无生成资源或yy/yyp改动。剩余实质能力边界包括更通用顶点布局、混合边框轴、更多图形输入绑定、其他着色器语言/ES上下文及保留mesh阶段，需要独立批次设计。
+正式D3D11 DLL构建 `out/native-dll-build.log` 与交接检查 `out/native-handover-verified.log` 均退出0。PR #53两个模板状态可移植性修复已集成；本批最终组合证据为 `out/native-integrated-build.log`、`out/native-integrated-run.log`、`out/native-integrated-dll-build.log` 与 `out/native-integrated-handover.log`。API/版本0.5.0，无生成资源或yy/yyp改动。剩余实质能力边界包括更通用顶点布局、混合边框轴、更多图形输入绑定、其他着色器语言/ES上下文及保留mesh阶段，需要独立批次设计。
 
 ---
 
