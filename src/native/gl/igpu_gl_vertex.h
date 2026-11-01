@@ -22,7 +22,15 @@ struct GlVertexAttribute
     GLuint location = 0;
     std::size_t element = 0;
 };
-using GlVertexBindings = std::vector<GlVertexAttribute>;
+struct GlVertexBindings
+{
+    std::vector<GlVertexAttribute> attributes;
+    bool current_saved = false;
+    GlVertexBindings() = default;
+    GlVertexBindings(const GlVertexBindings &) = delete;
+    GlVertexBindings &operator=(const GlVertexBindings &) = delete;
+    ~GlVertexBindings();
+};
 bool gl_vertex_layout_parse(const gm::wire::GMArrayView &usage, const gm::wire::GMArrayView &type,
                             const gm::wire::GMArrayView &step, int count, int vertex_stride, int instance_stride,
                             GlVertexLayout &out);

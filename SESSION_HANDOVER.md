@@ -9,6 +9,10 @@
 
 最终完整probe `out/vertex-final-build.log` / `out/vertex-final-run.log` 均退出0/PASS；包含兼容/真实4.1core、双实例逐字段推进、两个负数紧凑步长、native四元素step0、非有限/非整数wire、无句柄消耗、缺失入口及整数/matrix输入不匹配拒绝。旧两属性诊断的独立实际RED `out/vertex-diagnostics-red-run.log` 退出1（slot5 divisor损坏未被发现），恢复全属性观察后的最终完整probe验证slot5 divisor/format损坏均被准确计数。正式D3D11 DLL `out/vertex-final-dll-build.log`、交接检查 `out/vertex-final-handover.log` 与diff检查均通过；准备一次独立整批审查。API/版本0.5.0，无yy/yyp或生成资源/导出修改。原main的PR54/55正式DLL已构建复制并核对SHA256一致（`out/main-native-mixed-dll-build.log`）。其他语言/ES上下文、保留mesh阶段及更多图形资源输入仍需按实际能力边界继续设计。
 
+
+审查修复：共享顶点绑定作用域为compatibility预检并保留一个CURRENT_BIT状态栈项，退出/后续校验失败均自动恢复，不按数组格式猜current常量类型。严格旧规范clobber的实际RED `out/vertex-current-red-run.log`暴露float/int/uint/double丢失、遗漏输入红色像素和满栈错误接受；GREEN `out/vertex-current-green-run.log`退出0/PASS，同时覆盖实际4.1core遗漏常量及显式重设。旧core无法可移植地查询未知current类型，沿用native规范边界：用数组提供过的位置，之后作为常量输入前显式重设。原审查者已接受此范围；准确修复头仍需复核批准。
+
+
 ---
 
 # 会话交接 — 2026-11-01 — 版本0.5.0 — OpenGL 混合边框采样器完整批次

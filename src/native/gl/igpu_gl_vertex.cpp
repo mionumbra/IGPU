@@ -69,6 +69,11 @@ struct Active
     std::string name;
 };
 } // namespace
+GlVertexBindings::~GlVertexBindings()
+{
+    if (current_saved)
+        glPopAttrib();
+}
 bool gl_vertex_layout_parse(const gm::wire::GMArrayView &usage, const gm::wire::GMArrayView &type,
                             const gm::wire::GMArrayView &step, int count, int vertex_stride, int instance_stride,
                             GlVertexLayout &out)
@@ -133,7 +138,7 @@ bool gl_vertex_layout_resolve(const GlVertexLayout &layout, GLuint program, GlVe
         if (a.location >= 0)
             active.push_back(std::move(a));
     }
-    GlVertexBindings candidate;
+    std::vector<GlVertexAttribute> candidate;
     for (std::size_t i = 0; i < layout.elements.size(); ++i)
     {
         const auto &e = layout.elements[i];
@@ -169,7 +174,22 @@ bool gl_vertex_layout_resolve(const GlVertexLayout &layout, GLuint program, GlVe
         }
         candidate.push_back({static_cast<GLuint>(location), i});
     }
-    out = std::move(candidate);
+    if (gl_vertex_array_has_attributes(0))
+    {
+        GLint depth = 0, maximum = 0;
+        glGetIntegerv(GL_ATTRIB_STACK_DEPTH, &depth);
+        glGetIntegerv(GL_MAX_ATTRIB_STACK_DEPTH, &maximum);
+        if (depth >= maximum)
+        {
+            set_last_error("igpu_draw: the caller attribute stack has no room to preserve current values");
+            return false;
+        }
+        // Current kinds cannot be queried. Preserve them opaquely in compatibility;
+        // old core follows its native unspecified-current rule (see the guide).
+        glPushAttrib(GL_CURRENT_BIT);
+        out.current_saved = true;
+    }
+    out.attributes = std::move(candidate);
     return true;
 }
 void gl_vertex_layout_bind(const GlVertexLayout &layout, const GlVertexBindings &resolved, GLuint vertex,
@@ -177,7 +197,7 @@ void gl_vertex_layout_bind(const GlVertexLayout &layout, const GlVertexBindings 
 {
     const auto &f = igpu_gl_fns();
     const bool divisor = divisor_supported();
-    for (const auto &a : resolved)
+    for (const auto &a : resolved.attributes)
     {
         const auto &e = layout.elements[a.element];
         f.BindBuffer(0x8892 /* ARRAY_BUFFER */, e.step ? instances : vertex);
@@ -196,7 +216,7 @@ void gl_vertex_layout_unbind(const GlVertexBindings &resolved)
 {
     const auto &f = igpu_gl_fns();
     const bool divisor = divisor_supported();
-    for (const auto &a : resolved)
+    for (const auto &a : resolved.attributes)
     {
         if (divisor)
             f.VertexAttribDivisor(a.location, 0);

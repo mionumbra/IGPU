@@ -312,6 +312,180 @@ std::vector<unsigned char> vertices(int stride, int position_components = 2, int
             number(bytes, i * stride + offset + 4 * c, c < 2 ? xy[i][c] : (c == 3 ? 1.f : 0.f));
     return bytes;
 }
+// Strictly simulate the legacy specification's permitted post-draw current-value
+// changes, after native drawing and before IGPU completes its binding scope.
+using SetFloat = void(APIENTRY*)(GLuint, const GLfloat*);
+using SetInt = void(APIENTRY*)(GLuint, const GLint*);
+using SetUint = void(APIENTRY*)(GLuint, const GLuint*);
+using SetDouble = void(APIENTRY*)(GLuint, const GLdouble*);
+using GetFloat = void(APIENTRY*)(GLuint, GLenum, GLfloat*);
+using GetInt = void(APIENTRY*)(GLuint, GLenum, GLint*);
+using GetUint = void(APIENTRY*)(GLuint, GLenum, GLuint*);
+using GetDouble = void(APIENTRY*)(GLuint, GLenum, GLdouble*);
+IgpuGlDisableVertexAttribArray real_disable = nullptr;
+SetFloat set_float = nullptr;
+SetInt set_int = nullptr;
+SetUint set_uint = nullptr;
+SetDouble set_double = nullptr;
+int current_clobbers = 0;
+void APIENTRY clobber_current(GLuint location)
+{
+    real_disable(location);
+    if (location == 5) {
+        const GLfloat red[] = {1, 0, 0, 1};
+        set_float(location, red);
+        ++current_clobbers;
+    } else if (location == 6) {
+        const GLint bad[] = {-99, 0, 0, 1};
+        set_int(location, bad);
+        ++current_clobbers;
+    } else if (location == 7) {
+        const GLuint bad[] = {99, 0, 0, 1};
+        set_uint(location, bad);
+        ++current_clobbers;
+    } else if (location == 8 && set_double) {
+        const GLdouble bad[] = {-99, 0, 0, 1};
+        set_double(location, bad);
+        ++current_clobbers;
+    }
+}
+bool current_values(Fixture& x)
+{
+    const bool compatibility = igpu::gl_vertex_array_has_attributes(0);
+    set_float = reinterpret_cast<SetFloat>(wglGetProcAddress("glVertexAttrib4fv"));
+    set_int = reinterpret_cast<SetInt>(wglGetProcAddress("glVertexAttribI4iv"));
+    set_uint = reinterpret_cast<SetUint>(wglGetProcAddress("glVertexAttribI4uiv"));
+    set_double = reinterpret_cast<SetDouble>(wglGetProcAddress("glVertexAttribL4dv"));
+    const auto get_float = reinterpret_cast<GetFloat>(wglGetProcAddress("glGetVertexAttribfv"));
+    const auto get_int = reinterpret_cast<GetInt>(wglGetProcAddress("glGetVertexAttribIiv"));
+    const auto get_uint = reinterpret_cast<GetUint>(wglGetProcAddress("glGetVertexAttribIuiv"));
+    const auto get_double = reinterpret_cast<GetDouble>(wglGetProcAddress("glGetVertexAttribLdv"));
+    if (!check(
+            set_float && set_int && set_uint && get_float && get_int && get_uint
+                && (!compatibility || (set_double && get_double)),
+            "known-kind current attribute entrypoints"
+        ))
+        return false;
+    if (compatibility)
+        glPushAttrib(GL_CURRENT_BIT);
+    auto& f = igpu_gl_fns();
+    real_disable = f.DisableVertexAttribArray;
+    GLint enabled5 = 0;
+    f.GetVertexAttribiv(5, 0x8622, &enabled5);
+    real_disable(5);
+    struct Cleanup {
+        bool compatibility;
+        GLint enabled5;
+        ~Cleanup()
+        {
+            auto& f = igpu_gl_fns();
+            f.DisableVertexAttribArray = real_disable;
+            if (enabled5)
+                f.EnableVertexAttribArray(5);
+            if (compatibility)
+                glPopAttrib();
+            else {
+                // The fixture owns this context and explicitly seeds its defaults.
+                const GLfloat defaults[] = {0, 0, 0, 1};
+                set_float(5, defaults);
+                set_float(7, defaults);
+            }
+        }
+    } cleanup {compatibility, enabled5};
+    const char* simple = "#version 330\nlayout(location=0)in vec2 in_pos;layout(location=5)in vec4 in_colour;"
+                         "out vec4 c;void main(){gl_Position=vec4(in_pos,0,1);c=in_colour;}";
+    const char* typed = "#version 330\nlayout(location=0)in vec2 in_pos;layout(location=5)in vec4 in_colour;"
+                        "layout(location=6)in float in_normal;layout(location=7)in float in_uv;"
+                        "layout(location=8)in float in_tangent;out vec4 c;void main(){"
+                        "gl_Position=vec4(in_pos,0,1);c=in_colour+vec4(in_normal+in_uv+in_tangent);}";
+    if (!x.bind(compatibility ? typed : simple))
+        return false;
+    auto bytes = vertices(36);
+    for (int i = 0; i < 3; ++i) {
+        const float values[] = {1, 0, 0, 1, 0, 0, 0};
+        std::memcpy(bytes.data() + i * 36 + 8, values, sizeof(values));
+    }
+    const auto vb = x.buffer(bytes, 36),
+               supplied = x.layout(Wire {1, 2, 3, 4, 8}, Wire {2, 4, 1, 1, 1}, Wire {0, 0, 0, 0, 0}, 5, 36),
+               omitted = x.layout(Wire {1}, Wire {2}, Wire {0}, 1, 36);
+    if (!vb || !supplied || !omitted)
+        return false;
+    const std::array<GLfloat, 4> green {0, 1, 0, 1}, untouched {0.125f, 0.25f, 0.5f, 1};
+    const std::array<GLint, 4> signed_value {-1234567, 71, -2, 1};
+    const std::array<GLuint, 4> unsigned_value {4000000000u, 17, 23, 1};
+    const std::array<GLdouble, 4> double_value {0.100000000000007, -12.25, 7.5, 1};
+    set_float(5, green.data());
+    if (compatibility) {
+        set_int(6, signed_value.data());
+        set_uint(7, unsigned_value.data());
+        set_double(8, double_value.data());
+    } else
+        set_float(7, untouched.data());
+    current_clobbers = 0;
+    f.DisableVertexAttribArray = clobber_current;
+    bool ok = x.image([&] { return x.direct(vb, supplied); }, 255, "arrays render before legacy current clobber");
+    f.DisableVertexAttribArray = real_disable;
+    ok = check(current_clobbers == (compatibility ? 4 : 1), "strict legacy clobber reached every supplied location")
+        && ok;
+    if (compatibility) {
+        // Getter kinds are known from these fixture setters, never inferred from arrays.
+        std::array<GLfloat, 4> actual_float {};
+        std::array<GLint, 4> actual_int {};
+        std::array<GLuint, 4> actual_uint {};
+        std::array<GLdouble, 4> actual_double {};
+        get_float(5, 0x8626, actual_float.data());
+        get_int(6, 0x8626, actual_int.data());
+        get_uint(7, 0x8626, actual_uint.data());
+        get_double(8, 0x8626, actual_double.data());
+        ok = check(
+                 actual_float == green && actual_int == signed_value && actual_uint == unsigned_value
+                     && actual_double == double_value,
+                 "opaque current state preserves float/int/uint/double despite float arrays"
+             )
+            && ok;
+    } else {
+        std::array<GLfloat, 4> actual {};
+        get_float(7, 0x8626, actual.data());
+        ok = check(actual == untouched, "core omitted current constant remains untouched") && ok;
+        // Older core permits supplied locations to become undefined. Callers reseed.
+        set_float(5, green.data());
+    }
+    if (!x.bind(simple))
+        return false;
+    ok = x.image(
+             [&] { return x.direct(vb, omitted); },
+             65280,
+             compatibility ? "omitted colour retains original green after array draw"
+                           : "old core omitted colour uses explicitly reseeded green"
+         )
+        && ok;
+    if (compatibility) {
+        GLint before = 0, after = 0, maximum = 0;
+        glGetIntegerv(GL_ATTRIB_STACK_DEPTH, &before);
+        ok = x.rejected(
+                 [&] { return igpu_draw_sampled(vb, supplied, 4, 0, 3, x.source, 0, 0, 0, 0); },
+                 "late sampled-uniform failure balances current state"
+             )
+            && ok;
+        glGetIntegerv(GL_ATTRIB_STACK_DEPTH, &after);
+        ok = check(after == before, "late rejection leaves attrib stack balanced") && ok;
+        glGetIntegerv(GL_MAX_ATTRIB_STACK_DEPTH, &maximum);
+        for (int i = before; i < maximum; ++i)
+            glPushAttrib(GL_CURRENT_BIT);
+        ok = x.rejected([&] { return x.direct(vb, supplied); }, "full current attrib stack rejects before draw") && ok;
+        glGetIntegerv(GL_ATTRIB_STACK_DEPTH, &after);
+        ok = check(after == maximum, "full stack rejection does not pop caller entries") && ok;
+        for (int i = before; i < maximum; ++i)
+            glPopAttrib();
+    }
+    if (ok)
+        std::printf(
+            "vertex current values: %s, literal omission pixels and known-kind queries passed\n",
+            compatibility ? "opaque compatibility float/int/uint/double, full/late-error stack balance"
+                          : "core untouched omitted constants and explicit legacy reseeding"
+        );
+    return ok;
+}
 bool formats(Fixture &x)
 {
     bool ok = true;
@@ -653,6 +827,7 @@ bool run_gl_vertex_layout_tests()
     ok = paths(x) && ok;
     ok = instances(x) && ok;
     ok = invalid(x) && ok;
+    ok = current_values(x) && ok;
     if (ok)
         std::printf("vertex layouts: six formats, nine usages, repeated/reordered/padded fields, all draw routes, "
                     "integer/instance semantics and higher native attributes passed\n");
