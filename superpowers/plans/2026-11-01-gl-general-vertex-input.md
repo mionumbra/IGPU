@@ -31,11 +31,11 @@
 
 ## Task2: Shared parser/binder and GREEN
 **Files:** src/native/gl/igpu_gl_vertex.cpp/.h, igpu_gl_draw.cpp, igpu_gl_backend.cpp, igpu_gl_loader.cpp/.h, igpu_gl_diagnostics.cpp/.h.
-**Consumes/produces:** GlVertexElement {usage,index,components,type,normalized,integer,step,offset}; GlVertexLayout {vertex_stride,instance_stride,elements}; gl_vertex_layout_parse(usage,type,step,count,vstride,istride,out) -> bool; gl_vertex_layout_resolve(layout,program,out) -> bool; gl_vertex_layout_bind(layout,resolved,vertex_name,instance_name); gl_vertex_layout_unbind().
-- [ ] Parse integer arrays transactionally, compute separate per-stream cursors, validate count/limits/enums/strides and gate integer/instance features. Validate live stage0 shader in both backend layout facades. Accept vertex buffer stride1..2048, keeping default8 and all other bind validation.
-- [ ] Load GetAttribLocation/GetActiveAttrib and optional VertexAttribIPointer. Resolve canonical names/unindexed or indexed suffix, retain custom ordinal fallback; validate bound live shader scalar/vector types and reject overlapping/multilocation descriptors before mutating GL state. Remove forced colour/UV aliasing at link.
-- [ ] Replace all four direct bind sites plus the instanced record special case with shared descriptor resolution/binding; reset every used private-VAO attribute/divisor. Expand diagnostics snapshots to the actual context attribute count, retaining actual version/extension query guards.
-- [ ] Build/run complete probe out/vertex-green-{build,run}.log, inspect exit0/PASS, pixels/state/counters and actual4.1core results. Fix concrete failures without weakening expected pixels or historical tests.
+**Consumes/produces:** GlVertexElement {usage,index,components,type,normalized,integer,step,offset}; GlVertexLayout {vertex_stride,instance_stride,elements}; gl_vertex_layout_parse(usage,type,step,count,vstride,istride,out) -> bool; gl_vertex_layout_resolve(layout,program,out) -> bool; gl_vertex_layout_bind(layout,resolved,vertex_name,instance_name); gl_vertex_layout_unbind(const GlVertexBindings& resolved).
+- [x] Parse integer arrays transactionally, compute separate per-stream cursors, validate count/limits/enums/strides and gate integer/instance features. Validate live stage0 shader in both backend layout facades. Accept vertex buffer stride1..2048, keeping default8 and all other bind validation.
+- [x] Load GetAttribLocation/GetActiveAttrib and optional VertexAttribIPointer. Resolve canonical names/unindexed or indexed suffix, retain custom ordinal fallback; validate bound live shader scalar/vector types and reject overlapping/multilocation descriptors before mutating GL state. Remove forced colour/UV aliasing at link.
+- [x] Replace all four direct bind sites plus the instanced record special case with shared descriptor resolution/binding; reset every used private-VAO attribute/divisor. Expand diagnostics snapshots to the actual context attribute count, retaining actual version/extension query guards.
+- [x] Build/run complete probe out/vertex-green-{build,run}.log, inspect exit0/PASS, pixels/state/counters and actual4.1core results. Fix concrete failures without weakening expected pixels or historical tests.
 
 ## Task3: Ship the validated batch
 **Files:** OPENGL_VERTEX_INPUTS.md, HANDOVER.md, SESSION_HANDOVER.md and spec/plan updates.

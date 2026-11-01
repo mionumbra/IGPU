@@ -782,11 +782,11 @@ int main()
         return fail(igpu_get_last_error().c_str());
     }
     const auto reversed_usage = encode_i32_2(2, 1);
-    const auto reversed_type = encode_i32_2(5, 2);
+    const auto reversed_type = encode_i32_2(7, 2);
     if (igpu_input_layout_create(colour_vert, as_array(reversed_usage), as_array(reversed_type),
                                  as_array(colour_step), 2, 12, 0) != 0)
     {
-        return fail("colour-before-position layout was accepted");
+        return fail("unknown colour vertex type was accepted");
     }
 
     const auto colour_texture = igpu_texture_create(0, 8, 8, 1, 6, true, false, 1);
